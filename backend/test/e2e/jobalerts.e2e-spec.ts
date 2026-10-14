@@ -89,7 +89,7 @@ describe('iş alarmı postası ilana dönüşür', () => {
     const inboxView = (await h.http().get('/api/v1/home/inbox').set(u.auth).expect(200)).body;
     expect(inboxView.alerts).toMatchObject({ mails: 1, listings: 2, platforms: ['Kariyer.net'] });
     expect(inboxView.alerts.sites).toEqual([{ platform: 'Kariyer.net', mails: 1, lastAt: expect.any(String) }]);
-    expect(inboxView.alerts.searches.map((x: any) => x.title)).toEqual(['Kreatif Direktör', 'Creative Director']);
+    expect(inboxView.alerts.titles).toEqual(['Kreatif Direktör', 'Creative Director']);
     expect(inboxView.items).toEqual([]);
     expect(await h.prisma.learningEvent.findFirstOrThrow({ where: { kind: 'job_search', workspaceId: workspaceId() } })).toMatchObject({ features: { set: 'alert', platform: 'Kariyer.net' }, outcome: { fresh: 2, rejected: { title: 1 } } });
   });

@@ -16,12 +16,20 @@ export type { ActivityKind, ActivityStatus, AiClass, ApplyLink, AutopilotMode, A
 
 export type SetupStep = 'profile' | 'cv' | 'positions' | 'mail';
 
+export interface SetupDocument {
+  id: string;
+  fileName: string;
+  scanState: string;
+}
+
 export interface HomeSetup {
   complete: boolean;
   missing: SetupStep[];
   candidate: { id: string; displayName: string; email: string | null; headline: string | null; portfolioUrl: string | null; signature: string | null } | null;
   cv: { id: string; fileName: string; scanState: string; createdAt: IsoDate } | null;
   portfolio: { id: string; fileName: string; scanState: string } | null;
+  /** İngilizce sürümler: yazı İngilizceye çevrildiğinde ekler bunlara geçer. */
+  english: { cv: SetupDocument | null; portfolio: SetupDocument | null };
   positions: string[];
   adjacentPositions: string[];
   cities: string[];
@@ -237,6 +245,8 @@ export interface HomeDocument {
   type: string;
   mime: string;
   size: number;
+  /** tr | en */
+  language: string;
 }
 
 export interface HomeApplicationDetail {
@@ -386,8 +396,10 @@ export interface JobAlertStats {
   platforms: string[];
   /** Site başına alınan alarm postası; alarmın çalıştığını gösterir. */
   sites: JobAlertSite[];
-  /** Arama profillerinden çıkan, sitelerde alarm olarak kurulması önerilen aramalar. */
-  searches: JobAlertSearch[];
+  /** Alarm kurulumunda seçilebilecek pozisyonlar: etkin profillerin tam unvanları. */
+  titles: string[];
+  /** Alarm kurulumunda seçilebilecek şehirler (yaka/bölge ayrıntısı atılmış). */
+  cities: string[];
 }
 
 export interface JobAlertSite {
@@ -396,11 +408,6 @@ export interface JobAlertSite {
   lastAt: IsoDate | null;
 }
 
-export interface JobAlertSearch {
-  title: string;
-  /** Şehir; profilde şehir yoksa null (Türkiye geneli). */
-  city: string | null;
-}
 
 export interface HomeInbox {
   alerts: JobAlertStats;

@@ -21,6 +21,7 @@ import type {
 export type Outcome = 'interview' | 'offer' | 'rejection' | 'no_response';
 export type InboxStatus = 'open' | 'resolved' | 'ignored';
 export type DocumentType = 'cv' | 'portfolio';
+export type DocumentLanguage = 'tr' | 'en';
 
 export interface DraftEdit {
   toEmail: string;
@@ -86,7 +87,7 @@ export const homeApi = {
   saveLetterExample: (text: string | null) => api.put<{ text: string | null }>('/v1/home/letter-example', { text }),
   regenerateLetter: (intent: string) => api.post(`/v1/home/letters/${intent}/regenerate`),
 
-  uploadDocument: (candidateId: string, type: DocumentType, file: File) => api.upload('/v1/documents', file, { candidateId, type, language: 'tr' }),
+  uploadDocument: (candidateId: string, type: DocumentType, file: File, language: DocumentLanguage = 'tr') => api.upload('/v1/documents', file, { candidateId, type, language }),
   downloadDocument: (documentId: string) => api.blob(`/v1/documents/${documentId}/download`),
   connectMail: (candidateId: string, input: SmtpAccountInput) => api.post('/v1/mail-accounts/smtp', { candidateId, ...input }),
   deleteMailAccount: (id: string) => api.delete(`/v1/mail-accounts/${id}`),

@@ -14,6 +14,7 @@ import { activityItems, activityStatus, ROUTINE_CRAWL } from '../../domain/activ
 import { companyLinks, jobApplyLinks, mergeLinks, replyApplyLink } from '../../domain/apply-links';
 import { classOfCompany, classOfOpportunity, COMPANY_CLASSES, CompanyClass } from '../../domain/company-class';
 import { employeeSizeOf } from '../../domain/company-size';
+import { ENGLISH_LANGUAGE, pickDocument, replacementFor } from '../../domain/documents';
 import { contactSearchPlan } from '../../domain/contact-search';
 import { CANDIDATE_HR_KIND, classifyPublishedEmail, isValidEmail, RecipientScoring, recipientScore, SENDABLE_CONTACT_KINDS, SUGGESTED_ONLY_KINDS } from '../../domain/contacts';
 import { CITY_SELECTION_SEPARATOR, evaluateLocation, regionForSelections, workScopeOf } from '../../domain/geo';
@@ -196,8 +197,13 @@ export class HomeService {
     const waitingForBudget = lettersPending > 0 && predraftBudget(aiSettings.dailyTaskLimit, aiUsedToday) === 0;
     const cliProviders = aiSettings.cliAllowed ? aiSettings.providerOrder.filter((p) => CLI_PROVIDERS.includes(p)) : [];
     const providersCooling = cliProviders.length > 0 && cliProviders.every((p) => cooldowns[p]);
-    const cv = candidate?.documents.find((d) => d.type === 'cv') ?? null;
-    const portfolio = candidate?.documents.find((d) => d.type === 'portfolio') ?? null;
+    const documents = candidate?.documents ?? [];
+    const cv = pickDocument(documents, 'cv');
+    const portfolio = pickDocument(documents, 'portfolio');
+    const englishOf = (type: string) => {
+      const doc = documents.find((d) => d.type === type && d.language === ENGLISH_LANGUAGE);
+      return doc ? { id: doc.id, fileName: doc.fileName, scanState: doc.scanState } : null;
+    };
     const mailAccount = candidate?.mailAccounts[0] ?? null;
     const missing: SetupStep[] = [];
     if (!candidate) missing.push('profile');
@@ -211,6 +217,7 @@ export class HomeService {
         candidate: candidate && { id: candidate.id, displayName: candidate.displayName, email: candidate.email, headline: candidate.headline, portfolioUrl: candidate.portfolioUrl, signature: candidate.signature },
         cv: cv && { id: cv.id, fileName: cv.fileName, scanState: cv.scanState, createdAt: cv.createdAt },
         portfolio: portfolio && { id: portfolio.id, fileName: portfolio.fileName, scanState: portfolio.scanState },
+        english: { cv: englishOf('cv'), portfolio: englishOf('portfolio') },
         positions: searchProfile?.exactTitles ?? [],
         adjacentPositions: searchProfile?.adjacentTitles ?? [],
         cities: (candidate?.city ?? searchProfile?.city ?? '').split(CITY_SELECTION_SEPARATOR).filter(Boolean),
@@ -628,12 +635,14 @@ export class HomeService {
   async application(ctx: RequestContext, id: string): Promise<ServerShape<HomeApplicationDetail>> {
     const detail = await this.applicationsService.getApplication(ctx, id);
     const documents = detail.revision?.documentIds.length
-      ? await this.prisma.documentVersion.findMany({ where: { id: { in: detail.revision.documentIds } }, select: { id: true, label: true, fileName: true, type: true, mime: true, size: true, archived: true, candidateId: true } })
+      ? await this.prisma.documentVersion.findMany({ where: { id: { in: detail.revision.documentIds } }, select: { id: true, label: true, fileName: true, type: true, mime: true, size: true, archived: true, candidateId: true, language: true, createdAt: true } })
       : [];
     const latest = documents.some((d) => d.archived)
-      ? await this.prisma.documentVersion.findMany({ where: { candidateId: documents[0].candidateId, archived: false, scanState: 'clean' }, orderBy: { createdAt: 'desc' }, select: { id: true, label: true, fileName: true, type: true, mime: true, size: true } })
+      ? await this.prisma.documentVersion.findMany({ where: { candidateId: documents[0].candidateId, archived: false, scanState: 'clean' }, select: { id: true, label: true, fileName: true, type: true, mime: true, size: true, language: true, createdAt: true } })
       : [];
-    const currentDocuments = documents.map(({ archived, candidateId: _candidateId, ...d }) => (archived ? (latest.find((l) => l.type === d.type) ?? d) : d));
+    const currentDocuments = documents
+      .map(({ archived, candidateId: _candidateId, ...d }) => (archived ? (replacementFor(d, latest) ?? d) : d))
+      .map(({ createdAt: _createdAt, ...d }) => d);
     return {
       id: detail.attempt.id,
       company: detail.company.name,
@@ -785,7 +794,7 @@ export class HomeService {
     if (draft && draft.currentRevision > 0 && suggestedTo && EDITABLE_DRAFT_STATES.includes(draft.status)) draft = await this.automation.fillMissingRecipient(draft, suggestedTo, ctx.userId);
     const rev = draft && draft.currentRevision > 0 ? await this.prisma.draftRevision.findUnique({ where: { draftId_revision: { draftId: draft.id, revision: draft.currentRevision } } }) : null;
     if (!draft || !rev) return { ...header, status: 'preparing' as const, draft: null };
-    const documentSelect = { id: true, label: true, fileName: true, type: true, mime: true, size: true, createdAt: true };
+    const documentSelect = { id: true, label: true, fileName: true, type: true, mime: true, size: true, language: true, createdAt: true };
     const [account, documents, availableDocuments] = await Promise.all([
       draft.mailAccountId ? this.prisma.mailAccount.findUnique({ where: { id: draft.mailAccountId }, select: { accountEmail: true } }) : null,
       rev.documentIds.length ? this.prisma.documentVersion.findMany({ where: { id: { in: rev.documentIds } }, select: documentSelect }) : [],

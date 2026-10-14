@@ -5,6 +5,7 @@ import { AppError, notFound } from '../common/errors';
 import { OutboxService } from '../common/outbox.service';
 import { PrismaService, Tx } from '../common/prisma.service';
 import { isValidEmail, RecipientScoring, recipientScore, SENDABLE_CONTACT_KINDS } from '../domain/contacts';
+import { attachmentsFor, attachmentsInLanguage, PRIMARY_LANGUAGE } from '../domain/documents';
 import { replaceAdWord } from '../domain/text';
 import { buildSignature, checkDraftContent, INTENT_LABELS, IntentType } from '../domain/templates';
 import { AiService } from './ai/ai.service';
@@ -90,13 +91,9 @@ export class DraftingService {
     });
   }
 
-  async defaultDocuments(candidateId: string, language = 'tr') {
-    const docs = await this.prisma.documentVersion.findMany({
-      where: { candidateId, archived: false, scanState: 'clean' },
-      orderBy: [{ createdAt: 'desc' }],
-    });
-    const pick = (type: string) => docs.find((d) => d.type === type && d.language === language) ?? docs.find((d) => d.type === type);
-    return [pick('cv'), pick('portfolio')].filter(Boolean).map((d) => d!.id);
+  async defaultDocuments(candidateId: string, language = PRIMARY_LANGUAGE) {
+    const docs = await this.prisma.documentVersion.findMany({ where: { candidateId, archived: false, scanState: 'clean' } });
+    return attachmentsFor(docs, language);
   }
 
   async create(input: {
@@ -281,9 +278,14 @@ export class DraftingService {
     });
     if (r.status !== 'succeeded') return { status: r.status };
     const out = r.output as { subject: string; body: string };
+    const [attached, available] = await Promise.all([
+      this.prisma.documentVersion.findMany({ where: { id: { in: rev.documentIds }, candidateId: draft.candidateId } }),
+      this.prisma.documentVersion.findMany({ where: { candidateId: draft.candidateId, archived: false, scanState: 'clean' } }),
+    ]);
+    const documentIds = attached.length === rev.documentIds.length ? attachmentsInLanguage(attached, available, targetLanguage) : rev.documentIds;
     await this.addRevision(
       draft,
-      { toEmail: rev.toEmail, subject: out.subject.trim(), body: out.body.trim(), documentIds: rev.documentIds, links: rev.links },
+      { toEmail: rev.toEmail, subject: out.subject.trim(), body: out.body.trim(), documentIds, links: rev.links },
       { createdById: userId, generator: `ai:translate:${targetLanguage}`, aiTaskId: r.taskId, sourceRefs: rev.sourceRefs },
     );
     return { status: 'succeeded' as const };

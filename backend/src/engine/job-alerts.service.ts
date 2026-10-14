@@ -7,7 +7,7 @@ import { PrismaService } from '../common/prisma.service';
 import { JobAlertStats } from '../contracts/home';
 import { ServerShape } from '../contracts/wire';
 import { htmlToText } from '../domain/inbound';
-import { AlertLink, AlertListing, alertCities, alertLinks, alertPlatformOf, alertSearches, isListingUrl, JOB_ALERT_SOURCE, linkedListings, looksLikeAlert } from '../domain/job-alerts';
+import { AlertLink, AlertListing, alertChoices, alertCities, alertLinks, alertPlatformOf, isListingUrl, JOB_ALERT_SOURCE, linkedListings, looksLikeAlert } from '../domain/job-alerts';
 import { resolveRedirects } from '../domain/ssrf';
 import { AiService } from './ai/ai.service';
 import { ALERT_TEXT_LIMIT } from './ai/prompts';
@@ -167,7 +167,7 @@ export class JobAlertsService {
       lastAt: stored?.lastAt ? new Date(stored.lastAt) : null,
       platforms,
       sites: platforms.map((platform) => ({ platform, mails: stored!.platforms[platform], lastAt: lastOf(platform) ? new Date(lastOf(platform)!) : null })),
-      searches: alertSearches(profiles.map((p) => ({ exactTitles: p.exactTitles, cities: alertCities(p.candidate.city ?? p.city) }))),
+      ...alertChoices(profiles.map((p) => ({ exactTitles: p.exactTitles, cities: alertCities(p.candidate.city ?? p.city) }))),
     };
   }
 }

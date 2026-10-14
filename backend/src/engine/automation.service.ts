@@ -7,6 +7,7 @@ import { PrismaService } from '../common/prisma.service';
 import { nextSendSlot } from '../common/time';
 import { UsageService } from '../common/usage.service';
 import { activeKeyFor } from '../domain/attempt-state';
+import { ATTACHED_TYPES, attachmentsFor } from '../domain/documents';
 import { contactVerifiedForSending, SENDABLE_CONTACT_KINDS } from '../domain/contacts';
 import { evaluatePolicy, PolicyDecision, REASON_LABELS, ReasonCode } from '../domain/policy';
 import { IntentType } from '../domain/templates';
@@ -374,10 +375,8 @@ export class AutomationService {
   }
 
   async defaultDocumentIds(candidateId: string) {
-    const docs = await this.prisma.documentVersion.findMany({ where: { candidateId, archived: false, scanState: 'clean', type: { in: ['cv', 'portfolio'] } }, orderBy: { createdAt: 'desc' } });
-    const latestByType = new Map<string, string>();
-    for (const d of docs) if (!latestByType.has(d.type)) latestByType.set(d.type, d.id);
-    return [...latestByType.values()];
+    const docs = await this.prisma.documentVersion.findMany({ where: { candidateId, archived: false, scanState: 'clean', type: { in: [...ATTACHED_TYPES] } } });
+    return attachmentsFor(docs);
   }
 
   /** 7 iş günü sonra takip: varsayılan yalnızca taslak; politika takip anahtarı açıksa en fazla bir otomatik takip. */

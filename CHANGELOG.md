@@ -9,13 +9,20 @@
 - **Bekleyen yapay zekâ görevi** bildirimi görev penceresini açar; görev çoktan tamamlandıysa bunu söyler.
 - Ayrıntı taşımayan eski bildirimler türlerine uyan sekmeye gider (eski yeni ilan bildirimleri Firmalar'ı en yeni sırasıyla açar); Telegram'daki "Uygulamada aç" bağlantıları da aynı kurallarla çalışır.
 
+### CV ve portföyün İngilizce sürümleri
+
+- **İngilizce sürüm.** Profilim › CV ve portföy bölümünde CV ve portföyün İngilizce sürümleri ayrıca yüklenebilir.
+- **Ekler yazının diline uyar.** Başvuru yazısı önizlemede İngilizceye çevrildiğinde ekler kendiliğinden İngilizce sürümlere geçer, Türkçeye döndürülünce Türkçe sürümlere döner. İngilizce sürümü olmayan ek (ya da elle eklenmiş başka belge) olduğu gibi kalır. Önizlemedeki ek listesinde İngilizce dosyalar işaretlenir.
+- **Türkçe esas.** Otomatik başvuru, varsayılan ekler, kurulum ekranı ve CV'den bilgi çıkarma, İngilizce sürüm daha yeni yüklenmiş olsa da Türkçe sürümü kullanır; arşivlenen bir ekin yerine aynı dildeki güncel sürüm konur.
+- **Geçiş.** Veritabanı değişikliği yok (belgelerdeki dil alanı zaten vardı).
+
 ### İş alarmı mailleri
 
 - **İş sitelerinin kendi bildirimi ilan kaynağı oldu.** Kariyer.net, Indeed, Yenibiris gibi siteler arama ve ilan sayfalarını otomatik taramaya kapatıyor (doğrulama engeli); AI web araması da bu ilanların ancak bir kısmını görebiliyor. Kullanıcı bu sitelerde iş alarmı kurduğunda sitenin gönderdiği ilan mailleri artık gelen kutusu taramasında okunur, içindeki ilanlar çıkarılır ve arama profiline (unvan, konum, kapsam) uyanlar "İş alarmı" kaynağından açık ilan olarak eklenir; firma listede yoksa oluşturulur. Tanınan siteler: Kariyer.net, LinkedIn, Indeed, Glassdoor, Secretcv, Eleman.net, Yenibiris, Youthall, Toptalent, İşin Olsun, Jooble.
 - **Nasıl okunur.** Posta saklanmaz. Bağlantıları numaralanır (`L1`, `L2`…), metni hafif modelle okunur; model ilanı adresle değil numarayla gösterir, postada olmayan bağlantıya işaret eden ilan atılır. Tıklama sayacı bağlantıları ilan adresine kadar izlenir, ilan sayfasının kendisine istek atılmaz. Hesap, şifre, başvuru onayı ve mesaj bildirimleri yapay zekâya gitmeden elenir.
 - **Dayanıklılık.** Yapay zekâ o an kullanılamıyorsa bildirim bekletilir ve sonraki taramalarda yeniden denenir. Görev "gelen kutusu" öncelik sınıfında sayılır.
 - **Arayüz.** Mail dönüşleri sekmesine "İş alarmları" paneli eklendi: okunan alarm maili ve eklenen ilan sayısı, son mail zamanı ve site başına alarm kurma adımları. Gelen kutusu takibi, başvurusu olmayan hesaplarda da (yalnızca alarm mailleri için) çalışır.
-- **Site site alarm kurulumu.** İş alarmları panelinde Kariyer.net, LinkedIn ve Indeed için arama profilindeki unvanlardan (ve şehirden) hazır aramalar listelenir; butona basınca site o aramayla açılır, kullanıcı kendi hesabıyla alarmı kurar (uygulama siteye bağlanmaz). Siteden ilk alarm maili geldiğinde satır "Alarm çalışıyor" olarak işaretlenir. Kariyer.net'in şehir parametresi doğrulanamadığından orada şehir sayfadan seçilir.
+- **Alarm kurulumu.** İş alarmları panelinde sitelerin alarm durumu tek satırda görünür (çalışıyor / kurulmadı). Alarm kurmak için profildeki pozisyonlardan bir ya da birkaçı ve şehir seçilir, site butonu aramayı yeni sekmede açar; kullanıcı alarmı kendi hesabıyla kurar (uygulama siteye bağlanmaz). LinkedIn ve Indeed seçilen pozisyonları "VEYA" ile tek aramada birleştirir (ör. Türkçe ve İngilizce adı); Kariyer.net tek pozisyonla açılır ve şehir orada sayfadan seçilir. Üç sitede de alarm çalışınca kurulum bölümü kapanır. Siteden ilk alarm maili geldiğinde site "çalışıyor" olarak işaretlenir.
 - **Geçiş.** Veritabanı değişikliği yok. Yalnızca dağıtımdan sonra gelen alarm mailleri okunur.
 
 ### Kaldırılanlar

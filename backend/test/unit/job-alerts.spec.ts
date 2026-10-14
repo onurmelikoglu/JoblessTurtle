@@ -1,4 +1,4 @@
-import { alertCities, alertLinks, alertPlatformOf, alertSearches, MAX_ALERT_SEARCHES, isListingUrl, linkedListings, looksLikeAlert } from '../../src/domain/job-alerts';
+import { alertChoices, alertCities, alertLinks, alertPlatformOf, MAX_ALERT_TITLES, isListingUrl, linkedListings, looksLikeAlert } from '../../src/domain/job-alerts';
 import { buildPrompt } from '../../src/engine/ai/prompts';
 import { validateAiOutput } from '../../src/engine/ai/validate';
 import { readAlert } from '../../src/engine/job-alerts.service';
@@ -104,29 +104,23 @@ describe('iş alarmı: bağlantılar', () => {
   });
 });
 
-describe('iş alarmı: önerilen aramalar', () => {
+describe('iş alarmı: kurulum seçenekleri', () => {
   it('kayıtlı şehir seçimini site şehirlerine indirir', () => {
     expect(alertCities('İstanbul; İstanbul (Anadolu Yakası); İstanbul (Avrupa Yakası); Kocaeli')).toEqual(['İstanbul', 'Kocaeli']);
     expect(alertCities(null)).toEqual([]);
   });
 
-  it('etkin profillerin tam unvanlarını şehirlerle eşler, tekrarı ve boşu atar', () => {
-    const searches = alertSearches([
-      { exactTitles: ['Sosyal Medya Uzmanı', ' ', 'Dijital Pazarlama Uzmanı'], cities: ['İstanbul', 'Kocaeli'] },
-      { exactTitles: ['SOSYAL MEDYA UZMANI'], cities: ['istanbul'] },
-      { exactTitles: ['Art Director'], cities: [] },
-    ]);
-    expect(searches).toEqual([
-      { title: 'Sosyal Medya Uzmanı', city: 'İstanbul' },
-      { title: 'Sosyal Medya Uzmanı', city: 'Kocaeli' },
-      { title: 'Dijital Pazarlama Uzmanı', city: 'İstanbul' },
-      { title: 'Dijital Pazarlama Uzmanı', city: 'Kocaeli' },
-      { title: 'Art Director', city: null },
-    ]);
+  it('etkin profillerin unvanlarını ve şehirlerini tekrarsız toplar', () => {
+    expect(
+      alertChoices([
+        { exactTitles: ['Sosyal Medya Uzmanı', ' ', 'Social Media Specialist'], cities: ['İstanbul', 'Kocaeli'] },
+        { exactTitles: ['SOSYAL MEDYA UZMANI', 'Art Director'], cities: ['istanbul'] },
+      ]),
+    ).toEqual({ titles: ['Sosyal Medya Uzmanı', 'Social Media Specialist', 'Art Director'], cities: ['İstanbul', 'Kocaeli'] });
   });
 
-  it('öneri sayısı sınırlıdır', () => {
-    const many = alertSearches([{ exactTitles: Array.from({ length: 20 }, (_, i) => `Unvan ${i}`), cities: ['İzmir'] }]);
-    expect(many).toHaveLength(MAX_ALERT_SEARCHES);
+  it('pozisyon sayısı sınırlıdır', () => {
+    const { titles } = alertChoices([{ exactTitles: Array.from({ length: 20 }, (_, i) => `Unvan ${i}`), cities: [] }]);
+    expect(titles).toHaveLength(MAX_ALERT_TITLES);
   });
 });

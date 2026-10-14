@@ -7,6 +7,7 @@ import { PrismaService } from '../common/prisma.service';
 import { HomeInbox, InboxDetail } from '../contracts/home';
 import { ServerShape } from '../contracts/wire';
 import { canTransition } from '../domain/attempt-state';
+import { replacementFor } from '../domain/documents';
 import { classifyPublishedEmail, isValidEmail, RecipientDelivery, recipientScore, SENDABLE_CONTACT_KINDS } from '../domain/contacts';
 import {
   analyzeBounce,
@@ -489,8 +490,8 @@ export class InboxService {
   async currentDocuments(candidateId: string, documentIds: string[]) {
     if (!documentIds.length) return [];
     const docs = await this.prisma.documentVersion.findMany({ where: { id: { in: documentIds }, candidateId } });
-    const latest = await this.prisma.documentVersion.findMany({ where: { candidateId, archived: false, scanState: 'clean' }, orderBy: { createdAt: 'desc' } });
-    const ids = docs.map((d) => (d.archived || d.scanState !== 'clean' ? latest.find((l) => l.type === d.type)?.id : d.id)).filter((x): x is string => !!x);
+    const latest = await this.prisma.documentVersion.findMany({ where: { candidateId, archived: false, scanState: 'clean' } });
+    const ids = docs.map((d) => (d.archived || d.scanState !== 'clean' ? replacementFor(d, latest)?.id : d.id)).filter((x): x is string => !!x);
     return [...new Set(ids)];
   }
 

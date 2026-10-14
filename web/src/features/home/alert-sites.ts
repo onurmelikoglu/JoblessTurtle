@@ -1,22 +1,39 @@
-import type { IsoDate, JobAlertSearch, JobAlertSite } from '@/api/types';
+import type { IsoDate, JobAlertSite } from '@/api/types';
+
+/** Sitede açılacak arama: seçilen pozisyonlar ve şehir (null: Türkiye geneli). */
+export interface AlertQuery {
+  titles: string[];
+  city: string | null;
+}
 
 export interface AlertSite {
   platform: string;
+  /** Butonun adı, Türkçe ek ile ("Kariyer.net'te aç"). */
+  openLabel: string;
   /** Sitede alarm düğmesinin adı; kullanıcıya ne arayacağını söyler. */
   action: string;
-  searchUrl: (search: JobAlertSearch) => string;
+  /** Arama "VEYA" ile birden çok pozisyonu tek alarmda birleştirebiliyor mu? */
+  supportsOr: boolean;
+  searchUrl: (query: AlertQuery) => string;
 }
 
-const query = (params: Record<string, string | null>) => new URLSearchParams(Object.entries(params).filter((e): e is [string, string] => !!e[1])).toString();
+const params = (entries: Record<string, string | null>) => new URLSearchParams(Object.entries(entries).filter((e): e is [string, string] => !!e[1])).toString();
+
+/** Birden çok pozisyon tek aramada birleşir: çok kelimeli unvan tırnak içinde, aralarında OR. */
+export function orKeywords(titles: string[]): string {
+  if (titles.length === 1) return titles[0];
+  return titles.map((title) => (/\s/.test(title) ? `"${title}"` : title)).join(' OR ');
+}
 
 /**
- * Alarm kurulabilecek siteler ve profildeki aramanın sitedeki arama adresi. Kullanıcı açılan sayfada kendi hesabıyla
- * alarmı kurar; uygulama siteye bağlanmaz. Kariyer.net'in şehir parametresi doğrulanamadığı için şehir orada seçilir.
+ * Alarm kurulabilecek siteler ve seçilen aramanın sitedeki adresi. Kullanıcı açılan sayfada kendi hesabıyla alarmı kurar;
+ * uygulama siteye bağlanmaz. Kariyer.net "VEYA" aramasını ve şehir parametresini desteklemediği için orada tek pozisyonla
+ * açılır, şehir sayfadan seçilir.
  */
 export const ALERT_SITES: AlertSite[] = [
-  { platform: 'Kariyer.net', action: 'İş alarmı oluştur', searchUrl: (s) => `https://www.kariyer.net/is-ilanlari?${query({ kw: s.title })}` },
-  { platform: 'LinkedIn', action: 'Uyarı oluştur', searchUrl: (s) => `https://www.linkedin.com/jobs/search/?${query({ keywords: s.title, location: s.city ? `${s.city}, Türkiye` : 'Türkiye' })}` },
-  { platform: 'Indeed', action: 'İş ilanı uyarısı', searchUrl: (s) => `https://tr.indeed.com/jobs?${query({ q: s.title, l: s.city })}` },
+  { platform: 'Kariyer.net', openLabel: "Kariyer.net'te aç", action: 'İş alarmı oluştur', supportsOr: false, searchUrl: (q) => `https://www.kariyer.net/is-ilanlari?${params({ kw: q.titles[0] })}` },
+  { platform: 'LinkedIn', openLabel: "LinkedIn'de aç", action: 'Uyarı oluştur', supportsOr: true, searchUrl: (q) => `https://www.linkedin.com/jobs/search/?${params({ keywords: orKeywords(q.titles), location: q.city ? `${q.city}, Türkiye` : 'Türkiye' })}` },
+  { platform: 'Indeed', openLabel: "Indeed'de aç", action: 'İş ilanı uyarısı', supportsOr: true, searchUrl: (q) => `https://tr.indeed.com/jobs?${params({ q: orKeywords(q.titles), l: q.city })}` },
 ];
 
 export type AlertSiteState = { kind: 'working'; mails: number; lastAt: IsoDate | null } | { kind: 'none' };
@@ -26,4 +43,16 @@ export function alertSiteState(platform: string, sites: JobAlertSite[]): AlertSi
   return site && site.mails > 0 ? { kind: 'working', mails: site.mails, lastAt: site.lastAt } : { kind: 'none' };
 }
 
-export const searchLabel = (search: JobAlertSearch) => (search.city ? `${search.title} · ${search.city}` : search.title);
+/** Seçili pozisyonlar listede yoksa (profil değişti) ilk pozisyon seçilir; sıra profildeki sırayı izler. */
+export function chosenTitles(titles: string[], selected: ReadonlySet<string>): string[] {
+  const chosen = titles.filter((title) => selected.has(title));
+  return chosen.length ? chosen : titles.slice(0, 1);
+}
+
+/** Pozisyonu seçime ekler ya da çıkarır; son kalan pozisyon çıkarılamaz (arama boş kalmasın). */
+export function toggled(selected: ReadonlySet<string>, title: string): Set<string> {
+  const next = new Set(selected);
+  if (!next.has(title)) next.add(title);
+  else if (next.size > 1) next.delete(title);
+  return next;
+}

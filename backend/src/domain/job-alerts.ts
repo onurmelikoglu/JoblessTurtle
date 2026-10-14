@@ -87,8 +87,8 @@ export function alertLinks(anchors: { href: string; text: string }[]): AlertLink
     .map(([url, text], i) => ({ ref: `L${i + 1}`, url, text }));
 }
 
-/** Önerilen alarm aramalarının sınırı; her biri sitede ayrı bir alarm demektir. */
-export const MAX_ALERT_SEARCHES = 8;
+/** Alarm kurulumunda gösterilen pozisyon sayısı sınırı. */
+export const MAX_ALERT_TITLES = 12;
 
 /** Kayıtlı şehir seçimi ("İstanbul; İstanbul (Anadolu Yakası); Kocaeli") sitelerin anladığı şehir adlarına iner: yaka/bölge ayrıntısı atılır, tekrar birleşir. */
 export function alertCities(selection: string | null | undefined): string[] {
@@ -100,25 +100,18 @@ export function alertCities(selection: string | null | undefined): string[] {
   return [...cities.values()];
 }
 
-/** Etkin profillerin tam unvanları × şehirleri; şehir yoksa Türkiye geneli (null). Aynı unvan ve şehir bir kez önerilir. */
-export function alertSearches(profiles: { exactTitles: string[]; cities: string[] }[]): { title: string; city: string | null }[] {
-  const seen = new Set<string>();
-  const out: { title: string; city: string | null }[] = [];
+/** Etkin profillerin tam unvanları ve şehirleri, tekrarsız; alarm kurulumunda seçenek olarak gösterilir. */
+export function alertChoices(profiles: { exactTitles: string[]; cities: string[] }[]): { titles: string[]; cities: string[] } {
+  const titles = new Map<string, string>();
+  const cities = new Map<string, string>();
   for (const profile of profiles) {
-    const cities: (string | null)[] = profile.cities.length ? profile.cities : [null];
     for (const raw of profile.exactTitles) {
       const title = raw.trim();
-      if (!title) continue;
-      for (const city of cities) {
-        const key = `${fold(title)}|${fold(city ?? '')}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        out.push({ title, city });
-        if (out.length >= MAX_ALERT_SEARCHES) return out;
-      }
+      if (title && !titles.has(fold(title)) && titles.size < MAX_ALERT_TITLES) titles.set(fold(title), title);
     }
+    for (const city of profile.cities) if (!cities.has(fold(city))) cities.set(fold(city), city);
   }
-  return out;
+  return { titles: [...titles.values()], cities: [...cities.values()] };
 }
 
 export interface AlertListing {

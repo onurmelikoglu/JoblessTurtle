@@ -303,7 +303,7 @@ export function ApplyPreviewDialog({ opportunityId, onClose }: ApplyPreviewDialo
                       <span className="min-w-0">
                         <span className="block truncate">{doc.fileName}</span>
                         <span className="block text-xs text-ink-soft">
-                          {documentLabel(doc.type)} · {fmtBytes(doc.size)}
+                          {documentLabel(doc.type)}{doc.language === 'en' ? ' · İngilizce' : ''} · {fmtBytes(doc.size)}
                         </span>
                       </span>
                     }

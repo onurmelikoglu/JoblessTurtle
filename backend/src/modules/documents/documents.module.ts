@@ -19,7 +19,7 @@ import { DraftingService } from '../../engine/drafting.service';
 const uploadSchema = z.object({
   candidateId: z.string(),
   type: z.enum(['cv', 'portfolio', 'cover_letter', 'other']),
-  language: z.string().max(5).default('tr'),
+  language: z.enum(['tr', 'en']).default('tr'),
   label: z.string().max(120).optional(),
 });
 const patchSchema = z.object({ label: z.string().max(120).optional(), archived: z.boolean().optional() });
