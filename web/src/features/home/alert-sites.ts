@@ -14,8 +14,14 @@ export interface AlertSite {
   action: string;
   /** Arama "VEYA" ile birden çok pozisyonu tek alarmda birleştirebiliyor mu? */
   supportsOr: boolean;
+  /** Şehir adreste taşınabiliyor mu? Taşınamıyorsa site tek butonla açılır, şehir sitede seçilir. */
+  perCity: boolean;
   searchUrl: (query: AlertQuery) => string;
 }
+
+/** "İstanbul (Anadolu Yakası)" gibi yaka seçimleri: LinkedIn ve Indeed yakaları ayırmadığı için şehrin tamamı aranır. */
+export const siteCity = (city: string) => city.replace(/\s*\(.*\)\s*$/, '').trim();
+export const isPartOfCity = (city: string) => siteCity(city) !== city;
 
 const params = (entries: Record<string, string | null>) => new URLSearchParams(Object.entries(entries).filter((e): e is [string, string] => !!e[1])).toString();
 
@@ -31,9 +37,9 @@ export function orKeywords(titles: string[]): string {
  * açılır, şehir sayfadan seçilir.
  */
 export const ALERT_SITES: AlertSite[] = [
-  { platform: 'Kariyer.net', openLabel: "Kariyer.net'te aç", action: 'İş alarmı oluştur', supportsOr: false, searchUrl: (q) => `https://www.kariyer.net/is-ilanlari?${params({ kw: q.titles[0] })}` },
-  { platform: 'LinkedIn', openLabel: "LinkedIn'de aç", action: 'Uyarı oluştur', supportsOr: true, searchUrl: (q) => `https://www.linkedin.com/jobs/search/?${params({ keywords: orKeywords(q.titles), location: q.city ? `${q.city}, Türkiye` : 'Türkiye' })}` },
-  { platform: 'Indeed', openLabel: "Indeed'de aç", action: 'İş ilanı uyarısı', supportsOr: true, searchUrl: (q) => `https://tr.indeed.com/jobs?${params({ q: orKeywords(q.titles), l: q.city })}` },
+  { platform: 'Kariyer.net', openLabel: "Kariyer.net'te aç", action: 'İş alarmı oluştur', supportsOr: false, perCity: false, searchUrl: (q) => `https://www.kariyer.net/is-ilanlari?${params({ kw: q.titles[0] })}` },
+  { platform: 'LinkedIn', openLabel: "LinkedIn'de aç", action: 'Uyarı oluştur', supportsOr: true, perCity: true, searchUrl: (q) => `https://www.linkedin.com/jobs/search/?${params({ keywords: orKeywords(q.titles), location: q.city ? `${siteCity(q.city)}, Türkiye` : 'Türkiye' })}` },
+  { platform: 'Indeed', openLabel: "Indeed'de aç", action: 'İş ilanı uyarısı', supportsOr: true, perCity: true, searchUrl: (q) => `https://tr.indeed.com/jobs?${params({ q: orKeywords(q.titles), l: q.city ? siteCity(q.city) : null })}` },
 ];
 
 export type AlertSiteState = { kind: 'working'; mails: number; lastAt: IsoDate | null } | { kind: 'none' };

@@ -398,7 +398,7 @@ export interface JobAlertStats {
   sites: JobAlertSite[];
   /** Alarm kurulumunda seçilebilecek pozisyonlar: etkin profillerin tam unvanları. */
   titles: string[];
-  /** Alarm kurulumunda seçilebilecek şehirler (yaka/bölge ayrıntısı atılmış). */
+  /** Alarm kurulumunun başlangıç şehir seçimi (profilden); kullanıcı istediği şehri ekleyip çıkarabilir. */
   cities: string[];
 }
 

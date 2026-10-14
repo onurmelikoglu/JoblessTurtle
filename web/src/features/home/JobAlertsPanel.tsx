@@ -1,12 +1,14 @@
 import { BellRing, CircleCheck, ExternalLink } from 'lucide-react';
 import { useState } from 'react';
 import type { HomeInbox } from '@/api/types';
+import { CITY_OPTIONS } from '@/features/shared/cities';
 import { fmtAgo } from '@/lib/format';
 import { Badge } from '@/ui/Badge';
 import { LinkButton } from '@/ui/Button';
 import { FilterChip } from '@/ui/controls';
 import { Panel, PanelTitle } from '@/ui/Panel';
-import { ALERT_SITES, alertSiteState, chosenTitles, toggled } from './alert-sites';
+import { TagsInput } from '@/ui/TagsInput';
+import { ALERT_SITES, alertSiteState, chosenTitles, isPartOfCity, toggled } from './alert-sites';
 
 const NATIONWIDE = 'Türkiye geneli';
 
@@ -32,15 +34,16 @@ function SiteStatus({ inbox }: { inbox: HomeInbox }) {
 }
 
 function AlertSetup({ inbox }: { inbox: HomeInbox }) {
-  const { titles, cities } = inbox.alerts;
+  const { titles } = inbox.alerts;
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set(titles.slice(0, 1)));
-  const [pickedCity, setCity] = useState<string | null>(cities[0] ?? null);
+  const [cities, setCities] = useState<string[]>(() => inbox.alerts.cities.filter((city) => (CITY_OPTIONS as readonly string[]).includes(city)));
   const chosen = chosenTitles(titles, selected);
-  const city = pickedCity && cities.includes(pickedCity) ? pickedCity : null;
 
   if (titles.length === 0) return <p className="text-sm text-ink-soft">Arama profiline pozisyon eklenince buradan alarm kurabilirsin.</p>;
-  const query = { titles: chosen, city };
-  const singleOnly = ALERT_SITES.filter((site) => !site.supportsOr);
+  const perCity = ALERT_SITES.filter((site) => site.perCity);
+  const single = ALERT_SITES.filter((site) => !site.perCity);
+  const rows: (string | null)[] = cities.length ? cities : [null];
+  const anyPart = cities.some(isPartOfCity);
   return (
     <div className="flex flex-col gap-3 text-sm">
       <div className="flex flex-col gap-1.5">
@@ -54,29 +57,30 @@ function AlertSetup({ inbox }: { inbox: HomeInbox }) {
         </div>
         <span className="text-xs text-ink-soft">Birden fazla seçersen (ör. Türkçe ve İngilizce adı) LinkedIn ve Indeed hepsini tek alarmda birleştirir.</span>
       </div>
-      <div className="flex flex-col gap-1.5">
-        <span className="font-medium">Şehir</span>
-        <div className="flex flex-wrap gap-2">
-          {[...cities, null].map((option) => (
-            <FilterChip key={option ?? NATIONWIDE} active={city === option} onToggle={() => setCity(option)}>
-              {option ?? NATIONWIDE}
-            </FilterChip>
-          ))}
-        </div>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {ALERT_SITES.map((site) => (
-          <LinkButton key={site.platform} href={site.searchUrl(query)} variant="outline" size="sm" icon={<ExternalLink className="size-4" aria-hidden />}>
-            {site.openLabel}
-          </LinkButton>
+      <TagsInput label="Şehirler" values={cities} onChange={setCities} options={CITY_OPTIONS} placeholder="Şehir ekle (yazarak ara)" hint="Her şehir için ayrı alarm kurulur; boş bırakırsan Türkiye geneli aranır. İstanbul'u Anadolu ya da Avrupa yakası olarak da seçebilirsin." />
+      <ul className="flex flex-col divide-y divide-line rounded-lg border border-line" aria-label="Kurulacak alarmlar">
+        {rows.map((city) => (
+          <li key={city ?? NATIONWIDE} className="flex flex-wrap items-center gap-2 px-3 py-2">
+            <span className="min-w-36 flex-1 font-medium">{city ?? NATIONWIDE}</span>
+            {perCity.map((site) => (
+              <LinkButton key={site.platform} href={site.searchUrl({ titles: chosen, city })} variant="outline" size="sm" icon={<ExternalLink className="size-4" aria-hidden />}>
+                {site.openLabel}
+              </LinkButton>
+            ))}
+          </li>
         ))}
-      </div>
-      {chosen.length > 1 &&
-        singleOnly.map((site) => (
-          <p key={site.platform} className="text-xs text-ink-soft">
-            {site.platform} tek pozisyonla arar; "{chosen[0]}" ile açılır{city ? ', şehri sayfadan seç' : ''}.
-          </p>
+        {single.map((site) => (
+          <li key={site.platform} className="flex flex-wrap items-center gap-2 px-3 py-2">
+            <span className="min-w-36 flex-1 text-ink-soft">
+              {site.platform}: şehri sayfadaki filtreden seç{chosen.length > 1 ? `; "${chosen[0]}" ile açılır` : ''}
+            </span>
+            <LinkButton href={site.searchUrl({ titles: chosen, city: null })} variant="outline" size="sm" icon={<ExternalLink className="size-4" aria-hidden />}>
+              {site.openLabel}
+            </LinkButton>
+          </li>
         ))}
+      </ul>
+      {anyPart && <p className="text-xs text-ink-soft">LinkedIn ve Indeed İstanbul'un yakalarını ayırmaz; bu sitelerde İstanbul geneli aranır. Kariyer.net'te yakayı sayfadaki şehir filtresinden seçebilirsin.</p>}
     </div>
   );
 }
@@ -116,7 +120,7 @@ export function JobAlertsPanel({ inbox }: { inbox: HomeInbox }) {
       <details className="text-sm">
         <summary className="cursor-pointer rounded font-medium text-brand hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand">Alarm nasıl kurulur?</summary>
         <ol className="mt-2 flex list-decimal flex-col gap-1.5 pl-5 text-ink-soft">
-          <li>Pozisyonları ve şehri seç, bir sitenin butonuna bas; site bu aramayla yeni sekmede açılır.</li>
+          <li>Pozisyonları ve şehirleri seç, her şehir için sitenin butonuna bas; site bu aramayla yeni sekmede açılır.</li>
           <li>
             Sitede hesabınla giriş yapıp sonuçların üstündeki alarm düğmesine bas ({ALERT_SITES.map((s) => `${s.platform}: "${s.action}"`).join(', ')}); sıklık olarak "günlük"ü seç.
           </li>

@@ -90,12 +90,19 @@ export function alertLinks(anchors: { href: string; text: string }[]): AlertLink
 /** Alarm kurulumunda gösterilen pozisyon sayısı sınırı. */
 export const MAX_ALERT_TITLES = 12;
 
-/** Kayıtlı şehir seçimi ("İstanbul; İstanbul (Anadolu Yakası); Kocaeli") sitelerin anladığı şehir adlarına iner: yaka/bölge ayrıntısı atılır, tekrar birleşir. */
+const PART_OF_CITY = /\s*\(.*\)\s*$/;
+
+/**
+ * Kayıtlı şehir seçimi ("İstanbul; İstanbul (Anadolu Yakası); Kocaeli") alarm kurulumunun başlangıç seçimine iner:
+ * şehrin tamamı seçiliyse yaka ayrıntıları düşer, yalnızca bir yaka seçiliyse yaka kalır.
+ */
 export function alertCities(selection: string | null | undefined): string[] {
+  const parts = (selection ?? '').split(CITY_SELECTION_SEPARATOR).map((p) => p.trim()).filter(Boolean);
+  const whole = new Set(parts.filter((p) => !PART_OF_CITY.test(p)).map(fold));
   const cities = new Map<string, string>();
-  for (const part of (selection ?? '').split(CITY_SELECTION_SEPARATOR)) {
-    const city = part.replace(/\s*\(.*\)\s*$/, '').trim();
-    if (city && !cities.has(fold(city))) cities.set(fold(city), city);
+  for (const part of parts) {
+    if (PART_OF_CITY.test(part) && whole.has(fold(part.replace(PART_OF_CITY, '')))) continue;
+    if (!cities.has(fold(part))) cities.set(fold(part), part);
   }
   return [...cities.values()];
 }

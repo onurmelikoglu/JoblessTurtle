@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { IsoDate } from '@/api/types';
-import { ALERT_SITES, alertSiteState, chosenTitles, orKeywords, toggled } from './alert-sites';
+import { ALERT_SITES, alertSiteState, chosenTitles, isPartOfCity, orKeywords, siteCity, toggled } from './alert-sites';
 
 const url = (platform: string, titles: string[], city: string | null) => ALERT_SITES.find((s) => s.platform === platform)!.searchUrl({ titles, city });
 
@@ -16,6 +16,15 @@ describe('iş alarmı kurulumu', () => {
     expect(url('LinkedIn', ['Art Director'], null)).toBe('https://www.linkedin.com/jobs/search/?keywords=Art+Director&location=T%C3%BCrkiye');
     expect(url('Indeed', both, 'İzmir')).toBe(`https://tr.indeed.com/jobs?${new URLSearchParams({ q: '"Sosyal Medya Uzmanı" OR "Social Media Specialist"', l: 'İzmir' })}`);
     expect(url('Indeed', ['Art Director'], null)).toBe('https://tr.indeed.com/jobs?q=Art+Director');
+  });
+
+  it('İstanbul yakası seçilince LinkedIn ve Indeed İstanbul genelini arar', () => {
+    expect(url('LinkedIn', ['Art Director'], 'İstanbul (Anadolu Yakası)')).toBe(`https://www.linkedin.com/jobs/search/?${new URLSearchParams({ keywords: 'Art Director', location: 'İstanbul, Türkiye' })}`);
+    expect(url('Indeed', ['Art Director'], 'İstanbul (Avrupa Yakası)')).toBe(`https://tr.indeed.com/jobs?${new URLSearchParams({ q: 'Art Director', l: 'İstanbul' })}`);
+    expect(siteCity('Kocaeli')).toBe('Kocaeli');
+    expect(isPartOfCity('İstanbul (Avrupa Yakası)')).toBe(true);
+    expect(isPartOfCity('İstanbul')).toBe(false);
+    expect(ALERT_SITES.filter((s) => !s.perCity).map((s) => s.platform)).toEqual(['Kariyer.net']);
   });
 
   it('Kariyer.net VEYA desteklemez; ilk seçilen pozisyonla ve şehirsiz açılır', () => {

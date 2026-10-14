@@ -105,8 +105,9 @@ describe('iş alarmı: bağlantılar', () => {
 });
 
 describe('iş alarmı: kurulum seçenekleri', () => {
-  it('kayıtlı şehir seçimini site şehirlerine indirir', () => {
+  it('kayıtlı şehir seçimi başlangıç seçimine iner: şehrin tamamı seçiliyse yakalar düşer, tek yaka kalır', () => {
     expect(alertCities('İstanbul; İstanbul (Anadolu Yakası); İstanbul (Avrupa Yakası); Kocaeli')).toEqual(['İstanbul', 'Kocaeli']);
+    expect(alertCities('İstanbul (Anadolu Yakası); Kocaeli')).toEqual(['İstanbul (Anadolu Yakası)', 'Kocaeli']);
     expect(alertCities(null)).toEqual([]);
   });
 
