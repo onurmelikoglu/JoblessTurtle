@@ -1,0 +1,13 @@
+# Önceden derlenmiş dosyalarla hızlı web imajı. Derleme bağlamı depo köküdür.
+#   (cd web && npm ci && npm run build)
+#   WEB_DOCKERFILE=Dockerfile.prebuilt docker compose up -d --build --no-deps web
+FROM alpine:3.20 AS site
+RUN apk add --no-cache brotli zstd
+COPY web/dist /site
+COPY web/assemble.sh /usr/local/bin/assemble.sh
+RUN sh /usr/local/bin/assemble.sh /site
+
+FROM caddy:2-alpine
+COPY --from=site /site /srv
+COPY web/Caddyfile /etc/caddy/Caddyfile
+EXPOSE 80

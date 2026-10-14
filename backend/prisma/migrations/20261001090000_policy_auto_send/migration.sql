@@ -1,0 +1,1 @@
+ALTER TABLE "AutomationPolicy" ADD COLUMN "autoSend" BOOLEAN NOT NULL DEFAULT true;

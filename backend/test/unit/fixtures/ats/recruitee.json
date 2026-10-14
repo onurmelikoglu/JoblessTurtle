@@ -1,0 +1,364 @@
+{
+  "offers": [
+    {
+      "careers_apply_url": "https://careers.bunq.com/o/senior-product-owner-1/c/new",
+      "sharing_image": null,
+      "city": "Amsterdam",
+      "translations": {
+        "en": {
+          "description": "<p>At bunq, we're not just building a banking app; we're reshaping how people around the world experience financial freedom.</p>",
+          "title": "(Senior) Product Owner",
+          "highlight": null,
+          "requirements": "<p>Proven experience in product management, with a track record of owning a product or significant features from concept to launch and beyond.</p>",
+          "sharing_image": null,
+          "sharing_title": "(Senior) Product Owner",
+          "sharing_description": "At bunq, we're not just building a banking app; we're reshaping how people around the world experience financial freedom. As a (Senior) Product Owner at bunq, you are the driving force behind a core p",
+          "locations_question": "What is your preferred work location?"
+        }
+      },
+      "position": 1645,
+      "category_code": "banking",
+      "salary": {
+        "max": null,
+        "min": null,
+        "period": null,
+        "currency": null
+      },
+      "created_at": "2026-10-13 10:46:23 UTC",
+      "country": "Netherlands",
+      "options_phone": "required",
+      "company_name": "bunq",
+      "locations_question_required": true,
+      "mailbox_email": "job.bbbb2@ornekfirma.recruitee.com",
+      "state_code": "NH",
+      "locations_question": "What is your preferred work location?",
+      "requirements": "<p>Proven experience in product management, with a track record of owning a product or significant features from concept to launch and beyond.</p>",
+      "careers_url": "https://careers.bunq.com/o/senior-product-owner-1",
+      "slug": "senior-product-owner-1",
+      "options_cv": "off",
+      "locations_question_type": "single_choice",
+      "location_question_visible": false,
+      "updated_at": "2026-10-13 10:58:56 UTC",
+      "dynamic_fields": [],
+      "published_at": "2026-10-13 10:58:56 UTC",
+      "postal_code": null,
+      "max_hours": 40,
+      "locations": [
+        {
+          "id": 39979,
+          "name": "Amsterdam",
+          "state": "Noord-Holland",
+          "country": "Netherlands",
+          "city": "Amsterdam",
+          "translations": {
+            "en": {
+              "name": "Amsterdam",
+              "city": "Amsterdam",
+              "postal_code": null,
+              "street": null,
+              "note": null
+            }
+          },
+          "country_code": "NL",
+          "state_code": "NH",
+          "postal_code": null,
+          "street": null,
+          "note": null
+        }
+      ],
+      "on_site": false,
+      "tags": [],
+      "country_code": "NL",
+      "hybrid": true,
+      "close_at": null,
+      "sharing_description": "At bunq, we're not just building a banking app; we're reshaping how people around the world experience financial freedom. As a (Senior) Product Owner at bunq, you are the driving force behind a core p",
+      "min_hours": 40,
+      "max_hours_per_week": "40",
+      "options_photo": "off",
+      "description": "<p>At bunq, we're not just building a banking app; we're reshaping how people around the world experience financial freedom.</p>",
+      "cover_image": null,
+      "title": "(Senior) Product Owner",
+      "options_salutation": "off",
+      "guid": "n4moa",
+      "options_title": "off",
+      "options_cover_letter": "off",
+      "remote": false,
+      "highlight": null,
+      "sharing_title": "(Senior) Product Owner",
+      "id": 2781634,
+      "employment_type_code": "fulltime_permanent",
+      "experience_code": "experienced",
+      "education_code": "bachelor_degree",
+      "location": "Amsterdam, Noord-Holland, Netherlands",
+      "open_questions": [
+        {
+          "id": 4432839,
+          "position": 1,
+          "options": {},
+          "required": true,
+          "body": "What country do you currently live in?",
+          "kind": "string",
+          "translations": {
+            "en": {
+              "body": "What country do you currently live in?"
+            }
+          },
+          "open_question_options": []
+        }
+      ],
+      "status": "published",
+      "state_name": "Noord-Holland",
+      "min_hours_per_week": "40",
+      "department": "Product"
+    },
+    {
+      "sharing_image": null,
+      "position": 322,
+      "locations_question": "What is your preferred work location?",
+      "published_at": "2026-10-02 14:37:16 UTC",
+      "options_photo": "off",
+      "country": "Armenia",
+      "city": "Yerevan",
+      "options_phone": "required",
+      "locations_question_type": "multiple_choice",
+      "location": "Remote job",
+      "created_at": "2026-10-02 14:06:56 UTC",
+      "employment_type_code": "fulltime_permanent",
+      "options_cv": "required",
+      "location_question_visible": true,
+      "guid": "wlg81",
+      "locations": [
+        {
+          "id": 296520,
+          "name": "Armenia",
+          "state": "Erevan",
+          "country": "Armenia",
+          "city": "Yerevan",
+          "translations": {
+            "en": {
+              "name": "Armenia",
+              "city": "Yerevan",
+              "postal_code": null,
+              "street": null,
+              "note": null
+            }
+          },
+          "country_code": "AM",
+          "state_code": "ER",
+          "postal_code": null,
+          "street": null,
+          "note": null
+        },
+        {
+          "id": 296519,
+          "name": "Turkey",
+          "state": "İstanbul",
+          "country": "Türkiye",
+          "city": "Istanbul",
+          "translations": {
+            "en": {
+              "name": "Turkey",
+              "city": "Istanbul",
+              "postal_code": null,
+              "street": null,
+              "note": null
+            }
+          },
+          "country_code": "TR",
+          "state_code": "34",
+          "postal_code": null,
+          "street": null,
+          "note": null
+        },
+        {
+          "id": 201663,
+          "name": "United Kingdom",
+          "state": "Greater London",
+          "country": "United Kingdom",
+          "city": "London",
+          "translations": {
+            "en": {
+              "name": "United Kingdom",
+              "city": "London",
+              "postal_code": null,
+              "street": null,
+              "note": null
+            }
+          },
+          "country_code": "GB",
+          "state_code": "LND",
+          "postal_code": null,
+          "street": null,
+          "note": null
+        }
+      ],
+      "max_hours": null,
+      "close_at": null,
+      "experience_code": "experienced",
+      "options_cover_letter": "optional",
+      "sharing_title": "Head of Product Analytics - 100% Remote - EMEA",
+      "max_hours_per_week": null,
+      "highlight": null,
+      "salary": {
+        "max": null,
+        "min": null,
+        "period": null,
+        "currency": null
+      },
+      "postal_code": null,
+      "tags": [],
+      "dynamic_fields": [],
+      "state_name": "Erevan",
+      "careers_url": "https://careers.hostaway.com/o/head-of-product-analytics-100-remote-emea",
+      "min_hours": null,
+      "options_salutation": "off",
+      "state_code": "ER",
+      "careers_apply_url": "https://careers.hostaway.com/o/head-of-product-analytics-100-remote-emea/c/new",
+      "on_site": false,
+      "company_name": "Hostaway",
+      "mailbox_email": "job.cccc3@ornekfirma.recruitee.com",
+      "locations_question_required": true,
+      "description": "<p>NOTE: This is a FULLY remote role, but the candidate must be within LOCATION to collaborate with their team, peers, and internal customers.</p>",
+      "slug": "head-of-product-analytics-100-remote-emea",
+      "remote": true,
+      "requirements": "<p>8+ years in product analytics, ideally in B2B SaaS at a scaling stage.</p>",
+      "category_code": "internet",
+      "options_title": "off",
+      "updated_at": "2026-10-08 08:03:56 UTC",
+      "open_questions": [
+        {
+          "id": 4411639,
+          "position": 1,
+          "options": {},
+          "required": true,
+          "body": "Where are you currently located? (City, country)",
+          "kind": "string",
+          "translations": {
+            "en": {
+              "body": "Where are you currently located? (City, country)"
+            }
+          },
+          "open_question_options": []
+        }
+      ],
+      "country_code": "AM",
+      "department": "Product",
+      "id": 2769628,
+      "education_code": "bachelor_degree",
+      "title": "Head of Product Analytics - 100% Remote - EMEA",
+      "translations": {
+        "en": {
+          "description": "<p>NOTE: This is a FULLY remote role, but the candidate must be within LOCATION to collaborate with their team, peers, and internal customers.</p>",
+          "title": "Head of Product Analytics - 100% Remote - EMEA",
+          "highlight": null,
+          "requirements": "<p>8+ years in product analytics, ideally in B2B SaaS at a scaling stage.</p>",
+          "sharing_image": null,
+          "sharing_title": "Head of Product Analytics - 100% Remote - EMEA",
+          "sharing_description": "NOTE: This is a FULLY remote role, but the candidate must be within LOCATION to collaborate with their team, peers, and internal customers. You do not have to be in the specific country or city shown ",
+          "locations_question": "What is your preferred work location?"
+        }
+      },
+      "sharing_description": "NOTE: This is a FULLY remote role, but the candidate must be within LOCATION to collaborate with their team, peers, and internal customers. You do not have to be in the specific country or city shown ",
+      "cover_image": null,
+      "status": "published",
+      "hybrid": false,
+      "min_hours_per_week": null
+    },
+    {
+      "careers_apply_url": "https://personio.recruitee.com/o/api-job-berlin-musterstr-1-10111/c/new",
+      "state_name": "Berlin",
+      "position": 2,
+      "max_hours_per_week": "35",
+      "on_site": true,
+      "country": "Deutschland",
+      "min_hours": 32,
+      "guid": "c5tkw",
+      "sharing_title": "API Job",
+      "hybrid": false,
+      "locations_question": "Was ist dein bevorzugter Arbeitsort?",
+      "min_hours_per_week": "32",
+      "experience_code": "experienced",
+      "options_salutation": "off",
+      "sharing_image": null,
+      "options_photo": "off",
+      "created_at": "2025-01-02 14:19:26 UTC",
+      "location_question_visible": false,
+      "slug": "api-job-berlin-musterstr-1-10111",
+      "salary": {
+        "max": null,
+        "min": null,
+        "period": null,
+        "currency": null
+      },
+      "department": "Produkt",
+      "translations": {
+        "de": {
+          "description": "<p>Stellenangebot: API Job bei FD Sandbox in Berlin Wir suchen eine engagierte Person für die Position des API Jobs bei FD Sandbox in unserer Produktabteilung.</p>",
+          "title": "API Job - Berlin - Musterstr 1, 10111",
+          "highlight": null,
+          "requirements": null,
+          "sharing_image": null,
+          "sharing_title": "API Job",
+          "sharing_description": "Test",
+          "locations_question": "Was ist dein bevorzugter Arbeitsort?"
+        }
+      },
+      "tags": [],
+      "education_code": "high_school_coursework",
+      "category_code": "accountancy",
+      "options_phone": "required",
+      "country_code": "DE",
+      "careers_url": "https://personio.recruitee.com/o/api-job-berlin-musterstr-1-10111",
+      "location": "Berlin, Berlin, Deutschland",
+      "dynamic_fields": [],
+      "max_hours": 35,
+      "description": "<p>Stellenangebot: API Job bei FD Sandbox in Berlin Wir suchen eine engagierte Person für die Position des API Jobs bei FD Sandbox in unserer Produktabteilung.</p>",
+      "locations_question_required": true,
+      "mailbox_email": "job.aaaa1@ornekfirma.recruitee.com",
+      "close_at": null,
+      "remote": false,
+      "highlight": null,
+      "company_name": "FD Sandbox",
+      "sharing_description": "Test",
+      "open_questions": [],
+      "id": 1968676,
+      "published_at": "2025-01-02 14:22:42 UTC",
+      "options_title": "off",
+      "employment_type_code": "fulltime_permanent",
+      "cover_image": null,
+      "options_cv": "required",
+      "options_cover_letter": "optional",
+      "state_code": "BE",
+      "locations_question_type": "multiple_choice",
+      "postal_code": null,
+      "status": "published",
+      "title": "API Job - Berlin - Musterstr 1, 10111",
+      "requirements": null,
+      "updated_at": "2025-01-02 18:53:43 UTC",
+      "city": "Berlin",
+      "locations": [
+        {
+          "id": 185790,
+          "name": "Berlin",
+          "state": "Berlin",
+          "country": "Deutschland",
+          "city": "Berlin",
+          "translations": {
+            "de": {
+              "name": "Berlin",
+              "city": "Berlin",
+              "postal_code": null,
+              "street": null,
+              "note": null
+            }
+          },
+          "country_code": "DE",
+          "state_code": "BE",
+          "postal_code": null,
+          "street": null,
+          "note": null
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,203 @@
+{
+  "offset": 0,
+  "limit": 100,
+  "totalFound": 4986,
+  "content": [
+    {
+      "id": "744000155328684",
+      "name": "Electronic Supplier Quality Engineer",
+      "uuid": "67aebf9d-bd7d-44b4-84eb-abb0f9e6f3b7",
+      "jobAdId": "ad6cecce-0a53-4c14-b46b-e43624956b79",
+      "defaultJobAd": true,
+      "refNumber": "REF298318S",
+      "company": {
+        "identifier": "BoschGroup",
+        "name": "Bosch Group"
+      },
+      "releasedDate": "2026-10-13T17:58:50.319Z",
+      "location": {
+        "city": "Celaya",
+        "region": "Gto.",
+        "country": "mx",
+        "address": "Apaseo El Grande",
+        "postalCode": "38010",
+        "remote": false,
+        "hybrid": false,
+        "latitude": "20.5495949",
+        "longitude": "-100.8086389",
+        "fullLocation": "Celaya, Gto., Mexico"
+      },
+      "industry": {
+        "id": "automotive",
+        "label": "Automotive"
+      },
+      "department": {},
+      "function": {
+        "id": "quality_assurance",
+        "label": "Quality Assurance"
+      },
+      "typeOfEmployment": {
+        "id": "permanent",
+        "label": "Full-time"
+      },
+      "experienceLevel": {
+        "id": "associate",
+        "label": "Associate"
+      },
+      "customField": [
+        {
+          "fieldId": "5abe2a4ab60a5e486a2d9b1d",
+          "fieldLabel": "Contract type",
+          "valueId": "1e46492b-d24f-460c-b095-38cf08a778d8",
+          "valueLabel": "Unlimited"
+        },
+        {
+          "fieldId": "5abe28e96d8bc56863dd9746",
+          "fieldLabel": "Tariff Area",
+          "valueId": "540ff3f7-a953-4856-97e3-f2202d80c57c",
+          "valueLabel": "Mexico Local Grades"
+        }
+      ],
+      "visibility": "PUBLIC",
+      "ref": "https://api.smartrecruiters.com/v1/companies/BoschGroup/postings/744000155328684",
+      "language": {
+        "code": "en",
+        "label": "English",
+        "labelNative": "English (US)"
+      }
+    },
+    {
+      "id": "744000155328334",
+      "name": "MID LEVEL SAP SD SUPPORT ANALYST - 36052",
+      "uuid": "ae711626-8d9b-4c19-aada-6ec9d134c576",
+      "jobAdId": "23dfcc4e-887e-4cf4-aa82-dbc7e0ece5d0",
+      "defaultJobAd": true,
+      "refNumber": "REF298491H",
+      "company": {
+        "identifier": "BoschGroup",
+        "name": "Bosch Group"
+      },
+      "releasedDate": "2026-10-13T17:56:40.712Z",
+      "location": {
+        "city": "Campinas",
+        "region": "SP",
+        "country": "br",
+        "address": "Avenida Robert Bosch",
+        "postalCode": "13064-765",
+        "remote": false,
+        "hybrid": true,
+        "hybridDescription": "Hybrid work is preferred, but remote work is als",
+        "latitude": "-22.8992722",
+        "longitude": "-47.1170748",
+        "fullLocation": "Campinas, SP, Brazil"
+      },
+      "industry": {
+        "id": "it_and_services",
+        "label": "Information Technology And Services"
+      },
+      "department": {},
+      "function": {
+        "id": "information_technology",
+        "label": "Information Technology"
+      },
+      "typeOfEmployment": {
+        "id": "permanent",
+        "label": "Full-time"
+      },
+      "experienceLevel": {
+        "id": "not_applicable",
+        "label": "Not Applicable"
+      },
+      "customField": [
+        {
+          "fieldId": "5abe2a4ab60a5e486a2d9b1d",
+          "fieldLabel": "Contract type",
+          "valueId": "1e46492b-d24f-460c-b095-38cf08a778d8",
+          "valueLabel": "Unlimited"
+        },
+        {
+          "fieldId": "5abe28e96d8bc56863dd9746",
+          "fieldLabel": "Tariff Area",
+          "valueId": "89e3308f-77ac-4db2-9957-49b221a76b0f",
+          "valueLabel": "Brazil Local Grades"
+        }
+      ],
+      "visibility": "PUBLIC",
+      "ref": "https://api.smartrecruiters.com/v1/companies/BoschGroup/postings/744000155328334",
+      "creator": {
+        "name": "MARIA PAULA DA FONSECA LACERDA E MUNIZ (GS/HRS1-LA)"
+      },
+      "language": {
+        "code": "pt-BR",
+        "label": "Portuguese (Brazil)",
+        "labelNative": "português (Brasil)"
+      }
+    },
+    {
+      "id": "744000155268704",
+      "name": "Workshop Sales Representative - Washington DC Area ",
+      "uuid": "7c98855f-8ac0-463c-91f8-e390338e5ebd",
+      "jobAdId": "8367b0b8-f212-4768-bb7a-22e43b20886c",
+      "defaultJobAd": true,
+      "refNumber": "REF288158U",
+      "company": {
+        "identifier": "BoschGroup",
+        "name": "Bosch Group"
+      },
+      "releasedDate": "2026-10-13T13:46:51.365Z",
+      "location": {
+        "city": "Washington",
+        "region": "DC",
+        "country": "us",
+        "address": "DC Village Lane Southwest",
+        "postalCode": "20032",
+        "remote": true,
+        "hybrid": false,
+        "latitude": "38.8155946",
+        "longitude": "-77.0137957",
+        "fullLocation": "Washington, DC, United States"
+      },
+      "industry": {
+        "id": "automotive",
+        "label": "Automotive"
+      },
+      "department": {},
+      "function": {
+        "id": "sales",
+        "label": "Sales"
+      },
+      "typeOfEmployment": {
+        "id": "permanent",
+        "label": "Full-time"
+      },
+      "experienceLevel": {
+        "id": "associate",
+        "label": "Associate"
+      },
+      "customField": [
+        {
+          "fieldId": "5abe2a4ab60a5e486a2d9b1d",
+          "fieldLabel": "Contract type",
+          "valueId": "1e46492b-d24f-460c-b095-38cf08a778d8",
+          "valueLabel": "Unlimited"
+        },
+        {
+          "fieldId": "5abe28e96d8bc56863dd9746",
+          "fieldLabel": "Tariff Area",
+          "valueId": "82f1dd4b-de9d-4134-9f1a-8d315be380ae",
+          "valueLabel": "United States Local Grades"
+        }
+      ],
+      "visibility": "PUBLIC",
+      "ref": "https://api.smartrecruiters.com/v1/companies/BoschGroup/postings/744000155268704",
+      "creator": {
+        "name": "Deanna Proske"
+      },
+      "language": {
+        "code": "en",
+        "label": "English",
+        "labelNative": "English (US)"
+      }
+    }
+  ]
+}

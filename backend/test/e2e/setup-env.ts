@@ -1,0 +1,13 @@
+process.env.DATABASE_URL = process.env.TEST_DATABASE_URL ?? 'postgresql://jobtrack:jobtrack@localhost:5432/jobtrack_test';
+process.env.REDIS_URL = process.env.TEST_REDIS_URL ?? 'redis://localhost:6379/5';
+process.env.STORAGE_DIR = process.env.TEST_STORAGE_DIR ?? '/tmp/jobtrack-test-storage';
+process.env.REGISTRATION_MODE = 'open';
+process.env.SCHEDULER_ENABLED = 'false';
+process.env.TELEGRAM_POLLING = 'false';
+process.env.CLAUDE_CLI_PATH = '/nonexistent/claude';
+process.env.CODEX_CLI_PATH = '/nonexistent/codex';
+process.env.OLLAMA_URL = '';
+process.env.ANTHROPIC_API_KEY = '';
+process.env.OPENAI_API_KEY = '';
+process.env.TELEGRAM_BOT_TOKEN = '';
+process.env.WEBHOOK_SECRET = 'test-secret';

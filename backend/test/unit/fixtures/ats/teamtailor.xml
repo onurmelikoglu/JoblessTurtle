@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:tt="https://teamtailor.com/locations">
+  <channel>
+    <title>Polestar</title>
+    <description>Our job openings</description>
+    <link>https://polestar.teamtailor.com/jobs</link>
+    <item>
+      <title>Senior Customs Operations Specialist</title>
+      <description>&lt;p&gt;The opportunity We are looking for a Senior Customs Operations Specialist to join Polestar’s Global Customs team within the Quality &amp;amp; Logistics organization.&lt;/p&gt;</description>
+      <pubDate>Wed, 30 Sep 2026 09:33:49 +0200</pubDate>
+      <link>https://polestar.teamtailor.com/jobs/8476851-senior-customs-operations-specialist</link>
+      <remoteStatus>onsite</remoteStatus>
+      <guid>a899dbe3-8727-4e13-a3bc-b5f8513385d6</guid>
+      <company_name>Polestar</company_name>
+      <company_uuid>K5gBpFXnPio</company_uuid>
+      <tt:locations>
+        <tt:location>
+          <tt:name>Gothenburg, Sweden</tt:name>
+          <tt:address>Assar Gabrielssons väg 9</tt:address>
+          <tt:zip>418 78</tt:zip>
+          <tt:city>Göteborg</tt:city>
+          <tt:country>Sweden</tt:country>
+        </tt:location>
+      </tt:locations>
+      <tt:department>Quality &amp; Logistics</tt:department>
+      <tt:role/>
+    </item>
+    <item>
+      <title>Team Lead, Group Consolidation</title>
+      <description>&lt;p&gt;The opportunity We’re currently looking for a Team Lead, Group Consolidation to join our Group Accounting team in Gothenburg.&lt;/p&gt;</description>
+      <pubDate>Fri, 17 Apr 2026 15:33:14 +0200</pubDate>
+      <link>https://polestar.teamtailor.com/jobs/7592571-team-lead-group-consolidation</link>
+      <remoteStatus>hybrid</remoteStatus>
+      <guid>8cf0763f-c3fb-4372-b6af-d68030cd39c0</guid>
+      <company_name>Polestar</company_name>
+      <company_uuid>K5gBpFXnPio</company_uuid>
+      <tt:locations>
+        <tt:location>
+          <tt:name>Gothenburg, Sweden</tt:name>
+          <tt:address>Assar Gabrielssons väg 9</tt:address>
+          <tt:zip>418 78</tt:zip>
+          <tt:city>Göteborg</tt:city>
+          <tt:country>Sweden</tt:country>
+        </tt:location>
+      </tt:locations>
+      <tt:department>Finance</tt:department>
+      <tt:role/>
+    </item>
+    <item>
+      <title>Säljare inom restaurangbranschen till Ordine // Malmö, Helsingborg eller Lund</title>
+      <description>&lt;p&gt;Restaurangbranschen står aldrig still.&lt;/p&gt;</description>
+      <pubDate>Thu, 16 Jul 2026 16:21:13 +0200</pubDate>
+      <link>https://jobb.oddwork.se/jobs/8082074-saljare-inom-restaurangbranschen-till-ordine-malmo-helsingborg-eller-lund</link>
+      <remoteStatus>fully</remoteStatus>
+      <guid>ae49769c-e313-46a0-9baa-5f86c5a35f18</guid>
+      <tt:locations>
+        <tt:location>
+          <tt:name>Malmö </tt:name>
+          <tt:address>Centralstation</tt:address>
+          <tt:zip>211 20</tt:zip>
+          <tt:city>Malmö</tt:city>
+          <tt:country>Sweden</tt:country>
+        </tt:location>
+      </tt:locations>
+      <tt:department>Försäljning</tt:department>
+      <tt:role>Account Manager</tt:role>
+    </item>
+  </channel>
+</rss>

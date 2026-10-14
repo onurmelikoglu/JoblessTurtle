@@ -1,0 +1,102 @@
+# Jobless Turtle — yerel/VPS kurulum
+# Kullanım: cp .env.example .env  →  değerleri doldurun  →  docker compose up -d --build
+# Arayüz: http://localhost:${WEB_PORT:-8080}   API dokümantasyonu: /api/docs
+name: is-firma-takip
+
+x-backend: &backend
+  build:
+    context: ./backend
+    args:
+      INSTALL_AI_CLI: ${INSTALL_AI_CLI:-false}
+  image: is-firma-takip/backend:1.0.0
+  restart: unless-stopped
+  env_file: .env
+  environment:
+    DATABASE_URL: postgresql://${POSTGRES_USER:-jobtrack}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD .env içinde tanımlanmalı}@postgres:5432/${POSTGRES_DB:-jobtrack}
+    REDIS_URL: redis://redis:6379
+    STORAGE_DIR: /data/storage
+  volumes:
+    - documents:/data/storage
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-jobtrack}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD .env içinde tanımlanmalı}
+      POSTGRES_DB: ${POSTGRES_DB:-jobtrack}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    <<: *backend
+    command: ["api"]
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  worker:
+    <<: *backend
+    command: ["worker"]
+    depends_on:
+      api:
+        condition: service_healthy
+    # Claude Code / Codex CLI köprüsü için (INSTALL_AI_CLI=true) giriş bilgileri bu klasörlerde tutulur.
+    volumes:
+      - documents:/data/storage
+      - ai-cli-home:/home/node
+
+  web:
+    build:
+      context: .
+      # Hızlı derleme: `cd web && npm ci && npm run build`, sonra WEB_DOCKERFILE=Dockerfile.prebuilt (bkz. docs/SETUP.md)
+      dockerfile: web/${WEB_DOCKERFILE:-Dockerfile}
+    image: is-firma-takip/web:1.0.0
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # Arkadaş pilotu: sabit HTTPS hostname için Cloudflare named tunnel (docs/SETUP.md).
+  # Başlatma: docker compose --profile tunnel up -d
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    profiles: ["tunnel"]
+    command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TUNNEL_TOKEN:-}"]
+    depends_on:
+      - web
+
+volumes:
+  pgdata:
+  redisdata:
+  documents:
+  ai-cli-home:

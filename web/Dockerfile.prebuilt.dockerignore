@@ -1,0 +1,4 @@
+*
+!web/dist
+!web/Caddyfile
+!web/assemble.sh

@@ -1,0 +1,96 @@
+{
+  "name": "Blueground",
+  "description": "<p>Blueground is a global proptech company that is reinventing the way people live!</p>",
+  "jobs": [
+    {
+      "title": "Client Experience Coordinator (English & Greek Speaker) - Talent Pool",
+      "shortcode": "186545F8C1",
+      "code": null,
+      "employment_type": "Full-time",
+      "telecommuting": false,
+      "department": "Shared Services",
+      "url": "https://apply.workable.com/j/186545F8C1",
+      "shortlink": "https://apply.workable.com/j/186545F8C1",
+      "application_url": "https://apply.workable.com/j/186545F8C1/apply",
+      "published_on": "2026-02-12",
+      "created_at": "2025-09-30",
+      "country": "Greece",
+      "city": "Athens",
+      "state": "Attica",
+      "education": null,
+      "experience": "Associate",
+      "function": "Customer Service",
+      "industry": "Real Estate",
+      "locations": [
+        {
+          "country": "Greece",
+          "countryCode": "GR",
+          "city": "Athens",
+          "region": "Attica",
+          "hidden": false
+        }
+      ],
+      "description": "<p>🌍 Redefining how people live. At Blueground, we believe that when your base is reliable, the world opens up.</p>"
+    },
+    {
+      "title": "Sales Admin On-Demand",
+      "shortcode": "407973D643",
+      "code": null,
+      "employment_type": "Full-time",
+      "telecommuting": true,
+      "department": null,
+      "url": "https://apply.workable.com/j/407973D643",
+      "shortlink": "https://apply.workable.com/j/407973D643",
+      "application_url": "https://apply.workable.com/j/407973D643/apply",
+      "published_on": "2026-10-13",
+      "created_at": "2026-10-09",
+      "country": "Brazil",
+      "city": "",
+      "state": "",
+      "education": "Bachelor's Degree",
+      "experience": "Associate",
+      "function": "",
+      "industry": "Real Estate",
+      "locations": [
+        {
+          "country": "Brazil",
+          "countryCode": "BR",
+          "city": null,
+          "region": null,
+          "hidden": false
+        }
+      ],
+      "description": "<p>🌍 Redefining how people live. At Blueground, we believe that when your base is reliable, the world opens up.</p>"
+    },
+    {
+      "title": "Business Analyst-Skroutz Last Mile(BA0926)",
+      "shortcode": "DB1A13AC0A",
+      "code": "BA 0926",
+      "employment_type": "Full-time",
+      "telecommuting": false,
+      "department": "Last Mile",
+      "url": "https://apply.workable.com/j/DB1A13AC0A",
+      "shortlink": "https://apply.workable.com/j/DB1A13AC0A",
+      "application_url": "https://apply.workable.com/j/DB1A13AC0A/apply",
+      "published_on": "2026-08-31",
+      "created_at": "2026-08-31",
+      "country": "Greece",
+      "city": "Athens",
+      "state": "Attica",
+      "education": "Bachelor's Degree",
+      "experience": "Mid-Senior level",
+      "function": "",
+      "industry": "Logistics and Supply Chain",
+      "locations": [
+        {
+          "country": "Greece",
+          "countryCode": "GR",
+          "city": "Athens",
+          "region": "Attica",
+          "hidden": false
+        }
+      ],
+      "description": "<p>At Skroutz Last Mile , we believe that great decisions start with great insights.</p>"
+    }
+  ]
+}

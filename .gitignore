@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+backups/
+*.dump
+*.sql.gz
+*.pem
+*.key
+*.p12
+.claude/
+.DS_Store

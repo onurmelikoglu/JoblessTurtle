@@ -1,0 +1,995 @@
+// Jobless Turtle — çekirdek veri modeli (geliştirme dokümanı §11).
+// Tarihler UTC saklanır; arayüz ve politikalar Europe/Istanbul kullanır.
+// Kullanıcıya ait tüm kayıtlar workspaceId ile kapsamlanır.
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────────── Kimlik ve workspace ─────────────────────────────
+
+model User {
+  id                   String    @id @default(cuid())
+  email                String    @unique
+  passwordHash         String
+  displayName          String
+  isAdmin              Boolean   @default(false)
+  notificationSettings Json      @default("{}")
+  lastSeenAt           DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  memberships   Membership[]
+  sessions      Session[]
+  telegramLink  TelegramLink?
+  invitesIssued Invite[]      @relation("InviteIssuer")
+}
+
+model Session {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Invite {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  issuedById  String
+  email       String?
+  usedByEmail String?
+  usedAt      DateTime?
+  expiresAt   DateTime
+  createdAt   DateTime  @default(now())
+  issuedBy    User      @relation("InviteIssuer", fields: [issuedById], references: [id], onDelete: Cascade)
+}
+
+model Workspace {
+  id               String    @id @default(cuid())
+  name             String
+  ownerId          String
+  timezone         String    @default("Europe/Istanbul")
+  automationPaused Boolean   @default(false)
+  pausedAt         DateTime?
+  pausedReason     String?
+  aiSettings       Json      @default("{}")
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  memberships Membership[]
+}
+
+model Membership {
+  id          String   @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        String   @default("owner") // owner | member
+  createdAt   DateTime @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+}
+
+// ───────────────────────────── Aday ve arama profilleri ─────────────────────────────
+
+model CandidateProfile {
+  id               String   @id @default(cuid())
+  workspaceId      String
+  ownerId          String
+  displayName      String
+  email            String?
+  phone            String?
+  headline         String?
+  city             String?
+  // [{key,label,value}] — yalnızca adayın doğruladığı bilgiler taslaklarda kullanılır
+  verifiedFacts    Json     @default("[]")
+  languages        Json     @default("[]")
+  experienceYears  Int?
+  teamManagement   Boolean?
+  workModes        String[] @default([])
+  employmentTypes  String[] @default([])
+  workPermit       String?
+  portfolioUrl     String?
+  portfolioItems   Json     @default("[]") // [{title, client, year, url, tags[]}]
+  signature        String?
+  consentVersion   String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  searchProfiles SearchProfile[]
+  mailAccounts   MailAccount[]
+  documents      DocumentVersion[]
+
+  @@index([workspaceId])
+}
+
+model SearchProfile {
+  id                    String   @id @default(cuid())
+  workspaceId           String
+  candidateId           String
+  name                  String
+  exactTitles           String[] @default([])
+  adjacentTitles        String[] @default([])
+  excludedTitles        String[] @default([])
+  sectors               String[] @default([])
+  excludedSectors       String[] @default([])
+  keywords              String[] @default([])
+  city                  String?
+  districtsPrimary      String[] @default([])
+  districtsConditional  String[] @default([])
+  allowRemote           Boolean  @default(false)
+  allowHybrid           Boolean  @default(true)
+  // Yurt dışı kapsamı: Türkiye'den çalışılabilen uzaktan ilanlar ve taşınma gerektiren ilanlar ayrı seçilir.
+  abroadRemote          Boolean  @default(false)
+  abroadRelocation      Boolean  @default(false)
+  abroadRegions         String[] @default([])
+  unknownLocationAction String   @default("review") // review | exclude | include
+  autoIncludeAdjacent   Boolean  @default(false)
+  // Aday koşulları: [{key,label,required,met: true|false|null}]
+  requiredConditions    Json     @default("[]")
+  // Q ağırlıkları (varsayılan 35/25/15/15/10)
+  qWeights              Json?
+  active                Boolean  @default(true)
+  revision              Int      @default(1)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  candidate     CandidateProfile @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  opportunities Opportunity[]
+
+  @@index([workspaceId])
+}
+
+// ───────────────────────────── Kaynaklar ve gözlemler ─────────────────────────────
+
+model SourceConnector {
+  id                  String    @id @default(cuid())
+  workspaceId         String
+  companyId           String?
+  kind                String // greenhouse | lever | career_page | demo | manual | linkedin | indeed | glassdoor | kariyernet
+  name                String
+  config              Json      @default("{}")
+  accessMode          String    @default("api") // api | html | manual | disabled
+  capabilities        String[]  @default([])
+  permissionEvidence  String?
+  permissionCheckedAt DateTime?
+  isOfficial          Boolean   @default(true)
+  minIntervalMinutes  Int       @default(10)
+  intervalMinutes     Int       @default(10)
+  quotaPerDay         Int?
+  health              String    @default("unknown") // healthy | degraded | blocked | paused | unknown
+  healthReason        String?
+  enabled             Boolean   @default(true)
+  etag                String?
+  lastModified        String?
+  lastContentHash     String?
+  consecutiveFailures Int       @default(0)
+  lastRunAt           DateTime?
+  lastSuccessAt       DateTime?
+  nextRunAt           DateTime?
+  backoffUntil        DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  company  Company?     @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  listings JobListing[]
+  runs     CrawlRun[]
+
+  @@index([workspaceId])
+  @@index([enabled, nextRunAt])
+}
+
+model CrawlRun {
+  id            String    @id @default(cuid())
+  workspaceId   String
+  sourceId      String
+  trigger       String    @default("schedule") // schedule | manual | verify
+  state         String    @default("running") // running | succeeded | partial | failed | blocked
+  complete      Boolean   @default(false)
+  pages         Int       @default(0)
+  listingsSeen  Int       @default(0)
+  listingsNew   Int       @default(0)
+  listingsClosed Int      @default(0)
+  error         String?
+  metrics       Json      @default("{}")
+  startedAt     DateTime  @default(now())
+  finishedAt    DateTime?
+
+  source SourceConnector @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@index([sourceId, startedAt])
+}
+
+model SourceObservation {
+  id                String   @id @default(cuid())
+  workspaceId       String
+  sourceId          String?
+  crawlRunId        String?
+  sourceUrl         String
+  fetchedAt         DateTime @default(now())
+  responseState     String // ok | not_modified | not_found | forbidden | rate_limited | timeout | error | blocked
+  httpStatus        Int?
+  extractorVersion  String
+  contentHash       String?
+  permittedSnapshot Json?
+  coverage          String   @default("full") // full | partial
+
+  @@index([workspaceId, fetchedAt])
+}
+
+// ───────────────────────────── Firma, ofis, kanıt ─────────────────────────────
+
+model Company {
+  id               String    @id @default(cuid())
+  workspaceId      String
+  name             String
+  normalizedName   String
+  canonicalDomain  String?
+  legalName        String?
+  aliases          String[]  @default([])
+  groupName        String?
+  sectors          String[]  @default([])
+  services         String[]  @default([])
+  description      String?
+  website          String?
+  careersUrl       String?
+  notes            String?
+  origin           String    @default("manual") // manual | excel | discovery | catalog
+  importRef        String?
+  catalogId        String?
+  linkedinUrl      String?
+  employeeRange    String? // domain/company-size.ts EMPLOYEE_RANGES
+  employeeCount    Int?
+  // Kalite boyutları: {customer:{score,note,evidenceIds,override}, ...}
+  qualityDims      Json      @default("{}")
+  qScore           Float?
+  qCoverage        Float?
+  watch            Boolean   @default(false)
+  researchReport   Json?
+  researchMeta     Json      @default("{}")
+  lastResearchedAt DateTime?
+  excluded         Boolean   @default(false)
+  excludedReason   String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  offices       Office[]
+  evidence      CompanyEvidence[]
+  contacts      ContactPoint[]
+  jobs          Job[]
+  sources       SourceConnector[]
+  opportunities Opportunity[]
+
+  @@unique([workspaceId, canonicalDomain])
+  @@index([workspaceId, normalizedName])
+  @@index([catalogId])
+}
+
+model Office {
+  id                 String   @id @default(cuid())
+  companyId          String
+  label              String?
+  kind               String   @default("office") // hq | office | studio
+  address            String?
+  city               String?
+  district           String?
+  lat                Float?
+  lng                Float?
+  locationConfidence String   @default("medium") // low | medium | high
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  jobs    Job[]
+}
+
+model CompanyEvidence {
+  id            String    @id @default(cuid())
+  workspaceId   String
+  companyId     String
+  dimension     String // customer | campaign | reputation | service_fit | production
+  customerName  String?
+  scope         String    @default("unknown") // local | global | unknown
+  claimType     String // logo_wall | dated_case | independent | award | team | service | news | other
+  title         String
+  summary       String?
+  url           String?
+  evidenceDate  DateTime?
+  confidence    String    @default("medium") // low | medium | high
+  createdBy     String    @default("user") // user | ai | import
+  accepted      Boolean   @default(true)
+  aiTaskId      String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+}
+
+// ───────────────────────────── Ortak hafıza (çalışma alanları üstü) ─────────────────────────────
+// Yalnızca kamuya açık firma bilgisi ve adres teslim sonuçları tutulur; kimin başvurduğu, notlar,
+// taslaklar ve role özel analizler çalışma alanında kalır.
+
+model CatalogCompany {
+  id                 String    @id @default(cuid())
+  key                String    @unique // alan adı; yoksa "name:<normalizedName>"
+  name               String
+  normalizedName     String
+  canonicalDomain    String?
+  website            String?
+  careersUrl         String?
+  linkedinUrl        String?
+  groupName          String?
+  sectors            String[]  @default([])
+  services           String[]  @default([])
+  summary            String?
+  employeeRange      String?
+  employeeCount      Int?
+  employeeSource     String?
+  employeeCheckedAt  DateTime?
+  cities             String[]  @default([])
+  // Biçimler: domain/catalog.ts (CatalogOffice, CatalogSource, CatalogContact, CatalogJob)
+  offices            Json      @default("[]")
+  sources            Json      @default("[]")
+  contacts           Json      @default("[]")
+  jobs               Json      @default("[]")
+  // Firmanın hangi unvan aramalarında bulunduğu (normalizeTitle ile indirgenmiş)
+  discoveredFor      String[]  @default([])
+  researchedAt       DateTime?
+  contactsSearchedAt DateTime?
+  officesSearchedAt  DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([normalizedName])
+  @@index([canonicalDomain])
+}
+
+// Adres sicili: bir e-posta adresinin ilk nereden bulunduğu ve gönderimlerde ne sonuç verdiği.
+model AddressRecord {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  domain        String
+  sourceUrl     String?
+  sourceType    String    @default("unknown") // domain/address-book.ts ADDRESS_SOURCE_TYPES
+  foundBy       String? // ör. cli_codex:gpt-6.1-sol | crawl | reply | user
+  sent          Int       @default(0)
+  delivered     Int       @default(0)
+  bounced       Int       @default(0)
+  replied       Int       @default(0)
+  status        String    @default("unknown") // unknown | deliverable | dead
+  deadReason    String?
+  deadAt        DateTime?
+  lastSentAt    DateTime?
+  lastOutcomeAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([domain])
+  @@index([status])
+}
+
+model DeadDomain {
+  domain String   @id
+  reason String
+  deadAt DateTime @default(now())
+}
+
+// Öğrenme için ham deneyim kaydı: ne yapıldı (features) ve sonucu ne oldu (outcome).
+model LearningEvent {
+  id               String    @id @default(cuid())
+  workspaceId      String
+  kind             String // domain/learning.ts LEARNING_KINDS
+  companyId        String?
+  catalogCompanyId String?
+  attemptId        String?
+  aiTaskId         String?
+  features         Json      @default("{}")
+  outcome          Json?
+  resolvedAt       DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@unique([kind, attemptId])
+  @@index([kind, createdAt])
+  @@index([workspaceId, kind])
+  @@index([kind, resolvedAt])
+}
+
+// Otopilot: bir mail dönüşü için verilen karar ve sonucu. Hem onay kuyruğu hem de "ne yaptı, neden" günlüğüdür.
+model AutopilotAction {
+  id               String    @id @default(cuid())
+  workspaceId      String
+  companyId        String
+  attemptId        String
+  inboundMessageId String    @unique
+  category         String // domain/inbound.ts INBOUND_CATEGORIES
+  step             String // domain/autopilot.ts AUTOPILOT_STEPS
+  state            String    @default("proposed") // domain/autopilot.ts AUTOPILOT_STATES
+  mode             String    @default("auto") // auto | approved
+  plan             Json      @default("{}")
+  toEmail          String?
+  detail           String
+  resultAttemptId  String?
+  aiTasks          Int       @default(0)
+  decidedById      String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  executedAt       DateTime?
+
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, state])
+  @@index([attemptId])
+}
+
+// ───────────────────────────── İlanlar ─────────────────────────────
+
+model Job {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  companyId      String
+  canonicalKey   String
+  requisitionId  String?
+  title          String
+  normalizedTitle String
+  roleScope      String?
+  officeId       String?
+  locationText   String?
+  district       String?
+  city           String?
+  workMode       String    @default("unknown") // onsite | hybrid | remote | unknown
+  status         String    @default("unknown") // open | closed | unknown | stale
+  statusReason   String?
+  openCycle      Int       @default(1)
+  firstSeenAt    DateTime  @default(now())
+  lastSeenAt     DateTime  @default(now())
+  lastVerifiedAt DateTime?
+  closedAt       DateTime?
+  description    String?
+  applyEmail     String?
+  applyUrl       String?
+  channel        String    @default("unknown") // email | platform | ats_form | unknown
+  conflict       Json?
+  mergeReview    Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  company       Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  office        Office?       @relation(fields: [officeId], references: [id], onDelete: SetNull)
+  listings      JobListing[]
+  opportunities Opportunity[]
+
+  @@unique([workspaceId, canonicalKey])
+  @@index([workspaceId, status])
+}
+
+model JobListing {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  jobId           String
+  sourceId        String
+  externalId      String
+  canonicalUrl    String?
+  isOfficial      Boolean   @default(true)
+  status          String    @default("open") // open | closed | unknown | stale
+  statusReason    String?
+  title           String
+  locationText    String?
+  applyUrl        String?
+  applyEmail      String?
+  postedAt        DateTime?
+  sourceUpdatedAt DateTime?
+  validThrough    DateTime?
+  firstSeenAt     DateTime  @default(now())
+  lastSeenAt      DateTime  @default(now())
+  lastVerifiedAt  DateTime?
+  missingCount    Int       @default(0)
+  contentHash     String?
+  openCycle       Int       @default(1)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  job       Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  source    SourceConnector @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  snapshots JobSnapshot[]
+
+  @@unique([sourceId, externalId])
+  @@index([jobId])
+}
+
+model JobSnapshot {
+  id               String   @id @default(cuid())
+  listingId        String
+  observationId    String?
+  title            String
+  normalizedFields Json     @default("{}")
+  diff             Json?
+  status           String
+  statusReason     String?
+  openCycle        Int      @default(1)
+  contentHash      String?
+  createdAt        DateTime @default(now())
+
+  listing JobListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId, createdAt])
+}
+
+// ───────────────────────────── Fırsat ve iletişim ─────────────────────────────
+
+model Opportunity {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  searchProfileId String
+  companyId       String
+  jobId           String?
+  key             String // jobId veya "company:<companyId>"
+  category        String // target_open | adjacent_open | past_closed | not_found | sector_target | needs_confirmation | excluded
+  titleMatch      String   @default("none") // exact | adjacent | excluded | none
+  q               Float?
+  f               Float?
+  coverage        Float?
+  fBreakdown      Json     @default("{}")
+  mandatoryUnknown Boolean @default(false)
+  locationState   String   @default("unknown") // primary | conditional | remote | outside | unknown
+  reasons         Json     @default("[]")
+  evidenceIds     String[] @default([])
+  status          String   @default("new") // new | reviewed | dismissed | drafted | applied
+  computedAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  searchProfile SearchProfile @relation(fields: [searchProfileId], references: [id], onDelete: Cascade)
+  company       Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  job           Job?          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([searchProfileId, key])
+  @@index([workspaceId, category])
+}
+
+model ContactPoint {
+  id                String    @id @default(cuid())
+  workspaceId       String
+  companyId         String
+  name              String?
+  role              String?
+  email             String
+  kind              String // official_hr | job_apply | general | named_recruiter | guessed
+  purpose           String?
+  sourceUrl         String?
+  discoveredAt      DateTime  @default(now())
+  verifiedAt        DateTime?
+  verifiedBy        String? // user | source | delivery
+  ownershipEvidence String?
+  confidence        String    @default("medium") // low | medium | high
+  suppressed        Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, email])
+}
+
+// ───────────────────────────── Mail hesapları ve belgeler ─────────────────────────────
+
+model MailAccount {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  candidateId     String
+  provider        String // fake | gmail | smtp
+  accountEmail    String
+  displayName     String?
+  scopeSet        String[] @default([])
+  encryptedSecret String?
+  smtpHost        String?
+  smtpPort        Int?
+  smtpSecure      Boolean  @default(true)
+  smtpUser        String?
+  health          String   @default("ok") // ok | needs_reauth | error | revoked
+  healthReason    String?
+  dailyLimit      Int      @default(300)
+  inboxSyncEnabled Boolean  @default(true)
+  inboxSyncedAt    DateTime?
+  inboxError       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  candidate CandidateProfile @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@unique([candidateId, provider, accountEmail])
+}
+
+model DocumentVersion {
+  id          String   @id @default(cuid())
+  workspaceId String
+  candidateId String
+  type        String // cv | portfolio | cover_letter | other
+  language    String   @default("tr")
+  label       String
+  fileName    String
+  objectKey   String
+  sha256      String
+  mime        String
+  size        Int
+  scanState   String   @default("pending") // pending | clean | rejected
+  scanReason  String?
+  revision    Int      @default(1)
+  archived    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  candidate CandidateProfile @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@index([candidateId, type])
+}
+
+// ───────────────────────────── Taslak, politika, gönderim ─────────────────────────────
+
+model ApplicationDraft {
+  id                String   @id @default(cuid())
+  workspaceId       String
+  candidateId       String
+  opportunityId     String?
+  companyId         String
+  jobId             String?
+  contactId         String?
+  campaignId        String?
+  followUpOfId      String?
+  intentType        String // job_application | intent_after_closed | general_intent | project_collab | follow_up
+  mailAccountId     String?
+  status            String   @default("draft") // draft | queued | sent | cancelled | blocked | needs_review
+  origin            String   @default("manual") // manual | campaign | automation | follow_up
+  currentRevision   Int      @default(0)
+  blockedReasons    String[] @default([])
+  createdById       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  revisions DraftRevision[]
+
+  @@index([workspaceId, status])
+  @@index([campaignId])
+}
+
+model DraftRevision {
+  id          String   @id @default(cuid())
+  draftId     String
+  revision    Int
+  toEmail     String?
+  subject     String
+  body        String
+  documentIds String[] @default([])
+  links       String[] @default([])
+  sourceRefs  Json     @default("[]")
+  hash        String
+  generator   String   @default("user") // user | template | ai:<provider>
+  aiTaskId    String?
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  draft ApplicationDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+
+  @@unique([draftId, revision])
+}
+
+model AutomationPolicy {
+  id                   String    @id @default(cuid())
+  workspaceId          String
+  candidateId          String
+  searchProfileId      String
+  mailAccountId        String
+  name                 String
+  modeJobApplication   Boolean   @default(false)
+  modeGeneralIntent    Boolean   @default(false)
+  modeFollowUp         Boolean   @default(false)
+  includeAdjacent      Boolean   @default(false)
+  fMin                 Float     @default(85)
+  qMin                 Float     @default(65)
+  coverageMin          Float     @default(0.6)
+  allowedRecipientKinds String[] @default(["official_hr", "job_apply"])
+  documentIds          String[]  @default([])
+  dailyLimit           Int       @default(10)
+  intentDailyLimit     Int       @default(3)
+  companyCooldownDays  Int       @default(30)
+  sendWindowStart      String    @default("09:00")
+  sendWindowEnd        String    @default("18:00")
+  sendDays             Int[]     @default([1, 2, 3, 4, 5])
+  sendImmediately      Boolean   @default(false)
+  autoSend             Boolean   @default(true)
+  active               Boolean   @default(false)
+  version              Int       @default(1)
+  enabledAt            DateTime?
+  disabledAt           DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  versions AutomationPolicyVersion[]
+
+  @@index([workspaceId, active])
+}
+
+model AutomationPolicyVersion {
+  id        String   @id @default(cuid())
+  policyId  String
+  version   Int
+  snapshot  Json
+  reason    String?
+  createdById String?
+  createdAt DateTime @default(now())
+
+  policy AutomationPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@unique([policyId, version])
+}
+
+model ApplicationAttempt {
+  id                String    @id @default(cuid())
+  workspaceId       String
+  candidateId       String
+  draftId           String
+  draftRevision     Int
+  draftHash         String
+  policyVersionId   String?
+  campaignId        String?
+  companyId         String
+  jobId             String?
+  jobCanonicalKey   String?
+  intentType        String
+  channel           String    @default("email")
+  sendMode          String // manual | campaign | auto | import
+  mailAccountId     String?
+  toEmail           String?
+  idempotencyKey    String
+  requestHash       String
+  // aktif/başarılı başvuru tekilliği: candidate + canonical job + intent (iptal/başarısızlıkta null)
+  activeKey         String?   @unique
+  state             String    @default("queued") // queued | sending | provider_accepted | submission_unknown | failed_confirmed | cancelled | blocked | replied | bounced | outcome_recorded
+  stateReason       String?
+  documentHashes    Json      @default("[]")
+  sentPayloadHash   String?
+  providerMessageId String?
+  providerThreadId  String?
+  outcome           String? // interview | rejection | offer | no_response | other
+  notes             String?
+  scheduledAt       DateTime?
+  hiddenAt          DateTime?
+  retryOfId         String?
+  queuedAt          DateTime  @default(now())
+  sendingAt         DateTime?
+  acceptedAt        DateTime?
+  createdById       String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, state])
+  @@index([candidateId, companyId, createdAt])
+}
+
+model Campaign {
+  id            String   @id @default(cuid())
+  workspaceId   String
+  candidateId   String
+  mailAccountId String
+  name          String
+  intentType    String
+  state         String   @default("draft") // draft | running | paused | completed | cancelled
+  documentIds   String[] @default([])
+  subjectTemplate String?
+  bodyTemplate  String?
+  startedAt     DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model FollowUp {
+  id                 String    @id @default(cuid())
+  workspaceId        String
+  attemptId          String    @unique
+  dueAt              DateTime
+  state              String    @default("pending") // pending | drafted | sent | cancelled
+  cancellationReason String?
+  draftId            String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+}
+
+model UsageCounter {
+  id          String @id @default(cuid())
+  workspaceId String
+  key         String // ör. send:first_contact:<mailAccountId>, ai:tasks
+  day         String // YYYY-MM-DD (Europe/Istanbul)
+  count       Int    @default(0)
+
+  @@unique([workspaceId, key, day])
+}
+
+// ───────────────────────────── Olaylar, bildirim, yanıt ─────────────────────────────
+
+model OutboxEvent {
+  id              String    @id @default(cuid())
+  workspaceId     String?
+  eventType       String
+  aggregateId     String
+  dedupKey        String    @unique
+  payload         Json      @default("{}")
+  processingState String    @default("pending") // pending | processed | failed
+  attempts        Int       @default(0)
+  lastError       String?
+  availableAt     DateTime  @default(now())
+  processedAt     DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([processingState, availableAt])
+}
+
+model AuditEvent {
+  id          String   @id @default(cuid())
+  workspaceId String?
+  actorId     String?
+  actorType   String   @default("user") // user | system | worker
+  action      String
+  entityType  String
+  entityId    String?
+  reason      String?
+  previous    Json?
+  next        Json?
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, createdAt])
+}
+
+model InboundMessage {
+  id                String   @id @default(cuid())
+  workspaceId       String
+  mailAccountId     String?
+  attemptId         String?
+  providerMessageId String
+  threadId          String?
+  fromEmail         String?
+  subject           String?
+  snippet           String?
+  classification    String   @default("unknown") // human_reply | autoresponder | bounce | rejection | interview | do_not_contact | unknown
+  category          String? // domain/inbound.ts INBOUND_CATEGORIES
+  reason            String?
+  bodyText          String?
+  failedRecipient   String?
+  suggestedEmail    String?
+  suggestedUrl      String?
+  status            String   @default("open") // open | resolved | ignored | resent
+  resentAttemptId   String?
+  handledAt         DateTime?
+  source            String   @default("manual") // manual | webhook | imap
+  receivedAt        DateTime @default(now())
+  createdAt         DateTime @default(now())
+
+  @@unique([workspaceId, providerMessageId])
+  @@index([workspaceId, status])
+  @@index([attemptId])
+}
+
+model WebhookEvent {
+  id         String   @id @default(cuid())
+  provider   String
+  eventId    String
+  receivedAt DateTime @default(now())
+
+  @@unique([provider, eventId])
+}
+
+model Notification {
+  id          String    @id @default(cuid())
+  workspaceId String
+  userId      String?
+  eventId     String
+  type        String
+  title       String
+  body        String?
+  link        String?
+  channel     String    @default("in_app") // in_app | telegram
+  deliveredAt DateTime?
+  readAt      DateTime?
+  error       String?
+  createdAt   DateTime  @default(now())
+
+  @@unique([eventId, channel])
+  @@index([workspaceId, createdAt])
+}
+
+model Suppression {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  candidateId  String?
+  companyId    String?
+  contactEmail String?
+  domain       String?
+  channel      String?
+  reason       String
+  createdAt    DateTime @default(now())
+
+  @@index([workspaceId])
+}
+
+model TelegramLink {
+  id       String   @id @default(cuid())
+  userId   String   @unique
+  chatId   String   @unique
+  username String?
+  linkedAt DateTime @default(now())
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model TelegramLinkCode {
+  id        String    @id @default(cuid())
+  userId    String
+  code      String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+}
+
+model KeyValue {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+// ───────────────────────────── Yapay zekâ köprüsü ─────────────────────────────
+
+model AiTask {
+  id          String    @id @default(cuid())
+  workspaceId String
+  kind        String // title_analysis | company_report | mail_draft | reply_classification | follow_up
+  provider    String // cli_claude | cli_codex | manual | ollama | anthropic_api | openai_api | template
+  status      String    @default("pending") // pending | running | awaiting_user | succeeded | failed | rejected | cancelled
+  inputHash   String
+  prompt      String
+  input       Json
+  output      Json?
+  rawOutput   String?
+  error       String?
+  entityType  String?
+  entityId    String?
+  context     Json      @default("{}")
+  createdById String?
+  attempts    Int       @default(0)
+  completedAt DateTime?
+  model            String?
+  inputTokens      Int?
+  outputTokens     Int?
+  cacheReadTokens  Int?
+  cacheWriteTokens Int?
+  costUsd          Float?
+  durationMs       Int?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([workspaceId, status])
+  @@index([workspaceId, kind, inputHash])
+}
+
+model ImportJob {
+  id          String   @id @default(cuid())
+  workspaceId String
+  fileName    String
+  objectKey   String
+  state       String   @default("preview") // preview | imported | failed
+  sheets      Json     @default("[]")
+  mapping     Json?
+  stats       Json?
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

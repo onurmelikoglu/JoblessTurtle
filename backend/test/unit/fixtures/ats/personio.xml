@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<workzag-jobs>
+
+<position>
+    <id>2019718</id>
+    <subcompany>Everphone GmbH</subcompany>
+    <office>Berlin Köpenicker Straße 154, 10997 Berlin</office>
+    <department>Revenue</department>
+    <name>Account Executive (w/m/d)</name>
+    <jobDescriptions>
+        <jobDescription>
+            <name>Über die Rolle</name>
+            <value>
+                <![CDATA[<p>Die meisten Unternehmen kaufen ihre Geräte noch.</p>]]>
+            </value>
+        </jobDescription>
+        <jobDescription>
+            <name>Deine Aufgaben</name>
+            <value>
+                <![CDATA[<p>Neukunden gewinnen Outbound-Akquise: Du recherchierst, qualifizierst und priorisierst Zielaccounts und Leads, gern auch mit KI Account Mapping: Du durchleuchtest deine Zielaccounts</p>]]>
+            </value>
+        </jobDescription>
+        <jobDescription>
+            <name>Was Everphone dir bietet</name>
+            <value>
+                <![CDATA[<p>KI ist bei uns Arbeitsalltag KI-Tools ab Tag eins: Moderne KI-Tools stehen allen Rollen zur Verfügung, nicht nur dem Tech-Team Gestaltungsspielraum: Du darfst Prozesse hinterfragen</p>]]>
+            </value>
+        </jobDescription>
+        <jobDescription>
+            <name>Das bringst du mit</name>
+            <value>
+                <![CDATA[<p>Must-haves B2B-Sales-Erfahrung: Du bringst mehrjährige Erfahrung im B2B-Neukundenvertrieb mit eigener Abschlussverantwortung mit, auch bei Deals mit langen Entscheidungszyklen Buyi</p>]]>
+            </value>
+        </jobDescription>
+        <jobDescription>
+            <name>Not a perfect match? Apply anyway! Wenn dich die Rolle begeistert, freuen wir uns sehr auf deine Bewerbung – auch wenn du nicht alles erfüllst. Schau nur, ob die wichtigsten Punkte wie Sprachkenntnisse passen.</name>
+            <value>
+                <![CDATA[<p>a</p>]]>
+            </value>
+        </jobDescription>
+    </jobDescriptions>
+    <employmentType>permanent</employmentType>
+    <seniority>experienced</seniority>
+    <schedule>full-time</schedule>
+    <yearsOfExperience>2-5</yearsOfExperience>
+    <occupation>business_development_and_new_accounts</occupation>
+    <occupationCategory>sales_and_business_development</occupationCategory>
+    <createdAt>2025-03-17T16:54:49+00:00</createdAt>
+</position>
+
+<position>
+    <id>2825215</id>
+    <subcompany>Everphone GmbH</subcompany>
+    <office>Berlin Köpenicker Straße 154, 10997 Berlin</office>
+    <department>Management</department>
+    <name>Founder&#039;s Associate – AI-Driven Sales (w/m/d)</name>
+    <jobDescriptions>
+        <jobDescription>
+            <name>Über die Rolle</name>
+            <value>
+                <![CDATA[<p>Founder-Led Sales 2.0 – Powered by AI.</p>]]>
+            </value>
+        </jobDescription>
+        <jobDescription>
+            <name>Deine Aufgaben</name>
+            <value>
+                <![CDATA[<p>Bauen und automatisieren AI-first CRM: Mitgestaltung von Produkt und Prozessen unseres neuen Everphone CRM ab dem Go-live im November — mit dem Ziel, dass Vertriebler:innen nichts</p>]]>
+            </value>
+        </jobDescription>
+        <jobDescription>
+            <name>Was Everphone dir bietet</name>
+            <value>
+                <![CDATA[<p>Die Rolle Direkt mit dem Gründer: Enge Zusammenarbeit mit Jan, regelmäßiges 1:1 und kurze Entscheidungswege Freiraum zum Testen: Individuell vereinbarte Ziele statt klassischer Pro</p>]]>
+            </value>
+        </jobDescription>
+        <jobDescription>
+            <name>Das bringst du mit</name>
+            <value>
+                <![CDATA[<p>Bauen mit KI: Du arbeitest täglich mit LLMs (z.</p>]]>
+            </value>
+        </jobDescription>
+        <jobDescription>
+            <name>Not a perfect match? Apply anyway! Wenn dich die Rolle begeistert, freuen wir uns sehr auf deine Bewerbung – auch wenn du nicht alles erfüllst. Schau nur, ob die wichtigsten Punkte wie Sprachkenntnisse passen.</name>
+            <value>
+                <![CDATA[<p>a</p>]]>
+            </value>
+        </jobDescription>
+    </jobDescriptions>
+    <employmentType>permanent</employmentType>
+    <seniority>entry-level</seniority>
+    <schedule>full-time</schedule>
+    <yearsOfExperience>1-2</yearsOfExperience>
+    <occupation>general_and_other_sales_and_business_development</occupation>
+    <occupationCategory>sales_and_business_development</occupationCategory>
+    <createdAt>2026-10-02T13:22:48+00:00</createdAt>
+</position>
+
+<position>
+    <id>1834171</id>
+    <subcompany>Personio SE &amp; Co. KG</subcompany>
+    <office>Munich</office>
+    <additionalOffices>
+        <office>Berlin</office>
+    </additionalOffices>
+    <department>Product and Tech</department>
+    <recruitingCategory>Engineering</recruitingCategory>
+    <name>Staff Software Engineer, Data Platform</name>
+    <jobDescriptions></jobDescriptions>
+    <employmentType>permanent</employmentType>
+    <seniority>experienced</seniority>
+    <schedule>full-time</schedule>
+    <yearsOfExperience>7-10</yearsOfExperience>
+    <occupation>software_and_web_development</occupation>
+    <occupationCategory>it_software</occupationCategory>
+    <createdAt>2024-11-13T14:10:41+00:00</createdAt>
+</position>
+
+</workzag-jobs>

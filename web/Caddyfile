@@ -1,0 +1,47 @@
+# Tek origin: React arayüzü (/) ve /api → backend.
+# Veritabanı ve Redis dışarı açılmaz.
+{
+	admin off
+}
+
+:80 {
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		X-Frame-Options DENY
+		-Server
+	}
+
+	handle /api/* {
+		reverse_proxy api:3000 {
+			# SSE (canlı olay akışı) tamponlanmadan iletilir
+			flush_interval -1
+		}
+	}
+
+	handle {
+		root * /srv
+		# Derleme çıktısındaki dosya adları içerik özetlidir; içerik değişince ad değişir.
+		@hashed {
+			path /assets/*
+			file
+		}
+		header @hashed Cache-Control "public, max-age=31536000, immutable"
+		@icons path /icons/* /favicon.svg /favicon-32.png /apple-touch-icon.png
+		header @icons Cache-Control "public, max-age=86400"
+		# Geri kalan her şey (uygulama kabuğu ve arayüz rotaları) her istekte doğrulanır; eski kabuk önbellekte kalmaz.
+		@appShell not path /assets/* /icons/* /favicon.svg /favicon-32.png /apple-touch-icon.png
+		header @appShell Cache-Control "no-cache"
+		# Arayüz rotaları kabuğa düşer; eksik bir derleme dosyası ise 404 döner (kabuk, betik yerine önbelleğe girmesin).
+		@route {
+			not path /assets/*
+			file {path} /index.html
+		}
+		rewrite @route {file_match.relative}
+		file_server {
+			precompressed br zstd gzip
+		}
+	}
+}
