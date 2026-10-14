@@ -52,6 +52,8 @@ const schema = z.object({
   ALLOW_PRIVATE_FETCH: bool.default(false),
   // Worker
   SCHEDULER_ENABLED: bool.default(true),
+  // Aynı hesaptan art arda gönderim arasında 30-50 sn bekleme. Yalnızca testlerde kapatılır.
+  SEND_PACING_ENABLED: bool.default(true),
   DIGEST_HOUR: z.coerce.number().default(9),
 });
 

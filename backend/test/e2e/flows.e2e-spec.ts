@@ -22,6 +22,11 @@ afterAll(async () => {
   await h.close();
 });
 
+// Başarısız bir testte geri alınmayan casus sonraki testlere taşınıp sahte hata üretmesin.
+afterEach(() => {
+  jest.restoreAllMocks();
+});
+
 describe('kullanıcı ayrımı (arkadaş pilotu)', () => {
   let a: User;
   let b: User;
@@ -253,6 +258,45 @@ describe('toplu kampanya', () => {
   });
 });
 
+describe('aralıklı gönderim', () => {
+  const previous = process.env.SEND_PACING_ENABLED;
+
+  beforeAll(() => {
+    process.env.SEND_PACING_ENABLED = 'true';
+    resetEnvForTests();
+  });
+
+  afterAll(() => {
+    process.env.SEND_PACING_ENABLED = previous;
+    resetEnvForTests();
+  });
+
+  it('aynı hesaptan ikinci gönderim 30-50 sn sonraya ertelenir; sağlayıcı yalnızca ilki için çağrılır', async () => {
+    const u = await setupUser(h, 'pace');
+    const first = await setupCompanyWithJob(h, u, { withJob: false });
+    const second = await setupCompanyWithJob(h, u, { withJob: false });
+    const queue = async (companyId: string) => {
+      const draft = await createDraft(h, u, companyId, null, { intentType: 'general_intent' });
+      const res = await h.http().post(`/api/v1/drafts/${draft.id}/send`).set(u.auth).set('Idempotency-Key', idem()).send({ expectedRevision: 1 }).expect(202);
+      return res.body.applicationId as string;
+    };
+    const firstId = await queue(first.company.id);
+    const secondId = await queue(second.company.id);
+    const spy = jest.spyOn(fakeProvider, 'send');
+    const sending = h.app.get(SendingService);
+    expect(await sending.processAttempt(firstId)).toBe('provider_accepted');
+    expect(await sending.processAttempt(secondId)).toBe('paced');
+    expect(spy).toHaveBeenCalledTimes(1);
+    const paced = await h.prisma.applicationAttempt.findUniqueOrThrow({ where: { id: secondId } });
+    expect(paced.state).toBe('queued');
+    expect(paced.stateReason).toBe('PACING');
+    // Test veritabanının saati makineninkinden ~1 sn geride kalabilir; sınırlar bu payı içerir.
+    const waitMs = paced.scheduledAt!.getTime() - Date.now();
+    expect(waitMs).toBeGreaterThan(25_000);
+    expect(waitMs).toBeLessThan(55_000);
+  });
+});
+
 describe('yanıt, takip ve webhook', () => {
   it('imzasız webhook reddedilir; tekrar eden olay tekilleşir; insan yanıtı takibi iptal eder', async () => {
     const u = await setupUser(h, 'hook');
@@ -320,7 +364,8 @@ describe('manuel AI köprüsü', () => {
     const u = await setupUser(h, 'bridge');
     await h.http().patch('/api/v1/ai/settings').set(u.auth).send({ providerOrder: ['manual', 'template'] }).expect(200);
     const { company } = await setupCompanyWithJob(h, u, { withJob: false });
-    const draft = (await h.http().post('/api/v1/drafts').set(u.auth).send({ candidateId: u.candidate.id, companyId: company.id, intentType: 'general_intent', mailAccountId: u.account.id }).expect(201)).body;
+    // Açık başvuru ve ilan yazıları LetterService ile kalıptan üretilir; manuel köprü serbest e-posta taslağında kalır.
+    const draft = (await h.http().post('/api/v1/drafts').set(u.auth).send({ candidateId: u.candidate.id, companyId: company.id, intentType: 'project_collab', mailAccountId: u.account.id }).expect(201)).body;
     expect(draft.aiStatus).toBe('awaiting_user');
     const task = (await h.http().get(`/api/v1/ai/tasks/${draft.aiTaskId}`).set(u.auth).expect(200)).body;
     expect(task.prompt).toContain('untrusted_source');

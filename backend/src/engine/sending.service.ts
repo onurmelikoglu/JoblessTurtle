@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ApplicationAttempt, Prisma } from '@prisma/client';
 import { AuditService } from '../common/audit.service';
 import { hashObject } from '../common/crypto';
+import { env } from '../common/env';
 import { AppError, notFound } from '../common/errors';
 import { OutboxService } from '../common/outbox.service';
 import { PrismaService, Tx } from '../common/prisma.service';
@@ -350,7 +351,7 @@ export class SendingService {
       await this.outbox.emit({ workspaceId: pre.workspaceId, eventType: 'send.attempt', aggregateId: pre.id, dedupKey: `send:${pre.id}:${pre.scheduledAt.getTime()}`, payload: { attemptId: pre.id }, availableAt: pre.scheduledAt });
       return 'not_yet';
     }
-    if (pre.mailAccountId) {
+    if (pre.mailAccountId && env().SEND_PACING_ENABLED) {
       const wait = await this.reservePacingSlot(pre.mailAccountId);
       if (wait) {
         await this.prisma.applicationAttempt.update({ where: { id: pre.id }, data: { scheduledAt: wait, stateReason: 'PACING' } });

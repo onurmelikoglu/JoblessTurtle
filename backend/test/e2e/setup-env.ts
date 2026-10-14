@@ -3,6 +3,7 @@ process.env.REDIS_URL = process.env.TEST_REDIS_URL ?? 'redis://localhost:6379/5'
 process.env.STORAGE_DIR = process.env.TEST_STORAGE_DIR ?? '/tmp/jobtrack-test-storage';
 process.env.REGISTRATION_MODE = 'open';
 process.env.SCHEDULER_ENABLED = 'false';
+process.env.SEND_PACING_ENABLED = 'false';
 process.env.TELEGRAM_POLLING = 'false';
 process.env.CLAUDE_CLI_PATH = '/nonexistent/claude';
 process.env.CODEX_CLI_PATH = '/nonexistent/codex';

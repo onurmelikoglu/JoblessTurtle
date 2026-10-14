@@ -26,7 +26,9 @@ export async function createHarness(): Promise<Harness> {
   const app = moduleRef.createNestApplication({ rawBody: true });
   app.setGlobalPrefix('api');
   app.useGlobalFilters(new AllExceptionsFilter());
-  await app.init();
+  // supertest kendi açtığı sunucuyu "::" üzerinde dinletip 127.0.0.1'e bağlanır; makinedeki başka bir süreç aynı portu
+  // 127.0.0.1'de tutuyorsa istek o sürece gider (rastgele 403/404/socket hang up). Sunucu doğrudan 127.0.0.1'de açılır.
+  await app.listen(0, '127.0.0.1');
   const prisma = app.get(PrismaService);
   const worker = app.get(WorkerService);
   worker.enableInline();
