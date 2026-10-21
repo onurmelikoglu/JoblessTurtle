@@ -566,8 +566,11 @@ model ContactPoint {
   name              String?
   role              String?
   email             String
-  kind              String // official_hr | job_apply | general | named_recruiter | guessed
+  kind              String // official_hr | job_apply | general | named_recruiter | management | employee | guessed
   purpose           String?
+  roleType          String? // hr | recruiting | general | management | employee
+  score             Int? // 0–100 güven
+  evidence          String?
   sourceUrl         String?
   discoveredAt      DateTime  @default(now())
   verifiedAt        DateTime?
@@ -992,4 +995,68 @@ model ImportJob {
   createdById String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+// ───────────────────────────── İlan sitesi taraması ─────────────────────────────
+
+/// İlan sitelerinin herkese açık arama sayfalarından taranan ilanlar. Çalışma alanından bağımsızdır; arama profiline
+/// uyanlar çalışma alanlarına "<site> taraması" kaynağıyla aktarılır.
+model ScrapedJob {
+  id               String    @id @default(cuid())
+  source           String // kariyer_net | indeed
+  externalId       String
+  similarityKey    String
+  companyName      String
+  jobTitle         String
+  city             String
+  district         String?
+  jobUrl           String
+  companyUrl       String?
+  description      String?
+  employmentType   String?
+  workMode         String?
+  publishedAt      DateTime?
+  publishedText    String?
+  contentHash      String
+  status           String    @default("active") // active | missing | expired
+  duplicateOfId    String?
+  firstSeenAt      DateTime  @default(now())
+  lastSeenAt       DateTime  @default(now())
+  contentChangedAt DateTime?
+  firstRunId       String?
+  lastRunId        String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([source, externalId])
+  @@index([source, status, lastSeenAt])
+  @@index([firstSeenAt])
+  @@index([similarityKey])
+}
+
+/// Tek bir sitenin tek tarama çalışması: kuyruğa alınır, worker'da çalışır, ölçümleri ve ayrılmış hataları tutar.
+model ScraperRun {
+  id              String    @id @default(cuid())
+  source          String
+  trigger         String    @default("schedule") // schedule | manual | api
+  state           String    @default("queued") // queued | running | succeeded | partial | blocked | rate_limited | failed | skipped
+  cities          String[]  @default([])
+  keywords        String[]  @default([])
+  maxPages        Int       @default(1)
+  pagesVisited    Int       @default(0)
+  pagesFailed     Int       @default(0)
+  listingsFound   Int       @default(0)
+  listingsNew     Int       @default(0)
+  listingsUpdated Int       @default(0)
+  duplicates      Int       @default(0)
+  forwarded       Int       @default(0)
+  errors          Json      @default("[]")
+  errorSummary    String?
+  requestedById   String?
+  queuedAt        DateTime  @default(now())
+  startedAt       DateTime?
+  finishedAt      DateTime?
+
+  @@index([source, queuedAt])
+  @@index([state])
 }

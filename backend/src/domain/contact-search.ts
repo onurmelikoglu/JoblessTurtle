@@ -2,7 +2,8 @@
  * Adres aramasının hafızası ve basamakları. Bir firma için yapılan arama, bulduğu sonuçla birlikte hatırlanır; aynı
  * derinlikteki arama süresi dolmadan tekrarlanmaz ve derinleştirme yalnızca daha önce denenmemiş basamaklardan sürer.
  *
- * Basamaklar: base (varsayılan sağlayıcı ve model) → second (ikinci sağlayıcının güçlü modeli) → max (en güçlü model).
+ * Basamaklar: base (toplayıcı model web'de aday topladı) → max (denetçi model adayları da doğruladı). second, eski
+ * üç basamaklı aramadan kalan kayıtlarda görülür; ondan sonra derin arama yalnızca doğrulama basamağıyla sürer.
  */
 export const SEARCH_DEPTHS = ['base', 'second', 'max'] as const;
 export type SearchDepth = (typeof SEARCH_DEPTHS)[number];
@@ -11,6 +12,11 @@ export type SearchDepth = (typeof SEARCH_DEPTHS)[number];
 export const SEARCH_RETRY_DAYS = 30;
 /** Kullanıcı ısrar etse de en derin arama bu süreden sık tekrarlanmaz. */
 export const FORCED_SEARCH_RETRY_DAYS = 7;
+/**
+ * Derin aramanın yöntem sürümü. Yöntem değişince (2: firma sitesi benimseme, posta sunucusu yoklaması, yaygın adres
+ * tahmini) eski sürümle "tükendi" sayılan firmalar yeni yöntemle bir kez daha derin aranabilir.
+ */
+export const SEARCH_VERSION = 2;
 
 const DAY_MS = 86_400_000;
 
@@ -19,6 +25,8 @@ export interface SearchMemory {
   contactsDepth?: SearchDepth;
   /** Derinlik alanı eklenmeden önceki kayıt: yükseltmeli arama yapıldı. */
   contactsEscalated?: boolean;
+  /** Son derin aramanın yöntem sürümü; alan yoksa 1. */
+  contactsVersion?: number;
 }
 
 export interface SearchRequest {
@@ -37,9 +45,11 @@ export interface SearchPlan {
   skip: SearchSkip | null;
 }
 
+/** Eski yöntem sürümüyle ulaşılmış en derin basamak, yeni yöntemin doğrulama basamağını tekrar açık bırakır. */
 export function rememberedDepth(memory: SearchMemory | null | undefined): SearchDepth | null {
   if (!memory?.contactsSearchedAt) return null;
-  return memory.contactsDepth ?? (memory.contactsEscalated ? 'max' : 'base');
+  const depth = memory.contactsDepth ?? (memory.contactsEscalated ? 'max' : 'base');
+  return depth === 'max' && (memory.contactsVersion ?? 1) < SEARCH_VERSION ? 'second' : depth;
 }
 
 export function contactSearchPlan(memory: SearchMemory | null | undefined, request: SearchRequest, now = Date.now()): SearchPlan {
@@ -53,21 +63,4 @@ export function contactSearchPlan(memory: SearchMemory | null | undefined, reque
   const rungs = wanted.filter((rung) => SEARCH_DEPTHS.indexOf(rung) > SEARCH_DEPTHS.indexOf(depth));
   if (rungs.length) return { rungs, skip: null };
   return { rungs: [], skip: request.deep ? 'exhausted' : 'recent' };
-}
-
-export interface SearchFindings {
-  /** İK ya da işe alıma ait güvenilir bir adres bulundu. */
-  recruiting: boolean;
-  /** Gönderilebilir herhangi bir adres (genel iletişim dahil) bulundu. */
-  sendable: boolean;
-}
-
-/**
- * Bir basamaktan sonra üsttekine çıkılsın mı: güvenilir İK adresi bulunduysa durulur; yalnızca genel adres bulunduysa
- * bir kez ikinci görüş alınır; hiç gönderilebilir adres yoksa en güçlü modele kadar çıkılır.
- */
-export function shouldEscalate(after: SearchDepth, findings: SearchFindings): boolean {
-  if (findings.recruiting) return false;
-  if (after === 'base') return true;
-  return after === 'second' && !findings.sendable;
 }

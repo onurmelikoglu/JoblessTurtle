@@ -30,6 +30,7 @@ import { JobSearchService } from '../engine/job-search.service';
 import { LearnedModelsService } from '../engine/learned-models.service';
 import { NotifyService } from '../engine/notify.service';
 import { pickSegments, REPORT_REFRESH_DAYS, ResearchService, SIZE_BATCH } from '../engine/research.service';
+import { ScraperService } from '../engine/scraper.service';
 import { CandidateFactsService } from '../engine/candidate-facts.service';
 import { isLetterIntent, LETTER_INTENTS, LetterService } from '../engine/letter.service';
 import { SendingService } from '../engine/sending.service';
@@ -57,6 +58,8 @@ const PROFILE_CHANGE_JOB_QUERIES = 3;
 const JOB_RECHECK_EVERY_MS = 12 * 3600_000;
 const AUTOPILOT_SWEEP_EVERY_MS = 6 * 3600_000;
 const MODEL_TRAINING_EVERY_MS = 24 * 3600_000;
+/** İlan sitesi taramasının zamanı her dakika kontrol edilir; sitelere istek yalnızca aralık dolunca atılır. */
+const SCRAPER_CHECK_EVERY_MS = 60_000;
 /** Kurulu sağlayıcı kontrolü komut çalıştırdığı için kalp atışından seyrek yapılır. */
 const PROVIDER_CHECK_EVERY_MS = 10 * 60_000;
 /** Gece turunda raporu yenilenen firma sayısı (her biri en az bir yapay zekâ çağrısı). */
@@ -69,7 +72,7 @@ const OPEN_OPPORTUNITY = { status: { notIn: ['dismissed', 'applied'] }, category
 const BACKGROUND_AI_CLASS: Record<string, AiClass> = { company: 'research', company_details: 'research', company_sizes: 'research', discovery: 'discovery', job_search: 'discovery', expand_titles: 'discovery', predraft: 'letters', letter_template: 'letters' };
 const DRAIN_CLOCK_WAIT_MS = 200;
 
-export const QUEUES = ['collect', 'research', 'interactive', 'evaluate', 'automation', 'send', 'reconcile', 'notify', 'inbox'] as const;
+export const QUEUES = ['collect', 'research', 'interactive', 'evaluate', 'automation', 'send', 'reconcile', 'notify', 'inbox', 'scrape'] as const;
 type QueueName = (typeof QUEUES)[number];
 
 /**
@@ -114,6 +117,7 @@ export class WorkerService implements OnApplicationShutdown {
     private readonly jobSearch: JobSearchService,
     private readonly autopilot: AutopilotService,
     private readonly models: LearnedModelsService,
+    private readonly scraper: ScraperService,
   ) {}
 
   async start(opts: { scheduler?: boolean; telegram?: boolean } = {}) {
@@ -122,7 +126,7 @@ export class WorkerService implements OnApplicationShutdown {
     this.publisher = new Redis(env().REDIS_URL, { maxRetriesPerRequest: null });
     const prefix = 'jt';
     for (const name of QUEUES) this.queues.set(name, new Queue(name, { connection: this.connection, prefix }));
-    const concurrency: Record<QueueName, number> = { collect: 4, research: 2, interactive: 2, evaluate: 2, automation: 1, send: 2, reconcile: 1, notify: 4, inbox: 1 };
+    const concurrency: Record<QueueName, number> = { collect: 4, research: 2, interactive: 2, evaluate: 2, automation: 1, send: 2, reconcile: 1, notify: 4, inbox: 1, scrape: 2 };
     for (const name of QUEUES) {
       const w = new Worker(name, (job) => this.handle(name, job), { connection: this.connection, prefix, concurrency: concurrency[name] });
       w.on('failed', (job, err) => this.logger.warn(`${name} işi başarısız (${job?.id}): ${err.message}`));
@@ -282,6 +286,8 @@ export class WorkerService implements OnApplicationShutdown {
         return this.enqueue('inbox', 'autopilot_run', { actionId: e.aggregateId, workspaceId: e.workspaceId, userId: p.userId }, e.dedupKey, 0, 1);
       case 'send.attempt':
         return this.enqueue('send', 'attempt', { attemptId: e.aggregateId }, e.dedupKey, e.availableAt.getTime() - Date.now(), 1);
+      case 'scraper.run':
+        return this.enqueue('scrape', 'run', { runId: e.aggregateId }, e.dedupKey, 0, 1);
       case 'collect.source':
         return this.enqueue('collect', 'source', { sourceId: e.aggregateId, trigger: p.trigger ?? 'manual' }, e.dedupKey, 0, 1);
       case 'collect.all': {
@@ -391,6 +397,8 @@ export class WorkerService implements OnApplicationShutdown {
       }
       case 'reconcile':
         return this.sending.reconcile();
+      case 'scrape':
+        return this.scraper.execute(d.runId);
       case 'inbox':
         if (job.name === 'autopilot') return this.autopilot.onInbound(d.messageId);
         if (job.name === 'autopilot_run') return this.autopilot.runApproved(d.actionId, d.userId);
@@ -505,6 +513,7 @@ export class WorkerService implements OnApplicationShutdown {
     await this.periodic('job-recheck', JOB_RECHECK_EVERY_MS, now, () => this.jobSearch.expireStale(now));
     await this.periodic('autopilot-sweep', AUTOPILOT_SWEEP_EVERY_MS, now, () => this.autopilot.sweep(undefined, now));
     await this.periodic('model-training', MODEL_TRAINING_EVERY_MS, now, () => this.models.train(now));
+    await this.periodic('scrapers', SCRAPER_CHECK_EVERY_MS, now, () => this.scraper.scheduleDue(now));
     await this.periodic('title-normalization', BACKFILL_CHECK_EVERY_MS, now, () => this.ingest.renormalizeTitles());
     await this.periodic('catalog-backfill', BACKFILL_CHECK_EVERY_MS, now, async () => {
       if (!(await this.catalog.backfilled())) await this.enqueue('research', 'catalog_backfill', {}, `catalog-backfill:${Math.floor(now.getTime() / BACKFILL_CHECK_EVERY_MS)}`, 0, 1);

@@ -1,12 +1,13 @@
 import { SourceConnector } from '@prisma/client';
 import { JOB_ALERT_SOURCE } from '../../domain/job-alerts';
 import { WEB_SEARCH_SOURCE } from '../../domain/job-search';
+import { WORKSPACE_SOURCE_KIND } from '../../domain/scraper-config';
 import { CollectResult, Connector, VerifyResult } from './types';
 
 /**
- * LinkedIn, Indeed, Glassdoor, Kariyer.net: erişim yetkisi doğrulanmış entegrasyon olmadan tarayıcı botu
- * açılmaz (doküman §2). Bu kaynaklar kullanıcının girdiği kayıtlar / kendisine gelen uyarılarla beslenir,
- * başvuru "Platformda tamamla" ile kullanıcı tarafından yapılır.
+ * LinkedIn, Indeed, Glassdoor, Kariyer.net: bu bağlayıcılar kaynak kuyruğunda toplama yapmaz (oturum açan bot yok).
+ * Kaynaklar kullanıcının girdiği kayıtlar, kendisine gelen uyarılar ve ilan sitesi taramasıyla (engine/scraper.service.ts,
+ * yalnızca oturumsuz arama sayfaları) beslenir; başvuru "Platformda tamamla" ile kullanıcı tarafından yapılır.
  */
 function manualConnector(kind: string, label: string, extra: Partial<Pick<Connector, 'applyChannel' | 'aggregator'>> = {}): Connector {
   return {
@@ -39,4 +40,7 @@ export const manualConnectors: Connector[] = [
   manualConnector(WEB_SEARCH_SOURCE, 'İlan araması (web)', { applyChannel: 'ats_form', aggregator: true }),
   // İş sitelerinin kullanıcıya postayla gönderdiği ilan bildirimleri (iş alarmı).
   manualConnector(JOB_ALERT_SOURCE, 'İş alarmı (mail)', { applyChannel: 'ats_form', aggregator: true }),
+  // İlan sitelerinin herkese açık arama sayfalarının taraması (engine/scraper.service.ts); toplama worker'ın tarama kuyruğunda yapılır.
+  manualConnector(WORKSPACE_SOURCE_KIND.kariyer_net, 'Kariyer.net taraması', { applyChannel: 'ats_form', aggregator: true }),
+  manualConnector(WORKSPACE_SOURCE_KIND.indeed, 'Indeed taraması', { applyChannel: 'ats_form', aggregator: true }),
 ];

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const AI_KINDS = ['title_analysis', 'title_expansion', 'cv_facts', 'letter_template', 'letter_company_line', 'company_contacts', 'company_report', 'company_discovery', 'company_lookup', 'company_sizes', 'job_search', 'job_alert', 'mail_draft', 'mail_translate', 'reply_classification', 'inbound_review', 'inbound_fix', 'follow_up'] as const;
+export const AI_KINDS = ['title_analysis', 'title_expansion', 'cv_facts', 'letter_template', 'letter_company_line', 'company_contacts', 'contact_review', 'company_report', 'company_discovery', 'company_lookup', 'company_sizes', 'job_search', 'job_alert', 'mail_draft', 'mail_translate', 'reply_classification', 'inbound_review', 'inbound_fix', 'follow_up'] as const;
 export type AiKind = (typeof AI_KINDS)[number];
 
 export const AI_KIND_LABELS: Record<AiKind, string> = {
@@ -10,6 +10,7 @@ export const AI_KIND_LABELS: Record<AiKind, string> = {
   letter_template: 'Başvuru yazısı kalıbı',
   letter_company_line: 'Firmaya özel cümleler',
   company_contacts: 'İletişim ve ofis araştırması',
+  contact_review: 'Bulunan adresleri doğrulama',
   company_report: 'Firma raporu',
   company_discovery: 'Yeni firma keşfi',
   company_lookup: 'Firma arama ve ekleme',
@@ -121,6 +122,8 @@ export const jobAlertOutput = z.object({
 });
 
 export const companyContactsOutput = z.object({
+  searches: z.array(z.string().max(300)).max(40).optional(),
+  website: z.string().max(300).nullable().optional(),
   employees: employeesField,
   group: z
     .object({
@@ -132,8 +135,19 @@ export const companyContactsOutput = z.object({
     .nullable()
     .optional(),
   contacts: z
-    .array(z.object({ email: z.string().max(200), purpose: z.string().max(40).nullable().optional(), sourceUrl: z.string().max(500) }))
-    .max(12)
+    .array(
+      z.object({
+        email: z.string().max(200),
+        name: z.string().max(120).nullable().optional(),
+        title: z.string().max(160).nullable().optional(),
+        roleType: z.string().max(40).nullable().optional(),
+        purpose: z.string().max(40).nullable().optional(),
+        origin: z.enum(['published', 'pattern', 'likely']).nullable().optional(),
+        sourceUrl: z.string().max(500).nullable().optional(),
+        evidence: z.string().max(400).nullable().optional(),
+      }),
+    )
+    .max(25)
     .default([]),
   offices: z
     .array(
@@ -155,6 +169,21 @@ export const titleAnalysisOutput = z.object({
   mandatoryRequirements: z.array(z.string().max(200)).max(15).default([]),
   scopeFit: z.enum(['full', 'partial', 'none', 'unknown']).default('unknown'),
   evidenceIds: z.array(z.string()).default([]),
+});
+
+export const contactReviewOutput = z.object({
+  reviews: z
+    .array(
+      z.object({
+        ref: z.string().max(20),
+        keep: z.boolean(),
+        roleType: z.string().max(40).nullable().optional(),
+        confidence: z.coerce.number().min(0).max(100),
+        reason: z.string().max(300).nullable().optional(),
+      }),
+    )
+    .max(40)
+    .default([]),
 });
 
 export const companyReportOutput = z.object({
@@ -274,6 +303,7 @@ export const OUTPUT_SCHEMAS: Record<AiKind, z.ZodTypeAny> = {
   letter_company_line: letterCompanyLineOutput,
   mail_translate: mailTranslateOutput,
   company_contacts: companyContactsOutput,
+  contact_review: contactReviewOutput,
   company_report: companyReportOutput,
   company_discovery: companyDiscoveryOutput,
   company_lookup: companyDiscoveryOutput,

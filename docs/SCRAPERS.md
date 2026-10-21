@@ -1,0 +1,157 @@
+# İlan sitesi taraması (Kariyer.net, Indeed)
+
+Kariyer.net ve Indeed'in **oturum açmadan görülebilen arama sayfaları** belirli aralıklarla (varsayılan 4 saat) taranır; elle de başlatılabilir. Taranan ilanlar sunucu genelinde ortak bir kayıtta (`ScrapedJob`) tekilleştirilerek tutulur; arama profiline uyan yeni ilanlar her çalışma alanına "Kariyer.net taraması" / "Indeed taraması" kaynağıyla eklenir ve bildirim gelir.
+
+Giriş, hesap ya da iş alarmı kullanılmaz. Site erişimi engellerse (403, CAPTCHA, bot koruması) o sitenin taraması durur, nedeni kaydedilir, yöneticiye bildirilir ve site bir süre (varsayılan 24 saat) zamanlamadan çıkar. **Engel aşılmaya çalışılmaz**: CAPTCHA çözme, tarayıcı kimliği taklidi, vekil sunucu / IP değiştirme yoktur. İstemci kendini `HTTP_USER_AGENT` ile dürüstçe tanıtır ve robots.txt kurallarına (joker, en uzun eşleşme, Allow önceliği) uyar.
+
+## Doğrulama durumu (20 Ekim 2026)
+
+| Site | Sayfa yapısı | Sunucudan erişim | Sonuç |
+|---|---|---|---|
+| Kariyer.net `/is-ilanlari/<şehir>`, `-2`, `-3`… | Gerçek sayfalardan okundu; sayfa başına 53 kart, hepsi ayrıştı | **Aralıklı.** Sayfa CDN önbelleğindeyse (`x-cache: Hit`) 200 geliyor; önbellek dışı istekler PerimeterX doğrulamasına (403) düşüyor. Aynı gün İstanbul ve İzmir birer kez açıldı, birer kez engellendi; Kocaeli engellendi | Çalışıyor, ama hangi şehrin ne zaman açılacağı öngörülemez. Engel kaydedilir, tarama durur |
+| Kariyer.net anahtar kelimeli arama (`?kw=`, pozisyon adresleri) | Doğrulanamadı | Her denemede 403 (PerimeterX) | Kullanılmıyor; anahtar kelimeler şehir sayfası üzerinde **yerelde süzülür** (`keyword_mode: local_filter`) |
+| Kariyer.net ilan ayrıntısı | Sayfada `JobPosting` JSON-LD yok; içerik istemci tarafında | Önbellek dışı, bot korumalı | Okunmuyor; zorunlu alanların hepsi liste kartında var |
+| Indeed `/jobs?q=&l=&sort=date` | Tarayıcıda açılan gerçek sayfadan okundu (gömülü `mosaic-provider-jobcards` JSON'u + kartlar); ayrıştırıcı aynı sayfanın ham HTML'inde doğrulandı | **Engelli.** Sunucudan her istek Cloudflare "Security Check" sayfasıyla 403 | Tarayıcı ve ayrıştırıcı hazır; site izin vermediği için sunucudan ilan gelmiyor, çalışmalar `blocked` kaydedilir |
+| Indeed 2. sayfa ve sonrası | robots.txt yalnızca `&start=N&` biçimine izin veriyor | Oturumsuz kullanıcı giriş sayfasına yönlendiriliyor | Varsayılan sayfa sınırı 1; yönlendirme `login_required` hatası olarak kaydedilir |
+| Indeed ilan ayrıntısı (`/viewjob`) | — | robots.txt yasaklıyor | Okunmuyor; bağlantı yalnızca kullanıcının tıklaması içindir |
+
+Bu sitelerin en eksiksiz ve kararlı kaynağı yine **iş alarmı mailleridir** ([SETUP.md › İş alarmları](SETUP.md#iş-alarmları)); tarama onu tamamlar, yerine geçmez.
+
+Durumu yeniden ölçmek için (veritabanına yazmaz, her siteye robots.txt + tek sayfa isteği):
+
+```bash
+cd backend && npm run scrapers:check -- kariyer_net İzmir
+cd backend && npm run scrapers:check -- indeed İstanbul "Flutter Developer"
+```
+
+Docker içinde: `docker compose exec api node dist/src/scraper-check.js kariyer_net İstanbul`.
+
+## Mimari
+
+```
+backend/src/
+├── domain/
+│   ├── scraper-config.ts      ayar şeması, varsayılanlar, kısmi güncelleme, site listesi
+│   ├── scraped-jobs.ts        standart ilan modeli, normalizasyon, kimlik, benzerlik, içerik özeti, durum eşikleri
+│   ├── robots.ts              robots.txt ayrıştırıcı (RFC 9309)
+│   └── provinces.ts           il plaka tablosu (Indeed "T34" → İstanbul)
+├── engine/
+│   ├── scraper.service.ts     çalışma açma/yürütme, ölçümler, aktarım, bildirim, zamanlama, sorgular
+│   └── scrapers/
+│       ├── base-scraper.ts    ortak soyut tarayıcı: hedefler, sayfalama, hata sınıflandırma, durdurma
+│       ├── http-client.ts     robots.txt, istek aralığı, yeniden deneme + üstel bekleme, Retry-After, engel algılama
+│       ├── rate-limiter.ts    site başına istek aralığı ve eşzamanlılık havuzu
+│       ├── kariyer-net.scraper.ts / indeed.scraper.ts
+│       ├── parsers/           siteye özel ayrıştırıcılar (HTML → ham kart)
+│       ├── selectors/         siteye özel adres kalıpları, selector'lar, bot koruması işaretleri
+│       ├── scraped-job.repository.ts   upsert, durum yaşam döngüsü, süzme + sayfalama
+│       └── registry.ts        site → tarayıcı
+├── modules/scrapers/          REST API
+├── contracts/scrapers.ts      API yanıt sözleşmesi (web arayüzüyle paylaşılır)
+└── scraper-check.ts           canlı yapı kontrolü (CLI)
+```
+
+Akış: zamanlayıcı (worker, dakikada bir, tek lider) ya da API → `ScraperRun` (`queued`) + `scraper.run` olayı → worker `scrape` kuyruğu → `ScraperService.execute` → tarayıcı sayfaları dolaşır → her sayfanın ilanları `ScrapedJobRepository.upsert` ile yazılır → çalışma bitince durum eşikleri uygulanır → yeni ilanlar `JobSearchService.applyListings` ile çalışma alanlarına aktarılır → engel/düzen sorunu varsa yöneticiye bildirim.
+
+**Eşzamanlılık.** Aynı site için sırada ya da çalışan bir çalışma varken yenisi açılmaz; kontrol ve ekleme Postgres danışma kilidi (`pg_advisory_xact_lock`) altında yapıldığından API, zamanlayıcı ve birden çok worker yarışamaz. Çalışma yalnızca `queued` iken sahiplenilir; kuyruk aynı işi iki kez teslim etse de bir kez yürür. `run_timeout_minutes` içinde bitmeyen çalışma `failed` olur. Siteler birbirinden bağımsız çalışır; birinin engeli ya da hatası diğerini etkilemez.
+
+**Hata türleri** (çalışmanın `errors` alanında ayrı tutulur):
+
+| Tür | Anlamı | Davranış |
+|---|---|---|
+| `blocked` | 403/401, CAPTCHA ya da bot koruması sayfası (200 dönse bile) | Sitenin taraması durur, `block_cooldown_hours` beklenir, yönetici bildirimi |
+| `rate_limited` | 429 ve `Retry-After` izin verilenden uzun ya da yok | Tarama durur, bekleme süresi uygulanır, yönetici bildirimi |
+| `robots` | robots.txt yasaklıyor ya da okunamadı (5xx) | İstek atılmaz, o arama biter |
+| `login_required` | Site giriş sayfasına yönlendirdi | Oturum açılmaz, o arama biter |
+| `selector` | Sayfa geldi ama ilan yapısı yok / hiçbir karttan zorunlu alanlar okunamadı | Arama biter, yönetici bildirimi ("sayfa düzeni değişmiş olabilir") |
+| `parse` | Gömülü veri bozuk ya da zorunlu alanı eksik kartlar atlandı | Kayıt; eksik kart uydurulmaz |
+| `network` | Zaman aşımı, bağlantı hatası, 5xx | `max_retries` kez üstel beklemeyle yeniden denenir, sonra arama biter |
+| `forward` | İlanlar çalışma alanlarına aktarılamadı | Tarama sonucu korunur, hata kaydedilir |
+
+Çalışma durumu: `succeeded`, `partial` (bazı sayfalar alınamadı), `blocked`, `rate_limited`, `failed` (hiç sayfa alınamadı), `skipped` (ayarlardan kapalı). Engelli bir tarama asla başarılı gösterilmez; engele kadar alınan ilanlar kaydedilir.
+
+## Veri modeli ve tekilleştirme
+
+| Alan | Açıklama |
+|---|---|
+| `source` + `external_id` | Tekil anahtar. Platformun ilan numarası (Kariyer.net adresin sonundaki sayı, Indeed `jobkey`); yoksa sadeleştirilmiş ilan adresinin SHA-256 özeti (`u-…`) |
+| `company_name`, `job_title`, `city`, `job_url`, `source` | Zorunlu; biri okunamayan kart kaydedilmez |
+| `district`, `company_url`, `description`, `employment_type`, `work_mode`, `published_at`, `published_text` | Sayfada varsa; yoksa `null` (uydurulmaz). Kariyer.net kartındaki tarih "güncellendi" ise yayın tarihi `null` kalır |
+| `first_seen_at` / `last_seen_at` | İlk görülme korunur; her görülmede son görülme ilerler |
+| `status` | `active` → `missing_after_hours` görülmezse `missing` → `expire_after_days` görülmezse `expired`. Silinmez; yeniden görülürse `active` |
+| `duplicate_of` | Yardımcı benzerlik: farklı numara ama aynı firma çekirdeği + unvan + şehirde etkin ilan varsa ana kayda bağlanır; aynı sitedeyse yeni sayılmaz |
+| `content_changed_at` | İçerik özeti değişince (firma, unvan, konum, çalışma türü, açıklama…) güncellenir; göreli tarih metni ("2 gün") özete girmez |
+
+Çalışma alanına aktarımda: unvan ve uzaktan/yurt dışı süzgeci, firma eşleme ve keşif, iş kaydında tekilleştirme (firma + unvan + bölge) ilan aramasıyla aynı hattan geçer. Profilin şehir seçimi varsa yalnızca o şehirlerdeki (ve uzaktan) ilanlar aktarılır. Adı gizli firmanın ("Gizli Firma") ilanı aktarılmaz. Görülmeye devam eden ilanların çalışma alanındaki kaydı tazelenir; görülmeyenler mevcut eskime kuralıyla kapanır.
+
+## Ayar
+
+`GET /api/v1/scrapers/config` okur, `POST` (ya da `PUT`) kısmi günceller; tamamı doğrulanır. Kod değişikliği gerekmez; arayüzde **Profilim › İlan siteleri taraması** bölümünden de yönetilir.
+
+```json
+{
+  "enabled": true,
+  "sources": {
+    "kariyer_net": { "enabled": true, "interval_hours": 4, "max_pages": 5, "concurrency": 1, "request_delay_ms": 4000, "keyword_mode": "local_filter" },
+    "indeed":      { "enabled": true, "interval_hours": 4, "max_pages": 1, "concurrency": 1, "request_delay_ms": 5000, "keyword_mode": "query" }
+  },
+  "cities": ["İstanbul", "Ankara", "İzmir", "Kocaeli"],
+  "keywords": [],
+  "notify_only_new": true,
+  "forward_to_workspaces": true,
+  "max_retries": 2,
+  "retry_base_ms": 2000,
+  "max_retry_after_seconds": 120,
+  "block_cooldown_hours": 24,
+  "missing_after_hours": 48,
+  "expire_after_days": 14,
+  "run_timeout_minutes": 60
+}
+```
+
+- `sources.<site>.cities` / `keywords` verilirse o site için genel listeyi ezer.
+- `keywords` boşsa şehrin genel ilan araması yapılır. Kariyer.net için `keyword_mode: "query"` reddedilir (doğrulanmış arama adresi yok).
+- `notify_only_new: false` güncellenen ilanları da çalışma alanlarına iletir.
+- **Şehir sırası önemlidir**: site bir şehirde engellerse tarama orada durur, sonraki şehirlere istek atılmaz. Varsayılan sırada büyük şehirler öndedir (önbellekte bulunma olasılıkları daha yüksek).
+- Engelden sonra site `block_cooldown_hours` (varsayılan 24) bekler; engel sık görülürse fiilî tarama sıklığı günde bire iner. Daha sık deneme için bu değer düşürülebilir (en az 1).
+- Sunucu düzeyinde tamamen kapatmak için `.env`: `SCRAPERS_ENABLED=false`.
+
+## REST API
+
+Hepsi oturum ister (`Authorization: Bearer …`). Tarama başlatma ve ayar yazma yalnızca sunucu yöneticisine açıktır; taramalar ve taranan ilanlar sunucu genelinde ortaktır. Tarama isteği bloklamaz: çalışma kuyruğa alınır (`202`), kimliğiyle sorgulanır.
+
+| Uç | Açıklama |
+|---|---|
+| `POST /api/v1/scrapers/run` | `{ "source": "kariyer_net" \| "indeed" \| "all", "cities"?, "keywords"?, "max_pages"? }` → `{ runs: [{ id, state: "queued", already_running }] }` |
+| `GET /api/v1/scrapers/status` | Site başına sağlık, son ve etkin çalışma, sıradaki zaman, etkin ve son 24 saatteki yeni ilan sayısı |
+| `GET /api/v1/scrapers/history` | `?source=&state=&limit=&cursor=` çalışma geçmişi (ölçümler + hatalar) |
+| `GET /api/v1/scrapers/history/{id}` | Tek çalışma |
+| `GET /api/v1/scrapers/config` · `POST`/`PUT /api/v1/scrapers/config` | Ayar |
+| `GET /api/v1/scrapers/jobs` | `?source=&city=&company=&title=&status=&from=&to=&only_new=&since=&include_duplicates=&limit=&cursor=` → `{ items, total, next_cursor }` |
+| `GET /api/v1/scrapers/jobs/new` | `since` (varsayılan son 24 saat) sonrasında ilk kez görülen ilanlar; diğer süzgeçler aynı |
+| `GET /api/v1/scrapers/jobs/{id}` | Tek ilan |
+
+`city` süzgeci şehir ve ilçede arar; `from`/`to` ilk görülme tarihine uygulanır; yinelenen kayıtlar (`duplicate_of`) `include_duplicates=true` olmadıkça listelenmez. Ölçümler: `pages_visited`, `pages_failed`, `listings_found`, `listings_new`, `listings_updated`, `duplicates`, `forwarded`, `started_at`, `finished_at`, `duration_ms`, `error_summary`, `errors[]`.
+
+Başka bir servisten süreç içinde (NestJS bağımlılığı olarak) doğrudan çağırmak:
+
+```ts
+const run = await scraperService.run({ source: 'kariyer_net', cities: ['İstanbul', 'Kocaeli'], keywords: ['Flutter Developer'], max_pages: 5 });
+// run.state: succeeded | partial | blocked | rate_limited | failed ; run.listings_new, run.errors …
+```
+
+Bu yol çalışmayı bu süreçte yürütür ve bitince döner; aynı site için çalışan bir tarama varsa `already_running: true` ile hemen döner.
+
+## Yeni site eklemek
+
+1. `domain/scraper-config.ts`: `SCRAPER_SOURCES`, `WORKSPACE_SOURCE_KIND`, `SCRAPER_LABELS` ve `DEFAULT_SCRAPER_CONFIG.sources`'a ekle.
+2. `engine/scrapers/selectors/<site>.ts`: adres kalıbı, selector'lar ve bot koruması işaretleri — **gerçek sayfadan** okunarak.
+3. `engine/scrapers/parsers/<site>.parser.ts`: HTML → `RawCard[]` + `hasNextPage`; yapı yoksa `ScrapeError('selector')`.
+4. `engine/scrapers/<site>.scraper.ts`: `BaseScraper`'dan türet (`searchUrl`, `parse`, `supportsKeywordQuery`, `blockMarkers`); `registry.ts`'e ekle.
+5. `engine/connectors/manual.ts`: çalışma alanı kaynağını (`scrape_<site>`) kaydet.
+6. `test/unit/fixtures/scrapers/` altına yapısı gerçek, içeriği kurgusal sayfalar; ayrıştırıcı ve engel algılama testleri.
+
+## Testler
+
+- Birim (`test/unit/scrapers.spec.ts`): ayrıştırıcılar kayıtlı sayfalarla, engel ve düzen değişikliği algılama, robots.txt, yeniden deneme/üstel bekleme/Retry-After/403/giriş duvarı, hız sınırlayıcı ve havuz, normalizasyon, kimlik, benzerlik, ayar birleştirme.
+- Uçtan uca (`test/e2e/scrapers.e2e-spec.ts`, gerçek PostgreSQL + Redis, sahte ağ katmanı — gerçek siteye istek atılmaz): sayfalama ve ölçümler, yeniden taramada kayıt açılmaması, içerik güncelleme, yeniden yayın, missing/expired/yeniden etkinleşme, çalışma alanına aktarım ve bildirim, engel/hız sınırı/düzen değişikliği/ağ hatası ayrımı, bir sitenin engelinin diğerini etkilememesi, eşzamanlı ikinci çalışmanın açılmaması, çift teslimde tek yürütme, zamanlayıcı ve zaman aşımı, API süzgeçleri ve sayfalama, yetki ve ayar doğrulaması.

@@ -59,15 +59,16 @@
 
 ## İlan arama motoru
 
-İlanlar üç yoldan gelir; hepsi aynı kayıt hattına (`IngestService`) girer ve firma + sadeleştirilmiş unvan + bölge üzerinden tek ilanda birleşir.
+İlanlar dört yoldan gelir; hepsi aynı kayıt hattına (`IngestService`) girer ve firma + sadeleştirilmiş unvan + bölge üzerinden tek ilanda birleşir.
 
 | Yol | Nasıl | Durum ve otomasyon |
 |---|---|---|
 | Firmanın resmî kaynağı | Kariyer sayfası (JSON-LD) ve başvuru panoları: Greenhouse, Lever, Workable, SmartRecruiters, Recruitee, Ashby, Teamtailor, Personio (`engine/connectors/`, tanıma: `ats-detect.ts`) | Resmî kanıt; açık/kapalı ve tazelik buradan gelir, otomatik başvuru yalnızca bununla mümkündür |
 | İlan panoları | Remotive, Remote OK, Himalayas (uzaktan), Arbeitnow (taşınma) herkese açık API'leri (`connectors/boards.ts`); yalnızca profil yurt dışı kapsamını açtıysa etkin | Toplayıcı: açık görünür ama otomatik başvuruya girmez |
+| İlan sitesi taraması | Kariyer.net ve Indeed'in oturumsuz arama sayfaları; ortak `ScrapedJob` kaydı, profile uyan yeni ilanlar çalışma alanına aktarılır (`engine/scraper.service.ts`, [SCRAPERS.md](SCRAPERS.md)) | Toplayıcı: site ilanı listede gösterdiği için açık kabul edilir; otomatik başvuruya girmez |
 | Web araması | `job_search` AI görevi: unvan grubu × kaynak kümesi (LinkedIn/Indeed, Kariyer.net ve yerel siteler, firma sayfaları ve panolar, yurt dışı) (`engine/job-search.service.ts`) | Sayfası okunup doğrulanan ilan açık, okunamayan "teyit gerekli"; otomatik başvuruya girmez |
 
-- **Platform botu yok.** LinkedIn, Indeed, Kariyer.net gibi sitelere oturum açılmaz, arama sayfaları kazınmaz. Model yalnızca web aramasında gördüğü ilanı bağlantısıyla döndürür; ilan sayfası ancak robots.txt izin veriyorsa okunur.
+- **Oturum ve atlatma yok.** LinkedIn, Indeed, Kariyer.net gibi sitelere oturum açılmaz. Kariyer.net ve Indeed'in yalnızca herkese açık arama sayfaları taranır (robots.txt, istek aralığı, engelde durma; bkz. [SCRAPERS.md](SCRAPERS.md)). Web aramasında model yalnızca gördüğü ilanı bağlantısıyla döndürür; ilan sayfası ancak robots.txt izin veriyorsa okunur.
 - **Sorgu planlayıcı** (`domain/job-search.ts`): aranan unvanlar ikişerli, yakın unvanlar beşerli gruplanır; her grup her kaynak kümesinde ayrı sorgudur. Sorgunun verimi (`jobsearch:log:<profil>`) tutulur: hiç çalışmamış sorgu önce gelir, yeni ilan getirmeyen sorgu 1, 2, 4, 8 gün dinlenir. Gece turu profil başına 4, "Yeniden ara" 6 sorgu çalıştırır.
 - **Tekilleştirme.** Bağlantı sadeleştirilir (izleme parametreleri atılır, LinkedIn/Indeed'de ilan numarası esas alınır) ve bu anahtarla aynı ilan ikinci kez kaydedilmez. Firma önce alan adıyla, sonra adla, sonra adın çekirdeğiyle ("… Group", "… Teknoloji") eşlenir. Yeni firma keşif akışına girer (araştırma, adres arama, ortak katalog).
 - **Uygunluk süzgeci.** Toplayıcı kaynaktan gelen ilan ancak aranan/yakın unvanla eşleşiyorsa ve kapsamı profile uyuyorsa kaydedilir: uzaktan ilan Türkiye'ye açık olmalı, taşınma ilanı tercih edilen bölgede olmalı.

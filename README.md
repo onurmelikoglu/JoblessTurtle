@@ -11,6 +11,7 @@ Yavaş ama kararlı: iş aramanı senin yerine sürdüren, kendi sunucunda çal�
 - **Dönüşleri takip eder.** Gelen kutundaki geri dönen mailleri, otomatik yanıtları ve firma yanıtlarını okur, başvurunun durumunu günceller.
 - **Otopilot ile düzeltir.** Adres geçersizse firmanın sıradaki doğrulanmış adresine gönderir, ek sığmadıysa yalnızca CV ile dener, emin olamadığını onayına bırakır.
 - **İş alarmlarını okur.** Kariyer.net, LinkedIn, Indeed gibi sitelerin otomatik taramaya kapalı ilanlarını, bu sitelerde kurduğun iş alarmlarının maillerinden alıp listeye ekler.
+- **İlan sitelerini tarar.** Kariyer.net ve Indeed'in oturumsuz görülebilen arama sayfalarını 4 saatte bir (ya da elle) tarar; site erişimi engellerse durur ve bildirir. Ayrıntılar ve sitelerin güncel erişim durumu: [docs/SCRAPERS.md](docs/SCRAPERS.md).
 - **Deneyimden öğrenir.** Hangi adreslerin ulaştığını ve hangi başvurulara yanıt geldiğini kaydeder; yeterli veri birikince sıralamaları buna göre iyileştirir.
 - **Birden çok kullanıcı.** Davet koduyla arkadaşlarını ekleyebilirsin; herkesin ayrı çalışma alanı, CV'si, mail hesabı ve geçmişi olur.
 
@@ -108,7 +109,7 @@ CLI sağlayıcıları kişisel abonelik kullandığı için varsayılan olarak y
 
 ## İlkeler
 
-- **Bot yok, atlatma yok.** LinkedIn, Indeed, Kariyer.net gibi sitelere oturum açan ya da korumalarını (CAPTCHA, 403) aşan tarayıcı otomasyonu kullanılmaz; erişim engellenen kaynak duraklatılır. Sohbet arayüzleri (claude.ai, chatgpt.com) otomatikleştirilmez.
+- **Atlatma yok.** Sitelere oturum açılmaz; korumalar (CAPTCHA, 403, bot doğrulaması) aşılmaz, tarayıcı kimliği taklit edilmez, vekil sunucu kullanılmaz. Kariyer.net ve Indeed'in yalnızca herkese açık arama sayfaları, robots.txt'e uyularak ve kendini tanıtan bir istemciyle taranır; erişim engellenen kaynak duraklatılır. Sohbet arayüzleri (claude.ai, chatgpt.com) otomatikleştirilmez.
 - **Yalnızca kendi mailinden, yalnızca doğrulanmış adreslere.** Tahmin edilmiş adrese gönderilmez; geri dönen adres kalıcı olarak kapatılır. Model alıcı, ek ya da yetki seçemez.
 - **"Gönderildi", mail sağlayıcısının kabulüdür**; teslim ya da okunma garantisi değildir. Sonucu belirsiz gönderim otomatik tekrarlanmaz.
 - **Gizlilik.** Gelen kutusunda yalnızca gönderdiğin başvurulara dönen mailler ve iş sitelerinin ilan bildirimleri okunur; diğer mailler okunmaz ve saklanmaz. Mail parolaları şifreli tutulur. Veriler senin sunucunda kalır.

@@ -17,7 +17,7 @@ export interface ValidationResult {
   dropped: number;
 }
 
-const REPAIRABLE_KINDS: AiKind[] = ['company_report', 'company_discovery', 'company_contacts', 'company_sizes', 'job_search', 'job_alert', 'title_analysis', 'title_expansion', 'cv_facts'];
+const REPAIRABLE_KINDS: AiKind[] = ['company_report', 'company_discovery', 'company_contacts', 'contact_review', 'company_sizes', 'job_search', 'job_alert', 'title_analysis', 'title_expansion', 'cv_facts'];
 const MAX_REPAIR_PASSES = 5;
 
 function nodeAt(root: unknown, path: (string | number)[]): any {

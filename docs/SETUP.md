@@ -107,6 +107,10 @@ okur; başka hiçbir maili okumaz ve saklamaz. Takip **Ana sayfa › Mail dönü
 
 Kariyer.net, LinkedIn ve Indeed ilanlarının otomatik taranmasına izin vermez. Bu sitelerde kullanıcının kendi hesabıyla kurduğu iş alarmlarının mailleri okunur ve profile uyan ilanlar listeye eklenir. Kurulum: **Mail dönüşleri › İş alarmları** panelindeki hazır aramalardan birine bas, açılan sitede alarmı kur (sıklık: günlük). Alarm mailleri uygulamaya bağlı adrese gelmelidir. İlk mail geldiğinde site "Alarm çalışıyor" olarak işaretlenir.
 
+### İlan sitesi taraması
+
+Ayrıca Kariyer.net ve Indeed'in oturumsuz arama sayfaları 4 saatte bir taranır; şehirler, aralık ve sayfa sınırı **Profilim › İlan siteleri taraması** bölümünden (yönetici) değiştirilir, aynı yerden elle tarama başlatılır. Site erişimi engellerse tarama durur ve yöneticiye bildirilir. Sunucuda tamamen kapatmak için `.env` içinde `SCRAPERS_ENABLED=false`. Sitelerin güncel erişim durumu, API ve ayarlar: [SCRAPERS.md](SCRAPERS.md).
+
 ## 4. Yapay zekâ
 
 Firma ve ilan bulma, firma araştırması, yazı hazırlama ve mail dönüşlerini okuma bir yapay zekâ modeliyle yapılır. Sohbet arayüzleri (claude.ai, chatgpt.com) bot ile otomatikleştirilmez; resmî komut satırı araçları ya da kopyala-yapıştır köprüsü kullanılır.

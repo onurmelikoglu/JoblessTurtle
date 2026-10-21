@@ -138,7 +138,7 @@ export class SendingService {
 
     if (await this.addressBook.isDead(rev.toEmail)) throw new AppError(422, 'DEAD_ADDRESS', 'Bu adres geçersiz olduğu için bir daha kullanılmıyor; başka bir adres seç');
     const contact = await this.prisma.contactPoint.findFirst({ where: { companyId: draft.companyId, email: rev.toEmail.toLowerCase() } });
-    if (contact?.kind === 'guessed') throw new AppError(422, 'CONTACT_UNVERIFIED', 'Tahmin edilmiş adrese gönderim yapılmaz; adresi doğrulayın');
+    if (contact?.kind === 'guessed' && input.sendMode !== 'manual') throw new AppError(422, 'CONTACT_UNVERIFIED', 'Tahmin edilmiş adrese yalnızca elle seçilerek gönderilebilir');
     if (contact?.suppressed) throw new AppError(422, 'SUPPRESSED', 'Bu adrese gönderim engelli (geri dönme veya kullanıcı engeli)');
     if (input.sendMode !== 'manual' && (!contact || !contact.verifiedAt))
       throw new AppError(422, 'CONTACT_UNVERIFIED', 'Toplu/otomatik gönderim için alıcı adresi doğrulanmış olmalı');

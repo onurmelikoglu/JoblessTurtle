@@ -9,6 +9,8 @@
     "start:worker": "node dist/src/worker.js",
     "dev:api": "ts-node --transpile-only src/main.ts",
     "dev:worker": "ts-node --transpile-only src/worker.ts",
+    "scrapers:check": "ts-node --transpile-only src/scraper-check.ts",
+    "scrapers:check:prod": "node dist/src/scraper-check.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
     "test": "jest --config jest.config.js --selectProjects unit",

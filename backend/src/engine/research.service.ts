@@ -1,16 +1,35 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Company, Prisma, SourceConnector } from '@prisma/client';
 import * as cheerio from 'cheerio';
+import { promises as dns } from 'dns';
+import { env } from '../common/env';
 import { OutboxService } from '../common/outbox.service';
 import { PrismaService } from '../common/prisma.service';
 import { parseEmployees } from '../domain/company-size';
-import { contactSearchPlan, rememberedDepth, SEARCH_RETRY_DAYS, SearchDepth, SearchRequest, shouldEscalate } from '../domain/contact-search';
+import {
+  CandidateReview,
+  genericGuess,
+  isOffTopicAddress,
+  MANUAL_ONLY_KINDS,
+  mergeCandidates,
+  needsReview,
+  pageMentionsEmail,
+  pickGenericGuesses,
+  ResearchCandidate,
+  roleGuessesFor,
+  settleCandidate,
+  SettledContact,
+  settleProbedGuess,
+  SourceCheck,
+  sourceIsReadable,
+  websiteDomainFor,
+} from '../domain/contact-research';
+import { contactSearchPlan, rememberedDepth, SEARCH_RETRY_DAYS, SEARCH_VERSION, SearchDepth, SearchRequest } from '../domain/contact-search';
 import { CANDIDATE_HR_KIND, classifyPublishedEmail, cleanEmail, domainMatches, GROUP_HR_KIND, isUnverifiableSource, isValidEmail, SENDABLE_CONTACT_KINDS } from '../domain/contacts';
 import { detectLocation } from '../domain/geo';
 import { isTurkishUrl, normalizeCompanyName, normalizeDomain, stripHtml, truncate } from '../domain/text';
 import { AddressBookService } from './address-book.service';
 import { AiService } from './ai/ai.service';
-import type { ProviderName } from './ai/providers';
 import { CatalogService } from './catalog.service';
 import { CompanyScoringService } from './company-scoring.service';
 import { assertSafeUrl } from '../domain/ssrf';
@@ -20,6 +39,7 @@ import { fetchSource, robotsAllows } from './connectors/http';
 import { IngestService } from './ingest.service';
 import { LearnedModelsService } from './learned-models.service';
 import { LearningService } from './learning.service';
+import { probeMailboxes } from './mail/smtp-probe';
 
 const RECENT_RESEARCH_MS = 15 * 60_000;
 const DAY_MS = 86_400_000;
@@ -116,14 +136,39 @@ export function pickSegments(log: SegmentLog, opts: { count?: number; skipExhaus
 const RECRUITING_PURPOSES = ['hr', 'recruiting', 'careers'];
 const RECRUITING_KINDS = ['official_hr', 'job_apply', 'named_recruiter'];
 const SENDABLE_FOUND_KINDS = [...RECRUITING_KINDS, 'general'];
-/** Adres araması önce ChatGPT ile yapılır (ai.service PREFERRED_PROVIDERS); sonuçsuz kalırsa Claude ikinci görüş verir. */
-const SECOND_OPINION_PROVIDERS: ProviderName[] = ['cli_claude'];
-const RUNG_MODEL: Record<Exclude<SearchDepth, 'base'>, string> = { second: 'sonnet', max: 'opus' };
+/** Denetçiye en fazla bu kadar aday gider; fazlası denetlenmemiş kurallarla kaydedilir. */
+const MAX_REVIEWED = 30;
+const MAX_CANDIDATES = 40;
+const MAX_SOURCE_PAGES = 25;
+const MAX_STORED_FOR_REVIEW = 15;
+const MAX_KNOWN_IN_PROMPT = 30;
+/** Daha önce kaydedilmiş ama amacı belirsiz kalmış adresler derin aramada denetçiye yeniden sorulur. */
+const REVIEWABLE_STORED_KINDS = ['other', 'guessed'];
+const RELIABLE_SCORE = 60;
+
+/** Posta sunucusuna kendini tanıtırken kullanılan ad: ayarlanmamışsa uygulamanın dışarıdan erişilen alan adı. */
+function probeHelo() {
+  const configured = env().SMTP_PROBE_HELO;
+  if (configured) return configured;
+  const host = normalizeDomain(env().APP_PUBLIC_URL);
+  return host && host !== 'localhost' ? host : undefined;
+}
 
 export interface DetailsOptions extends Partial<SearchRequest> {
   /** Geri dönmüş ya da kullanıcının istemediği adresler: modele "bunların dışındakileri ara" diye verilir. */
   avoidEmails?: string[];
+  /** Firma sitesi az önce tarandıysa (firma raporu) yeniden taranmaz. */
+  skipCrawl?: boolean;
 }
+
+type HarvestContact = { email: string; sourceUrl?: string | null; purpose?: string | null; roleType?: string | null; name?: string | null; title?: string | null; origin?: string | null; evidence?: string | null };
+type HarvestOutput = {
+  website?: string | null;
+  contacts: HarvestContact[];
+  group?: GroupInfo | null;
+  offices: { label?: string | null; city?: string | null; district?: string | null; address?: string | null; sourceUrl?: string | null }[];
+  employees?: string | null;
+};
 
 type FoundContact = { email: string; sourceUrl: string; purpose?: string | null };
 
@@ -134,10 +179,6 @@ function foundContactKind(c: FoundContact, company: { canonicalDomain: string | 
   return suggestedOnly ? CANDIDATE_HR_KIND : kind;
 }
 
-function hasReliableRecruitingContact(contacts: FoundContact[], company: { canonicalDomain: string | null; aliases: string[] } | null) {
-  return contacts.some((c) => isValidEmail(cleanEmail(c.email)) && RECRUITING_KINDS.includes(foundContactKind(c, company)));
-}
-
 function contactKindFor(email: string, purpose?: string | null) {
   const kind = classifyPublishedEmail(cleanEmail(email)).kind;
   return kind === 'other' && purpose && RECRUITING_PURPOSES.includes(purpose) ? 'named_recruiter' : kind;
@@ -145,7 +186,7 @@ function contactKindFor(email: string, purpose?: string | null) {
 
 type GroupInfo = { name: string; website?: string | null; hrEmail?: string | null; sourceUrl?: string | null };
 
-export type ResearchMeta = { reportAt?: string; contactsSearchedAt?: string; contactsDepth?: SearchDepth; contactsEscalated?: boolean; contactsFound?: boolean; officesSearchedAt?: string; officesFound?: boolean; sizeSearchedAt?: string };
+export type ResearchMeta = { reportAt?: string; contactsSearchedAt?: string; contactsDepth?: SearchDepth; contactsEscalated?: boolean; contactsVersion?: number; contactsFound?: boolean; officesSearchedAt?: string; officesFound?: boolean; sizeSearchedAt?: string };
 
 /** Derin arama yapıldı ve gönderilebilir adres çıkmadı: yeniden deneme süresi dolana kadar yalnızca diğer başvuru kanalları gösterilir. */
 export function addressSearchExhausted(meta: unknown, now = Date.now()) {
@@ -244,7 +285,7 @@ export class ResearchService {
     return { status: 'awaiting_user', taskId: result.taskId };
   }
 
-  private async crawlSite(company: Company, base: string) {
+  private async crawlSite(company: Company, base: string, opts: { detectOffice?: boolean } = {}) {
     const out: { url: string; text: string; emails: string[]; links: string[]; addresses: string[] }[] = [];
     const visited = new Set<string>();
     const queue = [base];
@@ -299,7 +340,7 @@ export class ResearchService {
       // İzinli kısa kanıt parçası; ham sayfa saklanmaz.
       const pageText = stripHtml($('main').html() ?? $('body').html() ?? html);
       out.push({ url, text: truncate(pageText, 3500) ?? '', emails: [...emails], links, addresses: extractAddresses(html, stripHtml(html)) });
-      if (out.length === 1) {
+      if (out.length === 1 && opts.detectOffice !== false) {
         const loc = detectLocation(stripHtml(html));
         const hasOffice = await this.prisma.office.count({ where: { companyId: company.id } });
         if (!hasOffice && loc.district) {
@@ -342,17 +383,19 @@ export class ResearchService {
   async findContactsIfMissing(company: Company, actorId: string | null) {
     const hasHr = await this.prisma.contactPoint.count({ where: { companyId: company.id, suppressed: false, kind: { in: ['official_hr', 'job_apply'] } } });
     if (hasHr) return { status: 'exists' as const };
-    return this.findDetails(company.id, actorId);
+    return this.findDetails(company.id, actorId, { skipCrawl: true });
   }
 
   /**
    * Önce ortak kataloğa bakılır: başka bir çalışma alanında bulunmuş, bu firmada henüz olmayan gönderilebilir adres
-   * varsa yapay zekâ çağrısı yapılmaz. Arama hafızalıdır: aynı derinlikte yakın zamanda yapılmış arama tekrarlanmaz,
-   * derin arama yalnızca daha önce denenmemiş basamaklardan sürer (domain/contact-search). Geri dönmüş ve geçersiz
-   * olduğu bilinen adresler modele "bunların dışındakileri ara" diye bildirilir ve sonuç değerlendirmesinde sayılmaz.
+   * varsa yapay zekâ çağrısı yapılmaz. Arama hafızalıdır (domain/contact-search): aynı derinlikte yakın zamanda yapılmış
+   * arama tekrarlanmaz. Hat: firma sitesi taranır (yapay zekâsız) → toplayıcı model (Sonnet) web'de aday adresleri toplar
+   * → her adayın kaynak sayfası okunup adres orada geçiyor mu bakılır → derin aramada denetçi model (Opus) kesin olmayan
+   * adayları değerlendirir. Tür, rol ve güven skoru domain/contact-research kurallarıyla belirlenir; ölü, geri dönmüş ve
+   * kullanıcının istemediği adresler hiç eklenmez.
    */
   async findDetails(companyId: string, actorId: string | null, opts: DetailsOptions = {}) {
-    const company = await this.prisma.company.findUnique({ where: { id: companyId } });
+    let company = await this.prisma.company.findUnique({ where: { id: companyId } });
     if (!company) return { status: 'missing' as const };
     const deep = opts.deep === true;
     const searchFeatures = { deep, forced: !!opts.force, hasDomain: !!company.canonicalDomain, employeeRange: company.employeeRange };
@@ -366,16 +409,22 @@ export class ResearchService {
     }
     const plan = contactSearchPlan(company.researchMeta as ResearchMeta, { deep, force: opts.force, since: opts.since });
     if (plan.skip) return { status: 'skipped' as const, reason: plan.skip };
+    const manualBefore = await this.manualCount(company.id);
     const avoidEmails = [...new Set([...(opts.avoidEmails ?? []), ...(await this.addressBook.avoidedForCompany(company.id))].map((e) => e.toLowerCase()))];
     const avoid = new Set(avoidEmails);
+    const stored = await this.prisma.contactPoint.findMany({ where: { companyId: company.id }, orderBy: { discoveredAt: 'desc' }, select: { email: true, kind: true, suppressed: true, sourceUrl: true } });
     const profile = await this.prisma.searchProfile.findFirst({ where: { workspaceId: company.workspaceId, active: true }, orderBy: { createdAt: 'asc' } });
     const hints = await this.models.contactSearchHints();
-    const request = {
+    const base = company.website ?? (company.canonicalDomain ? `https://${company.canonicalDomain}` : null);
+    const sitePages = base && !opts.skipCrawl ? await this.crawlSite(company, base, { detectOffice: false }) : [];
+    const knownEmails = stored.filter((c) => !c.suppressed && [...SENDABLE_CONTACT_KINDS, ...MANUAL_ONLY_KINDS].includes(c.kind)).map((c) => c.email);
+    const harvest = await this.ai.run({
       workspaceId: company.workspaceId,
-      kind: 'company_contacts' as const,
+      kind: 'company_contacts',
       input: {
         company: { name: company.name, domain: company.canonicalDomain },
         regions: [...new Set([profile?.city, ...(profile?.districtsPrimary ?? [])].filter(Boolean))].slice(0, 40),
+        ...(knownEmails.length ? { knownEmails: knownEmails.slice(0, MAX_KNOWN_IN_PROMPT) } : {}),
         ...(avoidEmails.length ? { avoidEmails } : {}),
         ...(hints.length ? { hints } : {}),
       },
@@ -385,52 +434,174 @@ export class ResearchService {
       allowManual: false,
       allowTemplate: false,
       useCache: false,
-    };
-    type Found = { contacts: FoundContact[]; group?: GroupInfo | null; offices: { label?: string | null; city?: string | null; district?: string | null; address?: string | null; sourceUrl?: string | null }[]; employees?: string | null };
-    const found: Found = { contacts: [], group: null, offices: [], employees: null };
-    const usable = () => found.contacts.filter((c) => !avoid.has(cleanEmail(c.email)) && isValidEmail(cleanEmail(c.email)));
-    const findings = () => ({
-      recruiting: hasReliableRecruitingContact(usable(), company) || (!!found.group?.hrEmail && !avoid.has(found.group.hrEmail.toLowerCase())),
-      sendable: sendableBefore > 0 || usable().some((c) => SENDABLE_FOUND_KINDS.includes(foundContactKind(c, company))),
     });
-    const providers: string[] = [];
-    let firstTaskId: string | null = null;
-    let reached: SearchDepth | null = null;
-    for (const rung of plan.rungs) {
-      const r = await this.ai.run(rung === 'base' ? request : { ...request, onlyProviders: SECOND_OPINION_PROVIDERS, modelOverride: { cli_claude: RUNG_MODEL[rung] } });
-      if (r.status !== 'succeeded') {
-        if (!reached) return { status: r.status };
-        break;
-      }
-      const output = r.output as Found;
-      found.contacts.push(...output.contacts);
-      found.group = found.group?.hrEmail ? found.group : (output.group ?? found.group ?? null);
-      if (!found.offices.length) found.offices = output.offices;
-      found.employees = found.employees ?? output.employees;
-      providers.push(rung === 'base' ? r.provider : `${r.provider}:${RUNG_MODEL[rung]}`);
-      firstTaskId = firstTaskId ?? r.taskId;
-      reached = rung;
-      if (!shouldEscalate(rung, findings())) break;
+    if (harvest.status !== 'succeeded') return { status: harvest.status };
+    const found = harvest.output as HarvestOutput;
+    const adopted = await this.adoptWebsite(company, found);
+    const adoptedPages = adopted.canonicalDomain !== company.canonicalDomain && !opts.skipCrawl ? await this.crawlSite(adopted, adopted.website ?? `https://${adopted.canonicalDomain}`, { detectOffice: false }) : [];
+    company = adopted;
+    const ownDomain = (email: string) => domainMatches(email, adopted.canonicalDomain, adopted.aliases);
+    const restored = new Set(stored.filter((c) => !c.suppressed && c.kind === CANDIDATE_HR_KIND && ownDomain(c.email)).map((c) => c.email));
+    const known = new Set(stored.filter((c) => c.suppressed || (!REVIEWABLE_STORED_KINDS.includes(c.kind) && !restored.has(c.email))).map((c) => c.email));
+    const merged = mergeCandidates([
+      ...[...sitePages, ...adoptedPages].flatMap((p) => p.emails.map((email): ResearchCandidate => ({ email, sourceUrl: p.url, origin: 'site' }))),
+      ...found.contacts.map(
+        (c): ResearchCandidate => ({ email: c.email, sourceUrl: c.sourceUrl ?? null, origin: c.origin === 'pattern' || c.origin === 'likely' ? 'pattern' : 'published', name: c.name, title: c.title, roleType: c.roleType ?? c.purpose, evidence: c.evidence }),
+      ),
+      ...stored.filter((c) => restored.has(c.email)).map((c): ResearchCandidate => ({ email: c.email, sourceUrl: c.sourceUrl, origin: 'stored' })),
+      ...(deep ? stored.filter((c) => !c.suppressed && REVIEWABLE_STORED_KINDS.includes(c.kind)).slice(0, MAX_STORED_FOR_REVIEW).map((c): ResearchCandidate => ({ email: c.email, sourceUrl: c.sourceUrl, origin: 'stored' })) : []),
+    ]).filter((c) => isValidEmail(c.email) && !avoid.has(c.email) && !known.has(c.email) && !isOffTopicAddress(c.email));
+    const dead = await this.addressBook.deadAmong(merged.map((c) => c.email));
+    const candidates = merged.filter((c) => !dead.has(c.email)).slice(0, MAX_CANDIDATES);
+    const checks = await this.checkSources(candidates);
+    const providers: string[] = [harvest.provider];
+    const toReview = deep ? candidates.filter((c) => needsReview(c, checks.get(c.email)!, ownDomain(c.email))).slice(0, MAX_REVIEWED) : [];
+    const reviews = toReview.length ? await this.reviewCandidates(company, found.group?.name ?? null, toReview, checks, actorId) : null;
+    if (reviews) providers.push(`${reviews.provider}:review`);
+    const reviewed = new Set(reviews ? toReview.map((c) => c.email) : []);
+    const ruled = candidates
+      .map((c) => settleCandidate(c, { check: checks.get(c.email)!, domainMatch: ownDomain(c.email), reviewed: reviewed.has(c.email), review: reviews?.byEmail.get(c.email) }))
+      .filter((c): c is SettledContact => c !== null);
+    const nothingSendable = sendableBefore === 0 && !ruled.some((c) => SENDABLE_CONTACT_KINDS.includes(c.kind));
+    const probe = deep ? await this.probeGuesses(company, ruled, { searchGeneric: nothingSendable, exclude: new Set([...stored.map((c) => c.email), ...avoid, ...merged.map((c) => c.email)]) }) : { contacts: ruled, probed: 0 };
+    if (probe.probed) providers.push('smtp');
+    const settled = probe.contacts;
+    if (settled.length) {
+      await this.ingest.saveContacts(
+        { companyId: company.id } as SourceConnector,
+        settled.map((c) => ({ email: c.email, sourceUrl: c.sourceUrl, kind: c.kind, verified: c.verified, name: c.name, title: c.title, roleType: c.roleType, score: c.score, evidence: c.evidence })),
+        providers.join('+'),
+      );
     }
-    if (!reached) return { status: 'skipped' as const, reason: 'recent' as const };
-    await this.applyContacts(company.id, found.contacts, providers.join('+'));
     await this.applyGroup(company, found.group ?? null);
     await this.applySize(company.id, found.employees);
     const knownOffices = await this.prisma.office.count({ where: { companyId: company.id, locationConfidence: { in: ['medium', 'high'] } } });
     if (!knownOffices) await this.applyOffices(company.id, found.offices);
     await this.prisma.company.update({ where: { id: company.id }, data: { lastResearchedAt: new Date() } });
+    const reached: SearchDepth = deep && (reviews || !toReview.length) ? 'max' : 'base';
     const at = new Date().toISOString();
-    await this.recordSearch(company.id, { contactsSearchedAt: at, officesSearchedAt: at, contactsDepth: reached });
+    await this.recordSearch(company.id, { contactsSearchedAt: at, officesSearchedAt: at, contactsDepth: reached, ...(reached === 'max' ? { contactsVersion: SEARCH_VERSION } : {}) });
     await this.catalog.publish(company.id);
     await this.learning.record({
       workspaceId: company.workspaceId,
       kind: 'contact_search',
       companyId: company.id,
-      aiTaskId: firstTaskId,
-      features: { ...searchFeatures, source: 'ai', providers, rungs: providers.length, depth: reached, avoided: avoidEmails.length, hints: hints.length > 0 },
-      outcome: { returned: found.contacts.length, reliable: findings().recruiting, added: (await this.sendableCount(company.id)) - sendableBefore, group: !!found.group?.hrEmail },
+      aiTaskId: harvest.taskId,
+      features: { ...searchFeatures, source: 'ai', providers, depth: reached, avoided: avoidEmails.length, hints: hints.length > 0, candidates: candidates.length, reviewed: reviewed.size, adoptedDomain: !searchFeatures.hasDomain && !!company.canonicalDomain, probed: probe.probed },
+      outcome: {
+        returned: found.contacts.length,
+        reliable: settled.some((c) => RECRUITING_KINDS.includes(c.kind) && c.score >= RELIABLE_SCORE),
+        added: (await this.sendableCount(company.id)) - sendableBefore,
+        manual: (await this.manualCount(company.id)) - manualBefore,
+        group: !!found.group?.hrEmail,
+      },
     });
     return { status: 'succeeded' as const, source: 'ai' as const };
+  }
+
+  /**
+   * Alan adı bilinmeyen firmada modelin bulduğu resmî site benimsenir: alan adı firmanın adını taşımalı ya da modelin
+   * bulduğu adres/ofis kaynaklarından biri o alan adında olmalı, ayrıca alan adı çözülmeli. Böylece site taranır ve
+   * bulunan adresler firmanın kendi adresi sayılır. Aynı alan adı çalışma alanında başka firmadaysa benimsenmez.
+   */
+  private async adoptWebsite(company: Company, found: HarvestOutput): Promise<Company> {
+    if (company.canonicalDomain) return company;
+    const url = this.safeHttpUrl(found.website);
+    const domain = url ? websiteDomainFor(company.name, url, [...found.contacts.map((c) => c.sourceUrl), ...found.offices.map((o) => o.sourceUrl)]) : null;
+    if (!url || !domain) return company;
+    const resolves = await dns.lookup(new URL(url).hostname).then(
+      () => true,
+      () => false,
+    );
+    if (!resolves) return company;
+    const taken = await this.prisma.company.findFirst({ where: { workspaceId: company.workspaceId, canonicalDomain: domain }, select: { id: true } });
+    if (taken) return company;
+    try {
+      return await this.prisma.company.update({ where: { id: company.id }, data: { canonicalDomain: domain, website: company.website ?? url } });
+    } catch {
+      return company;
+    }
+  }
+
+  /**
+   * Tahmini adresler alan adının posta sunucusuna sorulur (mail gönderilmez). Hiç gönderilebilir adres yoksa firmanın
+   * alan adındaki yaygın başvuru adresleri (kariyer@, ik@, info@…) de denenir. Olmayan kutu düşer, var olduğu doğrulanan
+   * kutu rolünün türüne yükselir; sunucu bir şey söylemezse en olası iki adres tahmini olarak listelenir.
+   */
+  private async probeGuesses(company: Company, settled: SettledContact[], opts: { searchGeneric: boolean; exclude: Set<string> }) {
+    const domain = company.canonicalDomain;
+    if (!env().CONTACT_SMTP_PROBE || !domain) return { contacts: settled, probed: 0 };
+    const onDomain = (email: string) => email.split('@')[1] === domain;
+    const guesses = settled.filter((c) => c.kind === 'guessed' && onDomain(c.email));
+    const candidates = opts.searchGeneric ? roleGuessesFor(domain).filter((e) => !opts.exclude.has(e) && !settled.some((c) => c.email === e)) : [];
+    const dead = await this.addressBook.deadAmong(candidates);
+    const generic = candidates.filter((e) => !dead.has(e));
+    const targets = [...guesses.map((c) => c.email), ...generic];
+    if (!targets.length) return { contacts: settled, probed: 0 };
+    const probe = await probeMailboxes(domain, targets, { helo: probeHelo() });
+    if (!probe.mx) return { contacts: settled.filter((c) => !guesses.includes(c)), probed: targets.length };
+    const verdictOf = (email: string) => probe.verdicts.get(email) ?? 'unknown';
+    const ruled = settled.map((c) => (guesses.includes(c) ? settleProbedGuess(c, verdictOf(c.email), probe.catchAll) : c)).filter((c): c is SettledContact => c !== null);
+    const probedGeneric = generic.map((e) => settleProbedGuess(genericGuess(e), verdictOf(e), probe.catchAll)).filter((c): c is SettledContact => c !== null);
+    const confirmedElsewhere = ruled.some((c) => SENDABLE_CONTACT_KINDS.includes(c.kind));
+    return { contacts: [...ruled, ...pickGenericGuesses(probedGeneric, confirmedElsewhere)], probed: targets.length };
+  }
+
+  /** Her adayın kaynak sayfası düz HTTP ile (robots'a uyarak) okunur; CAPTCHA ya da bot korumalı sayfa aşılmaz, "okunamadı" sayılır. */
+  private async checkSources(candidates: ResearchCandidate[]) {
+    const pages = new Map<string, string | null>();
+    const checks = new Map<string, SourceCheck>();
+    for (const c of candidates) {
+      if (c.origin === 'site') {
+        checks.set(c.email, 'found');
+        continue;
+      }
+      if (!sourceIsReadable(c.sourceUrl) || (!pages.has(c.sourceUrl!) && pages.size >= MAX_SOURCE_PAGES)) {
+        checks.set(c.email, 'unreadable');
+        continue;
+      }
+      const page = await this.sourcePage(c.sourceUrl!, pages);
+      checks.set(c.email, page === null ? 'unreadable' : pageMentionsEmail(page, c.email) ? 'found' : 'missing');
+    }
+    return checks;
+  }
+
+  /** Denetçi model kesin olmayan adayları değerlendirir; başarısız olursa adaylar denetlenmemiş kurallarla kaydedilir. */
+  private async reviewCandidates(company: Company, groupName: string | null, candidates: ResearchCandidate[], checks: Map<string, SourceCheck>, actorId: string | null) {
+    const refs = candidates.map((c, i) => ({ ref: `A${i + 1}`, c }));
+    const r = await this.ai.run({
+      workspaceId: company.workspaceId,
+      kind: 'contact_review',
+      input: {
+        company: { name: company.name, domain: company.canonicalDomain, groupName: company.groupName ?? groupName },
+        candidates: refs.map(({ ref, c }) => ({
+          ref,
+          email: c.email,
+          name: c.name ?? null,
+          title: c.title ?? null,
+          roleType: c.roleType ?? null,
+          origin: c.origin,
+          sourceUrl: c.sourceUrl,
+          evidence: c.evidence ?? null,
+          sourceCheck: checks.get(c.email),
+          domainMatch: domainMatches(c.email, company.canonicalDomain, company.aliases),
+        })),
+      },
+      entityType: 'Company',
+      entityId: company.id,
+      createdById: actorId,
+      allowManual: false,
+      allowTemplate: false,
+      useCache: false,
+    });
+    if (r.status !== 'succeeded') return null;
+    const byRef = new Map(refs.map(({ ref, c }) => [ref, c.email]));
+    const byEmail = new Map<string, CandidateReview>();
+    for (const review of (r.output as { reviews: (CandidateReview & { ref: string })[] }).reviews ?? []) {
+      const email = byRef.get(review.ref);
+      if (email) byEmail.set(email, review);
+    }
+    return { provider: r.provider, byEmail };
   }
 
   /**
@@ -497,6 +668,10 @@ export class ResearchService {
 
   private sendableCount(companyId: string) {
     return this.prisma.contactPoint.count({ where: { companyId, suppressed: false, kind: { in: SENDABLE_CONTACT_KINDS } } });
+  }
+
+  private manualCount(companyId: string) {
+    return this.prisma.contactPoint.count({ where: { companyId, suppressed: false, kind: { in: MANUAL_ONLY_KINDS } } });
   }
 
   /** Toplu tekrar aramada önceki tur adres bulduysa ikinci tur atlanır. */

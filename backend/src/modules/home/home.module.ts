@@ -15,6 +15,7 @@ import { companyLinks, jobApplyLinks, mergeLinks, replyApplyLink } from '../../d
 import { classOfCompany, classOfOpportunity, COMPANY_CLASSES, CompanyClass } from '../../domain/company-class';
 import { employeeSizeOf } from '../../domain/company-size';
 import { ENGLISH_LANGUAGE, pickDocument, replacementFor } from '../../domain/documents';
+import { MANUAL_ONLY_KINDS } from '../../domain/contact-research';
 import { contactSearchPlan } from '../../domain/contact-search';
 import { CANDIDATE_HR_KIND, classifyPublishedEmail, isValidEmail, RecipientScoring, recipientScore, SENDABLE_CONTACT_KINDS, SUGGESTED_ONLY_KINDS } from '../../domain/contacts';
 import { CITY_SELECTION_SEPARATOR, evaluateLocation, regionForSelections, workScopeOf } from '../../domain/geo';
@@ -58,24 +59,29 @@ const ATTEMPT_REASON_LABELS: Record<string, string> = {
   AUTOPILOT_OFF: 'Otomatik başvuru kapatıldı; düzeltme onayını bekliyor',
 };
 
-const RECIPIENT_KIND_LABELS: Record<string, string> = { job_apply: 'İlandaki başvuru adresi', official_hr: 'İK / kariyer', general: 'Genel iletişim', named_recruiter: 'İşe alım çalışanı' };
+const RECIPIENT_KIND_LABELS: Record<string, string> = { job_apply: 'İlandaki başvuru adresi', official_hr: 'İK / kariyer', general: 'Genel iletişim', named_recruiter: 'İşe alım çalışanı', management: 'Yönetim', employee: 'Çalışan', guessed: 'Tahmini (yayımlanmamış)' };
 const DELIVERY_VERIFIED_BY = 'delivery';
 
 function recipientOptionsOf(
   applyEmail: string | null | undefined,
-  contacts: { email: string; kind: string; suppressed: boolean; sourceUrl: string | null; verifiedAt: Date | null; verifiedBy: string | null }[],
+  contacts: { email: string; kind: string; suppressed: boolean; sourceUrl: string | null; verifiedAt: Date | null; verifiedBy: string | null; score: number | null; name: string | null; role: string | null }[],
   scoring: RecipientScoring,
 ) {
   const delivered = new Set(contacts.filter((c) => c.verifiedBy === DELIVERY_VERIFIED_BY).map((c) => c.email.toLowerCase()));
-  const options = [
-    ...(applyEmail ? [{ email: applyEmail.toLowerCase(), kind: 'job_apply', sourceUrl: null as string | null, verified: true }] : []),
-    ...contacts
-      .filter((c) => !c.suppressed && SENDABLE_CONTACT_KINDS.includes(c.kind) && isValidEmail(c.email))
+  const usable = (kinds: string[]) =>
+    contacts
+      .filter((c) => !c.suppressed && kinds.includes(c.kind) && isValidEmail(c.email))
       .sort((a, b) => recipientScore(b, scoring) - recipientScore(a, scoring))
-      .map((c) => ({ email: c.email.toLowerCase(), kind: c.kind, sourceUrl: c.sourceUrl, verified: !!c.verifiedAt })),
+      .map((c) => ({ email: c.email.toLowerCase(), kind: c.kind, sourceUrl: c.sourceUrl, verified: !!c.verifiedAt, score: c.score, person: [c.name, c.role].filter(Boolean).join(', ') || null }));
+  const options = [
+    ...(applyEmail ? [{ email: applyEmail.toLowerCase(), kind: 'job_apply', sourceUrl: null as string | null, verified: true, score: null as number | null, person: null as string | null }] : []),
+    ...usable(SENDABLE_CONTACT_KINDS),
+    ...usable(MANUAL_ONLY_KINDS),
   ];
   const seen = new Set<string>();
-  return options.filter((o) => !seen.has(o.email) && seen.add(o.email)).map((o) => ({ ...o, delivered: delivered.has(o.email), label: RECIPIENT_KIND_LABELS[o.kind] ?? o.kind }));
+  return options
+    .filter((o) => !seen.has(o.email) && seen.add(o.email))
+    .map((o) => ({ ...o, delivered: delivered.has(o.email), label: RECIPIENT_KIND_LABELS[o.kind] ?? o.kind, manualOnly: MANUAL_ONLY_KINDS.includes(o.kind) }));
 }
 const ACTIVE_DRAFT_STATES = ['draft', 'needs_review', 'queued', 'sent'];
 const EDITABLE_DRAFT_STATES = ['draft', 'needs_review'];
@@ -429,7 +435,7 @@ export class HomeService {
       orderBy: [{ f: { sort: 'desc', nulls: 'last' } }, { computedAt: 'desc' }],
       take: OPPORTUNITY_LIST_LIMIT,
       include: {
-        company: { select: { id: true, name: true, website: true, careersUrl: true, researchReport: true, researchMeta: true, groupName: true, employeeRange: true, origin: true, contacts: { where: { suppressed: false, kind: { in: [...SENDABLE_CONTACT_KINDS, ...SUGGESTED_ONLY_KINDS] } }, select: { id: true, kind: true, email: true, sourceUrl: true, ownershipEvidence: true } } } },
+        company: { select: { id: true, name: true, website: true, careersUrl: true, researchReport: true, researchMeta: true, groupName: true, employeeRange: true, origin: true, contacts: { where: { suppressed: false, kind: { in: [...SENDABLE_CONTACT_KINDS, ...SUGGESTED_ONLY_KINDS, ...MANUAL_ONLY_KINDS] } }, select: { id: true, kind: true, email: true, sourceUrl: true, ownershipEvidence: true } } } },
         job: { select: { id: true, title: true, locationText: true, workMode: true, firstSeenAt: true, applyUrl: true, applyEmail: true, channel: true, listings: { select: { applyUrl: true, canonicalUrl: true } } } },
       },
     });
@@ -446,7 +452,7 @@ export class HomeService {
       .map((o) => {
         const d = latestDraft.get(o.id);
         const rev = d ? revisionByDraft.get(d.id) : null;
-        const canEmail = !!(rev?.toEmail || o.job?.applyEmail || o.company.contacts.some((c) => !SUGGESTED_ONLY_KINDS.includes(c.kind)));
+        const canEmail = !!(rev?.toEmail || o.job?.applyEmail || o.company.contacts.some((c) => SENDABLE_CONTACT_KINDS.includes(c.kind)));
         return {
           id: o.id,
           companyId: o.companyId,
@@ -463,6 +469,7 @@ export class HomeService {
           canEmail,
           groupSuggestion: canEmail ? null : groupSuggestionOf(o.company),
           emailSearchExhausted: !canEmail && addressSearchExhausted(o.company.researchMeta),
+          manualRecipients: o.company.contacts.filter((c) => c.kind === 'management' || c.kind === 'employee').length,
           fit: fitLabel(o.category, o.f),
           summary: summarize(o),
           analysis: analysisOf(o.company.researchReport),
@@ -473,7 +480,7 @@ export class HomeService {
             ? ranker({
                 category: o.category,
                 intent: intentForOpportunity(o),
-                kind: o.job?.applyEmail ? 'job_apply' : (o.company.contacts.find((c) => !SUGGESTED_ONLY_KINDS.includes(c.kind))?.kind ?? null),
+                kind: o.job?.applyEmail ? 'job_apply' : (o.company.contacts.find((c) => SENDABLE_CONTACT_KINDS.includes(c.kind))?.kind ?? null),
                 employeeRange: o.company.employeeRange,
                 hasJob: !!o.jobId,
                 companyOrigin: o.company.origin,

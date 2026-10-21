@@ -143,6 +143,8 @@ export interface HomeOpportunity {
   canEmail: boolean;
   groupSuggestion: RecipientSuggestion | null;
   emailSearchExhausted: boolean;
+  /** Firmada bulunan, yalnız elle seçilebilen çalışan / yönetim adresi sayısı. */
+  manualRecipients: number;
   fit: 'strong' | 'good' | 'check';
   summary: string;
   analysis: HomeAnalysis | null;
@@ -276,6 +278,12 @@ export interface RecipientOption {
   /** Bu adrese daha önce gönderilen bir başvurunun ulaştığı görüldü (herhangi bir kullanıcıda). */
   delivered: boolean;
   label: string;
+  /** Çalışan, yönetim ya da tahmini adres: otomatik gönderimde kullanılmaz, yalnız elle seçilir. */
+  manualOnly: boolean;
+  /** Adres araştırmasının verdiği 0–100 güven; araştırmadan gelmeyen adreste null. */
+  score: number | null;
+  /** Kişisel adreste kişinin adı ve unvanı. */
+  person: string | null;
 }
 
 export interface HomePreviewDraft {

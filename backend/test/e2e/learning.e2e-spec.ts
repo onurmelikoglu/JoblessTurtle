@@ -172,7 +172,7 @@ describe('öğrenen sistem: istemlere eklenen deneyim', () => {
     await research.findDetails(company.id, null, { deep: true });
     expect(ai.mock.calls[0][0].input.hints).toEqual(hints);
     const event = await h.prisma.learningEvent.findFirstOrThrow({ where: { kind: 'contact_search', companyId: company.id } });
-    expect(event.features).toMatchObject({ hints: true, depth: 'base' });
+    expect(event.features).toMatchObject({ hints: true, depth: 'max' });
     await h.prisma.learningEvent.update({ where: { id: event.id }, data: { aiTaskId: 'fake-contacts' } });
     const overview = (await h.http().get('/api/v1/admin/learning').set(admin.auth).expect(200)).body;
     expect(overview.hints.contactSearch).toEqual(hints);

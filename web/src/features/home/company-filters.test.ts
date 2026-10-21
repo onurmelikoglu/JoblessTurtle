@@ -21,6 +21,7 @@ function opportunity(patch: Partial<HomeOpportunity> = {}): HomeOpportunity {
     canEmail: true,
     groupSuggestion: null,
     emailSearchExhausted: false,
+    manualRecipients: 0,
     fit: 'good',
     summary: '',
     analysis: null,

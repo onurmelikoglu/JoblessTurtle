@@ -274,6 +274,9 @@ echo '{"type":"result","is_error":false,"result":"{\\"ok\\": true}"}'
     expect(modelFor('cli_codex', 'company_report')).toBeUndefined();
     expect(modelFor('cli_codex', 'company_report', { cli_codex: { default: 'gpt-x' } })).toBe('gpt-x');
     expect(modelFor('cli_codex', 'company_contacts')).toBe('gpt-6.1-sol');
+    expect(modelFor('cli_claude', 'company_contacts')).toBe('sonnet');
+    expect(modelFor('cli_claude', 'contact_review')).toBe('opus');
+    expect(modelFor('cli_claude', 'company_contacts', { cli_claude: { default: 'haiku' } })).toBe('sonnet');
     expect(modelFor('cli_codex', 'company_contacts', { cli_codex: { company_contacts: 'gpt-6-astra' } })).toBe('gpt-6-astra');
     expect(modelFor('cli_claude', 'company_report', { cli_claude: { company_report: 'opus' } })).toBe('opus');
     expect(modelFor('template', 'company_report')).toBeUndefined();
@@ -285,8 +288,9 @@ echo '{"type":"result","is_error":false,"result":"{\\"ok\\": true}"}'
     expect(limitResetAt('rate limited')).toBeNull();
   });
 
-  it('adres aramada ChatGPT önce denenir, diğer görevlerde sıra korunur', () => {
-    expect(providerOrderFor('company_contacts', ['cli_claude', 'cli_codex', 'manual', 'template'])).toEqual(['cli_codex', 'cli_claude', 'manual', 'template']);
+  it('adres aramada Claude önce, ChatGPT yedek denenir; diğer görevlerde sıra korunur', () => {
+    expect(providerOrderFor('company_contacts', ['cli_codex', 'cli_claude', 'manual', 'template'])).toEqual(['cli_claude', 'cli_codex', 'manual', 'template']);
+    expect(providerOrderFor('contact_review', ['cli_codex', 'cli_claude', 'template'])).toEqual(['cli_claude', 'cli_codex', 'template']);
     expect(providerOrderFor('company_report', ['cli_claude', 'cli_codex', 'template'])).toEqual(['cli_claude', 'cli_codex', 'template']);
     expect(providerOrderFor('company_contacts', ['cli_claude', 'template'])).toEqual(['cli_claude', 'template']);
   });

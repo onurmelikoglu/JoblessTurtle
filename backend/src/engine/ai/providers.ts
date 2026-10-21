@@ -61,7 +61,7 @@ export class ProviderLimitError extends Error {
 }
 
 const LIMIT_PATTERN = /(usage limit|rate limit|rate_limit|quota|429|too many requests|limit reached|limit will reset|credit balance)/i;
-export const WEB_RESEARCH_KINDS: AiKind[] = ['company_report', 'company_discovery', 'company_lookup', 'company_contacts', 'company_sizes', 'job_search'];
+export const WEB_RESEARCH_KINDS: AiKind[] = ['company_report', 'company_discovery', 'company_lookup', 'company_contacts', 'contact_review', 'company_sizes', 'job_search'];
 
 /** Claude "…|<epoch>" ve Codex "try again at Oct 10th, 2026 12:15 AM" (CLI'nin yerel saatiyle) biçimlerini okur. */
 export function limitResetAt(text: string): Date | null {
@@ -205,7 +205,7 @@ function parseCodexEvents(stdout: string) {
 }
 
 /** Çok adımlı web araştırması gereken görevlerde varsayılan "low" akıl yürütme yetersiz kalıyor. */
-const CODEX_REASONING: Partial<Record<string, string>> = { company_contacts: 'medium' };
+const CODEX_REASONING: Partial<Record<string, string>> = { company_contacts: 'medium', contact_review: 'medium' };
 
 /** Codex CLI: ChatGPT hesabıyla `codex login --device-auth` sonrası başsız çalıştırma. */
 export const cliCodexProvider: TextProvider = {

@@ -2,6 +2,7 @@ import type { IsoDate } from '@contracts/home';
 
 export type * from '@contracts/home';
 export type * from '@contracts/learning';
+export type * from '@contracts/scrapers';
 
 export interface AuthStatus {
   needsSetup: boolean;

@@ -1,5 +1,5 @@
 import { api } from './client';
-import type { AdminUser, AiStatus, AiUsage, Invite, LearningOverview, LetterStyle, ModelSettings, ServerSettings } from './types';
+import type { AdminUser, AiStatus, AiUsage, Invite, LearningOverview, LetterStyle, ModelSettings, ScraperConfig, ScraperHistoryPage, ScraperRunRequest, ScraperRunResponse, ScraperStatus, ServerSettings } from './types';
 
 export interface PasswordReset {
   email: string;
@@ -32,6 +32,12 @@ export const adminApi = {
   learning: () => api.get<LearningOverview>('/v1/admin/learning'),
   trainModels: () => api.post<LearningOverview>('/v1/admin/learning/train'),
   exportLearning: () => api.blob('/v1/admin/learning/export'),
+
+  scraperStatus: () => api.get<ScraperStatus>('/v1/scrapers/status'),
+  scraperHistory: (limit = 10) => api.get<ScraperHistoryPage>('/v1/scrapers/history', { limit }),
+  scraperConfig: () => api.get<ScraperConfig>('/v1/scrapers/config'),
+  saveScraperConfig: (patch: Record<string, unknown>) => api.post<ScraperConfig>('/v1/scrapers/config', patch),
+  runScrapers: (body: ScraperRunRequest) => api.post<ScraperRunResponse>('/v1/scrapers/run', body),
 
   changePassword: (currentPassword: string, newPassword: string) => api.post('/v1/me/password', { currentPassword, newPassword }),
 };

@@ -12,6 +12,8 @@ export function templateOutput(kind: AiKind, input: any): unknown {
     }
     case 'company_contacts':
       return { contacts: [], offices: [] };
+    case 'contact_review':
+      return { reviews: [] };
     case 'letter_template':
       return {
         body: [

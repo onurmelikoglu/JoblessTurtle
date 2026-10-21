@@ -1,6 +1,6 @@
 import { AI_CLASSES, aiClassOf, budgetBlock, dailyCeiling, dailyShare, utilizationAllows, utilizationOpensAt } from '../../src/domain/ai-budget';
 import { decideFix, FixContext, MAILBOX_FULL_RETRY_DAYS, MAX_AUTO_FIXES, needsAi } from '../../src/domain/autopilot';
-import { contactSearchPlan, rememberedDepth, shouldEscalate } from '../../src/domain/contact-search';
+import { contactSearchPlan, rememberedDepth, SEARCH_VERSION } from '../../src/domain/contact-search';
 import { INBOUND_CATEGORIES } from '../../src/domain/inbound';
 import { escalationModelFor } from '../../src/engine/ai/ai.service';
 import { AI_KINDS } from '../../src/engine/ai/schemas';
@@ -82,8 +82,8 @@ describe('adres araması hafızası', () => {
 
   it('yakın zamanda aynı derinlikte aranan firma yeniden aranmaz', () => {
     expect(contactSearchPlan({ contactsSearchedAt: daysAgo(5), contactsDepth: 'base' }, { deep: false }, NOW)).toEqual({ rungs: [], skip: 'recent' });
-    expect(contactSearchPlan({ contactsSearchedAt: daysAgo(5), contactsDepth: 'max' }, { deep: true }, NOW)).toEqual({ rungs: [], skip: 'exhausted' });
-    expect(contactSearchPlan({ contactsSearchedAt: daysAgo(5), contactsDepth: 'max' }, { deep: false }, NOW).skip).toBe('recent');
+    expect(contactSearchPlan({ contactsSearchedAt: daysAgo(5), contactsDepth: 'max', contactsVersion: SEARCH_VERSION }, { deep: true }, NOW)).toEqual({ rungs: [], skip: 'exhausted' });
+    expect(contactSearchPlan({ contactsSearchedAt: daysAgo(5), contactsDepth: 'max', contactsVersion: SEARCH_VERSION }, { deep: false }, NOW).skip).toBe('recent');
   });
 
   it('derin arama yalnızca daha önce denenmemiş basamaklardan sürer', () => {
@@ -92,7 +92,7 @@ describe('adres araması hafızası', () => {
   });
 
   it('süre dolunca arama baştan yapılır; kullanıcı ısrar ederse süre bir haftaya iner', () => {
-    const memory = { contactsSearchedAt: daysAgo(10), contactsDepth: 'max' as const };
+    const memory = { contactsSearchedAt: daysAgo(10), contactsDepth: 'max' as const, contactsVersion: SEARCH_VERSION };
     expect(contactSearchPlan(memory, { deep: true }, NOW).skip).toBe('exhausted');
     expect(contactSearchPlan(memory, { deep: true, force: true }, NOW).rungs).toEqual(['base', 'second', 'max']);
     expect(contactSearchPlan({ ...memory, contactsSearchedAt: daysAgo(3) }, { deep: true, force: true }, NOW).skip).toBe('exhausted');
@@ -100,26 +100,27 @@ describe('adres araması hafızası', () => {
   });
 
   it('adres geri döndükten sonraki arama, önceki aramadan bağımsızdır', () => {
-    const memory = { contactsSearchedAt: daysAgo(4), contactsDepth: 'max' as const };
+    const memory = { contactsSearchedAt: daysAgo(4), contactsDepth: 'max' as const, contactsVersion: SEARCH_VERSION };
     expect(contactSearchPlan(memory, { deep: true, since: new Date(NOW - 2 * DAY_MS) }, NOW).rungs).toEqual(['base', 'second', 'max']);
     expect(contactSearchPlan(memory, { deep: true, since: new Date(NOW - 6 * DAY_MS) }, NOW).skip).toBe('exhausted');
   });
 
   it('derinlik alanından önceki kayıtlar okunur', () => {
-    expect(rememberedDepth({ contactsSearchedAt: daysAgo(1), contactsEscalated: true })).toBe('max');
+    expect(rememberedDepth({ contactsSearchedAt: daysAgo(1), contactsEscalated: true, contactsVersion: SEARCH_VERSION })).toBe('max');
     expect(rememberedDepth({ contactsSearchedAt: daysAgo(1) })).toBe('base');
     expect(rememberedDepth({})).toBeNull();
-    expect(addressSearchExhausted({ contactsSearchedAt: daysAgo(2), contactsEscalated: true }, NOW)).toBe(true);
+    expect(addressSearchExhausted({ contactsSearchedAt: daysAgo(2), contactsEscalated: true, contactsVersion: SEARCH_VERSION }, NOW)).toBe(true);
     expect(addressSearchExhausted({ contactsSearchedAt: daysAgo(40), contactsEscalated: true }, NOW)).toBe(false);
     expect(addressSearchExhausted({ contactsSearchedAt: daysAgo(2), contactsDepth: 'second' }, NOW)).toBe(false);
   });
 
-  it('İK adresi bulununca durulur; yalnızca genel adres varsa bir ikinci görüş alınır', () => {
-    expect(shouldEscalate('base', { recruiting: true, sendable: true })).toBe(false);
-    expect(shouldEscalate('base', { recruiting: false, sendable: true })).toBe(true);
-    expect(shouldEscalate('second', { recruiting: false, sendable: true })).toBe(false);
-    expect(shouldEscalate('second', { recruiting: false, sendable: false })).toBe(true);
-    expect(shouldEscalate('max', { recruiting: false, sendable: false })).toBe(false);
+  it('eski yöntemle tükenmiş sayılan derin arama yeni yöntemle bir kez daha yapılabilir; arka plan araması yine beklenir', () => {
+    const old = { contactsSearchedAt: daysAgo(2), contactsDepth: 'max' as const };
+    expect(rememberedDepth(old)).toBe('second');
+    expect(contactSearchPlan(old, { deep: true }, NOW)).toEqual({ rungs: ['max'], skip: null });
+    expect(contactSearchPlan(old, { deep: false }, NOW).skip).toBe('recent');
+    expect(addressSearchExhausted(old, NOW)).toBe(false);
+    expect(addressSearchExhausted({ contactsSearchedAt: daysAgo(2), contactsEscalated: true }, NOW)).toBe(false);
   });
 });
 

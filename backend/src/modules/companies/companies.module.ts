@@ -71,7 +71,7 @@ const contactSchema = z.object({
   name: z.string().max(120).optional().nullable(),
   role: z.string().max(120).optional().nullable(),
   email: z.string().email().transform((v) => v.toLowerCase().trim()),
-  kind: z.enum(['official_hr', 'job_apply', 'general', 'named_recruiter', 'guessed']).optional(),
+  kind: z.enum(['official_hr', 'job_apply', 'general', 'named_recruiter', 'management', 'employee', 'guessed']).optional(),
   purpose: z.string().max(300).optional().nullable(),
   sourceUrl: z.string().max(500).optional().nullable(),
   verified: z.boolean().default(false),

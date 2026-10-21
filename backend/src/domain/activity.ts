@@ -32,6 +32,7 @@ const AI_KIND_ACTIVITY: Record<string, ActivityKind> = {
   company_sizes: 'research',
   title_analysis: 'research',
   company_contacts: 'contacts',
+  contact_review: 'contacts',
   letter_template: 'letters',
   letter_company_line: 'letters',
   mail_draft: 'letters',

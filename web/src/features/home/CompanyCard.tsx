@@ -111,9 +111,11 @@ function statusText(o: HomeOpportunity, flags: { sending: boolean; emailSearchin
   const plain = (text: string) => ({ text, problem: false });
   if (flags.sending) return plain('Başvuru sıraya alındı…');
   if (flags.emailSearching) return plain('Firmanın mail adresi aranıyor…');
+  if (noEmail && o.manualRecipients > 0)
+    return plain(`Firmanın İK ya da genel adresi bulunamadı; çalışan veya yönetimden ${o.manualRecipients} kişinin herkese açık iş adresi bulundu. Kullanmak için "Başvur"a bas ve önizlemede adresi kendin seç.`);
   if (noEmail && o.groupSuggestion) return plain(`Firmanın güncel mail adresi yok. Öneri: ${o.groupSuggestion.email} (${o.groupSuggestion.label}). ${o.groupSuggestion.note} Kullanmak için "Başvur"a bas ve önizlemede onayla.`);
   if (noEmail && flags.hasChannel) return plain('Mail adresi bulunamadı. Aşağıdaki kanaldan başvurup "Başvurdum" de; adresi biliyorsan "Başvur"da elle girebilirsin.');
-  if (noEmail && o.emailSearchExhausted) return plain('Farklı modellerle arandı; firma başvuru için e-posta yayımlamıyor. Firmanın sitesinden başvur ya da adresi biliyorsan "Başvur"da elle gir.');
+  if (noEmail && o.emailSearchExhausted) return plain('Web araştırması ve doğrulamayla arandı; firma başvuru için e-posta yayımlamıyor. Firmanın sitesinden başvur ya da adresi biliyorsan "Başvur"da elle gir.');
   if (noEmail) return plain('Mail adresi bulunamadı. Menüden "Mail adresini ara"yı dene ya da adresi biliyorsan "Başvur"da elle gir.');
   if (!o.draft) return plain(o.title ? 'Başvur dediğinde yazın hazırlanıp önizlemeye gelir.' : 'Başvur dediğinde firmaya özel bir tanışma yazısı hazırlanıp önizlemeye gelir.');
   if (o.draft.problems.length) return { text: 'Yazı hazır; göndermeden önce kontrol etmen gereken bir nokta var.', problem: true };

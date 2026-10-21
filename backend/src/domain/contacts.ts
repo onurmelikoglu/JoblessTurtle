@@ -8,7 +8,10 @@ const PLACEHOLDER_LOCAL = /^(name|name\.surname|firstname\.lastname|ad\.?soyad|i
 const KEP_DOMAIN = /(^|\.)kep\.tr$/;
 const PLACEHOLDER_DOMAIN = /^(email|example|domain|company|yourcompany|organisation|organization|sirket|firma|mail|test|ornek)\.(com|org|net|com\.tr)$/;
 export const STRONG_HR_LOCAL = /^(ik|hr|kariyer|career|careers|jobs|job|isealim|ise\.?alim|recruitment|recruiting|recruiter|talent|cv|basvuru|isbasvuru|apply|hiring|yetenek)([._-].*)?$/;
-const KIND_SCORE: Record<string, number> = { job_apply: 400, official_hr: 300, named_recruiter: 150, general: 100 };
+const KIND_SCORE: Record<string, number> = { job_apply: 400, official_hr: 300, named_recruiter: 150, general: 100, management: 60, employee: 40, guessed: 5 };
+/** Araştırmanın verdiği 0–100 güven aynı türdeki adresleri en fazla ±10 puan oynatır; türler arası sırayı değiştirmez. */
+const SCORE_NEUTRAL = 50;
+const SCORE_DIVISOR = 5;
 const STRONG_HR_BONUS = 40;
 const OTHER_HR_BONUS = 20;
 const DOMAIN_MATCH_BONUS = 60;
@@ -22,7 +25,7 @@ const DELIVERY_WEIGHT = 400;
 export const PERSON_LOCAL = /^[a-zçğıöşü]{2,}[._-][a-zçğıöşü]{2,}$/;
 const ESCAPE_PREFIX = /^(?:u003[ce]|%20|%3[ce]|\/+)+/i;
 
-export type ContactKind = 'official_hr' | 'job_apply' | 'general' | 'named_recruiter' | 'guessed' | 'group_hr' | 'candidate_hr' | 'non_hr' | 'other';
+export type ContactKind = 'official_hr' | 'job_apply' | 'general' | 'named_recruiter' | 'management' | 'employee' | 'guessed' | 'group_hr' | 'candidate_hr' | 'non_hr' | 'other';
 
 export const GROUP_HR_KIND = 'group_hr';
 export const CANDIDATE_HR_KIND = 'candidate_hr';
@@ -49,7 +52,7 @@ export function isValidEmail(email: string): boolean {
   return /^[a-z0-9][a-z0-9._%+-]*@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/i.test(e) && !PLACEHOLDER_LOCAL.test(local) && !PLACEHOLDER_DOMAIN.test(domain);
 }
 
-type ScoredContact = { email: string; kind: string; verifiedAt?: Date | null; verifiedBy?: string | null; sourceUrl?: string | null };
+type ScoredContact = { email: string; kind: string; verifiedAt?: Date | null; verifiedBy?: string | null; sourceUrl?: string | null; score?: number | null };
 
 /** Öğrenilmiş teslim kestirimi (engine/learned-models.service): adresin mail alma olasılığı ve tüm gönderimlerin temel oranı. */
 export interface RecipientDelivery {
@@ -77,6 +80,7 @@ export function recipientScore(c: ScoredContact, opts: RecipientScoring = {}) {
   else if (HR_LOCAL.test(local)) score += OTHER_HR_BONUS;
   if (opts.domain && domainMatches(c.email, opts.domain, opts.aliases ?? [])) score += DOMAIN_MATCH_BONUS;
   if (c.verifiedAt) score += opts.preferVerified ? PREFER_VERIFIED_BONUS : VERIFIED_BONUS;
+  if (typeof c.score === 'number') score += Math.round((c.score - SCORE_NEUTRAL) / SCORE_DIVISOR);
   if (opts.delivery) score += Math.round((opts.delivery.of(c) - opts.delivery.baseRate) * DELIVERY_WEIGHT);
   return score;
 }

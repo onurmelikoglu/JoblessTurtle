@@ -4,6 +4,7 @@ process.env.STORAGE_DIR = process.env.TEST_STORAGE_DIR ?? '/tmp/jobtrack-test-st
 process.env.REGISTRATION_MODE = 'open';
 process.env.SCHEDULER_ENABLED = 'false';
 process.env.SEND_PACING_ENABLED = 'false';
+process.env.CONTACT_SMTP_PROBE = 'false';
 process.env.TELEGRAM_POLLING = 'false';
 process.env.CLAUDE_CLI_PATH = '/nonexistent/claude';
 process.env.CODEX_CLI_PATH = '/nonexistent/codex';

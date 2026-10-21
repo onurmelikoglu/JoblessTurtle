@@ -28,6 +28,7 @@ const KIND_CLASS: Record<string, AiClass> = {
   follow_up: 'letters',
   company_report: 'research',
   company_contacts: 'research',
+  contact_review: 'research',
   company_sizes: 'research',
   title_analysis: 'research',
   company_discovery: 'discovery',

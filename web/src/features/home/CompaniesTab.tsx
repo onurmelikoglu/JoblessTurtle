@@ -155,7 +155,7 @@ export function CompaniesTab({ data, state }: CompaniesTabProps) {
     if (result.queued === 0 && result.skippedRecent > 0 && !force) {
       const again = await confirm({
         title: 'Bu firmalar yakın zamanda arandı',
-        message: `${result.skippedRecent} firma son 24 saatte daha güçlü modelle de arandı ve yayımlanmış bir adres bulunamadı. Yine de tekrar aransın mı? Bu işlem günlük AI hakkından düşer.`,
+        message: `${result.skippedRecent} firma yakın zamanda derinlemesine arandı ve kullanılabilir bir adres bulunamadı. Yine de tekrar aransın mı? Bu işlem günlük AI hakkından düşer.`,
         confirmLabel: 'Yine de ara',
       });
       if (again) await searchMissingEmails(true);
@@ -163,8 +163,8 @@ export function CompaniesTab({ data, state }: CompaniesTabProps) {
     }
     toast.info(
       [
-        result.queued > 0 ? `${result.queued} firma için mail adresi aranıyor; bulunamazsa daha güçlü modelle bir kez daha denenir.` : 'Mail adresi eksik firma yok.',
-        result.skippedRecent > 0 && `${result.skippedRecent} firma son 24 saatte arandı, tekrar aranmadı.`,
+        result.queued > 0 ? `${result.queued} firma için mail adresi aranıyor; yayımlanmış adres bulunamazsa firmanın alan adındaki olası adresler posta sunucusundan yoklanır.` : 'Mail adresi eksik firma yok.',
+        result.skippedRecent > 0 && `${result.skippedRecent} firma yakın zamanda arandığı için tekrar aranmadı.`,
         result.deferred > 0 && `${result.deferred} firma bir sonraki aramaya kaldı; işlem bitince butona tekrar bas.`,
       ]
         .filter(Boolean)

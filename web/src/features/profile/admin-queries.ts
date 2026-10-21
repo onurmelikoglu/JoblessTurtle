@@ -12,6 +12,7 @@ export const adminKeys = {
   aiStatus: [...queryKeys.admin, 'ai-status'] as const,
   aiUsage: [...queryKeys.admin, 'ai-usage'] as const,
   learning: [...queryKeys.admin, 'learning'] as const,
+  scrapers: [...queryKeys.admin, 'scrapers'] as const,
 };
 
 function useAdminQuery<T>(queryKey: QueryKey, queryFn: () => Promise<T>) {

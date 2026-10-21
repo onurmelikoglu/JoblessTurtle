@@ -242,12 +242,22 @@ export function ApplyPreviewDialog({ opportunityId, onClose }: ApplyPreviewDialo
                     key={option.email}
                     type="button"
                     aria-pressed={active}
-                    title={[option.delivered && 'Bu adrese gönderilen bir başvurunun ulaştığı görüldü', option.sourceUrl ? `Kaynak: ${option.sourceUrl}` : option.label].filter(Boolean).join(' · ')}
+                    title={[
+                      option.delivered && 'Bu adrese gönderilen bir başvurunun ulaştığı görüldü',
+                      option.manualOnly && 'Kişisel ya da tahmini adres: otomatik gönderimde kullanılmaz',
+                      option.sourceUrl ? `Kaynak: ${option.sourceUrl}` : option.label,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
                     onClick={() => setForm({ ...form, to: option.email })}
-                    className={cn('inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[13px] transition-colors duration-150', active ? 'border-brand bg-brand-soft text-brand-strong' : 'border-line-strong hover:bg-sunken')}
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[13px] transition-colors duration-150',
+                      active ? 'border-brand bg-brand-soft text-brand-strong' : option.manualOnly ? 'border-dashed border-line-strong text-ink-soft hover:bg-sunken' : 'border-line-strong hover:bg-sunken',
+                    )}
                   >
                     {option.delivered && <MailCheck className="size-3.5 text-good" aria-hidden />}
-                    {option.email} · {option.label}
+                    {option.email} · {option.person ? `${option.label} (${option.person})` : option.label}
+                    {option.score !== null && <span className="text-ink-soft">· güven %{option.score}</span>}
                     {option.delivered && <span className="text-good">· daha önce ulaştı</span>}
                   </button>
                 );

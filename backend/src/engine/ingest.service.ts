@@ -3,6 +3,7 @@ import { Company, JobListing, Prisma, SourceConnector } from '@prisma/client';
 import { hashObject } from '../common/crypto';
 import { OutboxService } from '../common/outbox.service';
 import { PrismaService } from '../common/prisma.service';
+import { confidenceLabel, upgradesKind } from '../domain/contact-research';
 import { classifyPublishedEmail, cleanEmail, domainMatches, isValidEmail } from '../domain/contacts';
 import { detectLocation } from '../domain/geo';
 import { JobSearchProfile, listingRejection } from '../domain/job-search';
@@ -16,6 +17,28 @@ import { CollectResult, RawListing } from './connectors/types';
 export const CRAWL_STUCK_MS = 30 * 60_000;
 const TITLE_NORMALIZATION_KEY = 'jobs:normalized-title:v2';
 const MAX_SAVED_CONTACTS = 30;
+const CONTACT_PURPOSES: Record<string, string> = {
+  official_hr: 'Kariyer/İK başvuru adresi',
+  named_recruiter: 'İşe alım çalışanı',
+  general: 'Genel iletişim',
+  management: 'Firma yönetiminden; yalnız elle seçilerek kullanılır',
+  employee: 'Firma çalışanı; yalnız elle seçilerek kullanılır',
+  guessed: 'Adres kalıbından tahmin edildi, yayımlanmış değil; yalnız elle seçilerek kullanılır',
+  candidate_hr: 'Eski sosyal medya paylaşımından; aktifliği doğrulanmadı',
+};
+
+/** Kaydedilecek adres; skor verildiyse adres araştırmasından gelir ve ad, unvan, rol, kanıt da işlenir. */
+export interface SavedContact {
+  email: string;
+  sourceUrl: string | null;
+  kind?: string;
+  verified?: boolean;
+  name?: string | null;
+  title?: string | null;
+  roleType?: string | null;
+  score?: number;
+  evidence?: string | null;
+}
 
 function listingHash(l: RawListing) {
   return hashObject({ t: l.title, l: l.locationText ?? null, d: l.description ?? null, v: l.validThrough?.toISOString() ?? null, c: !!l.closedMarker });
@@ -506,10 +529,13 @@ export class IngestService {
    * Resmî sayfada yayımlanmış adresleri iletişim noktası olarak kaydeder (tahmin/örüntü üretimi yok). Geçersiz olduğu
    * bilinen adres yeniden kaydedilmez; başka bir çalışma alanında ulaştığı görülen adres doğrulanmış sayılır.
    */
-  async saveContacts(source: SourceConnector, contacts: { email: string; sourceUrl: string | null; kind?: string }[], foundBy = 'crawl') {
+  async saveContacts(source: SourceConnector, contacts: SavedContact[], foundBy = 'crawl') {
     if (!source.companyId) return;
     const company = await this.prisma.company.findUniqueOrThrow({ where: { id: source.companyId } });
     const dead = await this.addressBook.deadAmong(contacts.map((c) => cleanEmail(c.email)));
+    const existing = new Map(
+      (await this.prisma.contactPoint.findMany({ where: { companyId: company.id, email: { in: contacts.map((c) => cleanEmail(c.email)) } }, select: { email: true, kind: true } })).map((c) => [c.email, c.kind]),
+    );
     const saved: { email: string; sourceUrl: string | null }[] = [];
     for (const raw of contacts.slice(0, MAX_SAVED_CONTACTS)) {
       const c = { ...raw, email: cleanEmail(raw.email) };
@@ -518,6 +544,11 @@ export class IngestService {
       const official = domainMatches(c.email, company.canonicalDomain, company.aliases);
       const classified = classifyPublishedEmail(c.email);
       const cls = raw.kind ? { kind: raw.kind as typeof classified.kind, note: raw.kind === classified.kind ? classified.note : undefined } : classified;
+      const verified = raw.verified ?? (official && cls.kind === 'official_hr');
+      const purpose = cls.note ?? CONTACT_PURPOSES[cls.kind] ?? 'Genel iletişim';
+      const research = typeof raw.score === 'number' ? { name: raw.name ?? null, role: raw.title ?? null, roleType: raw.roleType ?? null, score: raw.score, evidence: raw.evidence ?? null, confidence: confidenceLabel(raw.score) } : {};
+      const previousKind = existing.get(c.email);
+      const upgrade = previousKind !== undefined && raw.kind && upgradesKind(previousKind, raw.kind) ? { kind: raw.kind, purpose } : {};
       await this.prisma.contactPoint.upsert({
         where: { companyId_email: { companyId: company.id, email: c.email } },
         create: {
@@ -525,18 +556,18 @@ export class IngestService {
           companyId: company.id,
           email: c.email,
           kind: cls.kind,
-          purpose: cls.note ?? (cls.kind === 'candidate_hr' ? 'Eski sosyal medya paylaşımından; aktifliği doğrulanmadı' : cls.kind === 'official_hr' ? 'Kariyer/İK başvuru adresi' : 'Genel iletişim'),
+          purpose,
           sourceUrl: c.sourceUrl,
           confidence: official ? (cls.kind === 'official_hr' ? 'high' : 'medium') : 'low',
           ownershipEvidence: official ? 'Resmî sitede yayımlanmış; alan adı eşleşiyor' : 'Alan adı firma domaini ile eşleşmiyor',
-          // Resmî sitede yayımlanmış ve alan adı eşleşen İK adresi kaynakla doğrulanmış sayılır.
-          verifiedAt: official && cls.kind === 'official_hr' ? new Date() : null,
-          verifiedBy: official && cls.kind === 'official_hr' ? 'source' : null,
+          verifiedAt: verified ? new Date() : null,
+          verifiedBy: verified ? 'source' : null,
+          ...research,
         },
-        update: { ...(c.sourceUrl ? { sourceUrl: c.sourceUrl } : {}), discoveredAt: new Date() },
+        update: { ...(c.sourceUrl ? { sourceUrl: c.sourceUrl } : {}), discoveredAt: new Date(), ...research, ...upgrade },
       });
       // Doğrulaması düşmüş resmî İK adresi kaynağında yeniden görüldüyse yeniden doğrulanmış sayılır.
-      if (official && cls.kind === 'official_hr') {
+      if (verified && cls.kind === 'official_hr') {
         await this.prisma.contactPoint.updateMany({ where: { companyId: company.id, email: c.email, kind: 'official_hr', verifiedAt: null, suppressed: false }, data: { verifiedAt: new Date(), verifiedBy: 'source' } });
       }
     }

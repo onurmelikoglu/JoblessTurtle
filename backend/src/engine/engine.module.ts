@@ -19,6 +19,8 @@ import { LetterService } from './letter.service';
 import { NotifyService } from './notify.service';
 import { RepliesService } from './replies.service';
 import { ResearchService } from './research.service';
+import { ScraperService } from './scraper.service';
+import { ScrapedJobRepository } from './scrapers/scraped-job.repository';
 import { SendingService } from './sending.service';
 import { TelegramService } from './telegram.service';
 
@@ -43,6 +45,8 @@ const SERVICES = [
   NotifyService,
   RepliesService,
   ResearchService,
+  ScrapedJobRepository,
+  ScraperService,
   SendingService,
   TelegramService,
 ];

@@ -15,6 +15,7 @@ import { LearningAdminSection } from './LearningAdminSection';
 import { LettersSection } from './LettersSection';
 import { MailSection } from './MailSection';
 import { QueryError } from './parts';
+import { ScrapersAdminSection } from './ScrapersAdminSection';
 
 export function ProfilePage() {
   const me = useMe();
@@ -42,6 +43,7 @@ export function ProfilePage() {
             <>
               <AiAdminSection />
               <LearningAdminSection />
+              <ScrapersAdminSection />
               <AdminSection />
             </>
           )}

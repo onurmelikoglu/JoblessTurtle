@@ -50,8 +50,14 @@ const schema = z.object({
   FETCH_TIMEOUT_MS: z.coerce.number().default(15000),
   FETCH_MAX_BYTES: z.coerce.number().default(3_000_000),
   ALLOW_PRIVATE_FETCH: bool.default(false),
+  // Derin adres aramasında tahmini adresler alan adının posta sunucusuna "bu kutu var mı" diye sorulur (mail gönderilmez).
+  CONTACT_SMTP_PROBE: bool.default(true),
+  // Yoklamada EHLO ile tanıtılan ad; boşsa APP_PUBLIC_URL'nin alan adı kullanılır.
+  SMTP_PROBE_HELO: z.string().optional(),
   // Worker
   SCHEDULER_ENABLED: bool.default(true),
+  // İlan sitesi taraması (Kariyer.net, Indeed); kapalıyken ne zamanlanmış ne elle başlatılan tarama istek atar.
+  SCRAPERS_ENABLED: bool.default(true),
   // Aynı hesaptan art arda gönderim arasında 30-50 sn bekleme. Yalnızca testlerde kapatılır.
   SEND_PACING_ENABLED: bool.default(true),
   DIGEST_HOUR: z.coerce.number().default(9),

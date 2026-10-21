@@ -1,11 +1,16 @@
 import { ApplicationAttempt } from '@prisma/client';
+import * as dns from 'dns';
+import { resetEnvForTests } from '../../src/common/env';
 import { MAILBOX_FULL_RETRY_DAYS } from '../../src/domain/autopilot';
+import { AddressBookService } from '../../src/engine/address-book.service';
 import { AiService } from '../../src/engine/ai/ai.service';
 import { TEXT_PROVIDERS } from '../../src/engine/ai/providers';
 import { AutopilotService } from '../../src/engine/autopilot.service';
 import { InboxService } from '../../src/engine/inbox.service';
+import * as smtpProbe from '../../src/engine/mail/smtp-probe';
 import { IngestService } from '../../src/engine/ingest.service';
 import { ResearchService } from '../../src/engine/research.service';
+import { SendingService } from '../../src/engine/sending.service';
 import { createDraft, createHarness, Harness, idem, resetDb, setupUser, User } from './harness';
 
 let h: Harness;
@@ -200,10 +205,10 @@ describe('otopilot: "Otomatik başvur" açıkken geri dönen başvuru kendiliği
     const ai = aiAnswers(() => ({ contacts: [{ email: 'ik@arayan.example', sourceUrl: 'https://arayan.example/kariyer', purpose: 'hr' }], offices: [] }));
     await clearPacing();
     await autopilot.onInbound(message.id);
-    expect(ai).toHaveBeenCalledTimes(1);
+    expect(ai.mock.calls.map((c) => c[0].kind)).toEqual(['company_contacts', 'contact_review']);
     expect(ai.mock.calls[0][0]).toMatchObject({ kind: 'company_contacts', input: { avoidEmails: ['kariyer@arayan.example'] } });
     expect(await retryOf(first.id)).toMatchObject({ toEmail: 'ik@arayan.example', sendMode: 'autopilot' });
-    expect((await h.prisma.company.findUniqueOrThrow({ where: { id: company.id } })).researchMeta).toMatchObject({ contactsDepth: 'base' });
+    expect((await h.prisma.company.findUniqueOrThrow({ where: { id: company.id } })).researchMeta).toMatchObject({ contactsDepth: 'max' });
   });
 
   it('arama sonuçsuzsa durur, kullanıcıya diğer kanalları söyler ve aynı firma için yeniden aramaz', async () => {
@@ -213,13 +218,13 @@ describe('otopilot: "Otomatik başvur" açıkken geri dönen başvuru kendiliği
     const message = await returned(first, 'bad_address');
     const ai = aiAnswers(() => ({ contacts: [], offices: [] }));
     await autopilot.onInbound(message.id);
-    expect(ai).toHaveBeenCalledTimes(3);
+    expect(ai).toHaveBeenCalledTimes(1);
     expect(await retryOf(first.id)).toBeNull();
     expect(await actionOf(message.id)).toMatchObject({ step: 'stop', state: 'info' });
     expect((await actionOf(message.id)).detail).toContain('bulunamadı');
     expect((await messageOf(message.id)).status).toBe('open');
     expect(await research.findDetails(company.id, null, { deep: true, since: message.receivedAt })).toEqual({ status: 'skipped', reason: 'exhausted' });
-    expect(ai).toHaveBeenCalledTimes(3);
+    expect(ai).toHaveBeenCalledTimes(1);
     const home = (await h.http().get('/api/v1/home/companies').set(u.auth).expect(200)).body;
     const listed = home.companies.find((c: any) => c.id === company.id);
     if (listed) expect(listed.opportunities.every((o: any) => o.emailSearchExhausted)).toBe(true);
@@ -342,7 +347,7 @@ describe('otopilot: "Otomatik başvur" kapalıyken düzeltmeler onaya düşer', 
     const message = await returned(first, 'closed_address');
     const ai = aiAnswers(() => ({ contacts: [{ email: 'ik@onayarama.example', sourceUrl: 'https://onayarama.example/kariyer', purpose: 'hr' }], offices: [] }));
     await autopilot.onInbound(message.id);
-    expect(ai).toHaveBeenCalledTimes(1);
+    expect(ai.mock.calls.map((c) => c[0].kind)).toEqual(['company_contacts', 'contact_review']);
     expect(await retryOf(first.id)).toBeNull();
     expect(await actionOf(message.id)).toMatchObject({ step: 'resend', state: 'proposed', toEmail: 'ik@onayarama.example' });
   });
@@ -487,20 +492,86 @@ describe('otopilot: gelen kutusundan günlüğe', () => {
 });
 
 describe('adres araması: hafıza ve basamaklar', () => {
-  const hr = (domain: string) => ({ contacts: [{ email: `ik@${domain}`, sourceUrl: `https://${domain}/kariyer`, purpose: 'hr' }], offices: [] });
-  const general = (domain: string) => ({ contacts: [{ email: `info@${domain}`, sourceUrl: `https://${domain}/iletisim` }], offices: [] });
+  const kinds = (ai: jest.SpyInstance) => ai.mock.calls.map((c) => c[0].kind);
 
-  it('İK adresi bulunursa tek çağrıda durur; yalnızca genel adres bulunursa bir ikinci görüş alır', async () => {
-    const found = await firm('tekcagri', []);
-    const first = aiAnswers(() => hr('tekcagri.example'));
-    expect(await research.findDetails(found.id, null, { deep: true })).toMatchObject({ status: 'succeeded', source: 'ai' });
-    expect(first).toHaveBeenCalledTimes(1);
-    jest.restoreAllMocks();
-    const onlyGeneral = await firm('genelci', []);
-    const second = aiAnswers(() => general('genelci.example'));
-    await research.findDetails(onlyGeneral.id, null, { deep: true });
-    expect(second.mock.calls.map((c) => c[0].modelOverride?.cli_claude ?? 'varsayılan')).toEqual(['varsayılan', 'sonnet']);
-    expect((await h.prisma.company.findUniqueOrThrow({ where: { id: onlyGeneral.id } })).researchMeta).toMatchObject({ contactsDepth: 'second' });
+  it('Sonnet toplar, kesin olmayan adayları Opus denetler; rol, güven ve kanıt saklanır', async () => {
+    const company = await firm('denetimli', []);
+    await h.app.get(AddressBookService).markDead('olu.adres@denetimli.example', 'bad_address');
+    const page = 'Başvurular için ik@denetimli.example · Ekibimiz: ayse.kaya@denetimli.example, can.demir@denetimli.example, olu.adres@denetimli.example';
+    jest.spyOn(research as any, 'sourcePage').mockResolvedValue(page.toLowerCase());
+    const ai = aiAnswers((req) =>
+      req.kind === 'contact_review'
+        ? {
+            reviews: req.input.candidates.map((c: any) => ({
+              ref: c.ref,
+              keep: !c.email.startsWith('uydurma'),
+              roleType: c.email.startsWith('can.') ? 'management' : c.email.startsWith('ayse.') ? 'recruiting' : 'hr',
+              confidence: c.email.startsWith('ayse.') ? 80 : 70,
+              reason: 'Ekip sayfasında yayımlanmış',
+            })),
+          }
+        : {
+            contacts: [
+              { email: 'ik@denetimli.example', roleType: 'hr', origin: 'published', sourceUrl: 'https://denetimli.example/kariyer' },
+              { email: 'ayse.kaya@denetimli.example', name: 'Ayşe Kaya', title: 'İşe Alım Uzmanı', roleType: 'recruiting', origin: 'published', sourceUrl: 'https://denetimli.example/ekip', evidence: 'ayse.kaya@denetimli.example' },
+              { email: 'can.demir@denetimli.example', name: 'Can Demir', title: 'CTO', roleType: 'management', origin: 'published', sourceUrl: 'https://denetimli.example/ekip' },
+              { email: 'mert.ak@denetimli.example', name: 'Mert Ak', roleType: 'hr', origin: 'pattern', sourceUrl: 'https://denetimli.example/ekip' },
+              { email: 'uydurma@denetimli.example', roleType: 'employee', origin: 'published', sourceUrl: 'https://denetimli.example/ekip' },
+              { email: 'olu.adres@denetimli.example', roleType: 'employee', origin: 'published', sourceUrl: 'https://denetimli.example/ekip' },
+            ],
+            offices: [],
+          },
+    );
+    expect(await research.findDetails(company.id, null, { deep: true })).toMatchObject({ status: 'succeeded', source: 'ai' });
+    expect(kinds(ai)).toEqual(['company_contacts', 'contact_review']);
+    const reviewed = ai.mock.calls[1][0].input.candidates;
+    expect(reviewed.map((c: any) => c.email)).toEqual(['ayse.kaya@denetimli.example', 'can.demir@denetimli.example', 'mert.ak@denetimli.example', 'uydurma@denetimli.example']);
+    expect(reviewed.find((c: any) => c.email === 'uydurma@denetimli.example').sourceCheck).toBe('missing');
+    const saved = await h.prisma.contactPoint.findMany({ where: { companyId: company.id } });
+    const of = (email: string) => saved.find((c) => c.email === email);
+    expect(of('ik@denetimli.example')).toMatchObject({ kind: 'official_hr', roleType: 'hr', score: 85, confidence: 'high' });
+    expect(of('ik@denetimli.example')?.verifiedAt).not.toBeNull();
+    expect(of('ayse.kaya@denetimli.example')).toMatchObject({ kind: 'named_recruiter', roleType: 'recruiting', score: 80, name: 'Ayşe Kaya', role: 'İşe Alım Uzmanı' });
+    expect(of('can.demir@denetimli.example')).toMatchObject({ kind: 'management', roleType: 'management', score: 70, role: 'CTO' });
+    expect(of('mert.ak@denetimli.example')).toMatchObject({ kind: 'guessed', score: 30, verifiedAt: null });
+    expect(of('uydurma@denetimli.example')).toBeUndefined();
+    expect(of('olu.adres@denetimli.example')).toBeUndefined();
+    expect((await h.prisma.company.findUniqueOrThrow({ where: { id: company.id } })).researchMeta).toMatchObject({ contactsDepth: 'max' });
+
+    const opportunity = await h.prisma.opportunity.findFirstOrThrow({ where: { companyId: company.id } });
+    const preview = (await h.http().get(`/api/v1/home/preview/${opportunity.id}`).set(u.auth).expect(200)).body;
+    expect(preview.suggestedTo).toBe('ik@denetimli.example');
+    expect(preview.recipientOptions.map((o: any) => [o.email, o.manualOnly])).toEqual([
+      ['ik@denetimli.example', false],
+      ['ayse.kaya@denetimli.example', false],
+      ['can.demir@denetimli.example', true],
+      ['mert.ak@denetimli.example', true],
+    ]);
+    expect(preview.recipientOptions[2]).toMatchObject({ label: 'Yönetim', person: 'Can Demir, CTO', score: 70 });
+  });
+
+  it('yalnız çalışan ya da yönetim adresi bulunan firmaya otomatik gönderim yapılmaz', async () => {
+    const company = await firm('kisisel', []);
+    jest.spyOn(research as any, 'sourcePage').mockResolvedValue('cto: can.demir@kisisel.example');
+    aiAnswers((req) =>
+      req.kind === 'contact_review'
+        ? { reviews: req.input.candidates.map((c: any) => ({ ref: c.ref, keep: true, roleType: 'management', confidence: 75 })) }
+        : { contacts: [{ email: 'can.demir@kisisel.example', roleType: 'management', origin: 'published', sourceUrl: 'https://kisisel.example/ekip' }], offices: [] },
+    );
+    await research.findDetails(company.id, null, { deep: true });
+    expect(await research.hasSendableContact(company.id)).toBe(false);
+    const listed = (await h.http().get('/api/v1/home/companies').set(u.auth).expect(200)).body.companies.find((c: any) => c.id === company.id);
+    expect(listed.opportunities[0]).toMatchObject({ canEmail: false, manualRecipients: 1 });
+  });
+
+  it('arka plan araması denetçiyi çağırmaz; kişisel adres düşük güvende kalır', async () => {
+    const company = await firm('arkaplan', []);
+    jest.spyOn(research as any, 'sourcePage').mockResolvedValue('ali.veli@arkaplan.example');
+    const ai = aiAnswers(() => ({ contacts: [{ email: 'ali.veli@arkaplan.example', roleType: 'employee', origin: 'published', sourceUrl: 'https://arkaplan.example/blog' }], offices: [] }));
+    await research.findDetails(company.id, null);
+    expect(kinds(ai)).toEqual(['company_contacts']);
+    expect(await h.prisma.contactPoint.findFirstOrThrow({ where: { companyId: company.id } })).toMatchObject({ kind: 'employee', score: 40, confidence: 'low' });
+    expect((await h.prisma.company.findUniqueOrThrow({ where: { id: company.id } })).researchMeta).toMatchObject({ contactsDepth: 'base' });
   });
 
   it('aynı derinlikteki arama süresi dolmadan tekrarlanmaz; derinleştirme kaldığı basamaktan sürer', async () => {
@@ -510,13 +581,115 @@ describe('adres araması: hafıza ve basamaklar', () => {
     expect(ai).toHaveBeenCalledTimes(1);
     expect(await research.findDetails(company.id, null)).toEqual({ status: 'skipped', reason: 'recent' });
     await research.findDetails(company.id, null, { deep: true });
-    expect(ai.mock.calls.slice(1).map((c) => c[0].modelOverride?.cli_claude)).toEqual(['sonnet', 'opus']);
+    expect(kinds(ai)).toEqual(['company_contacts', 'company_contacts']);
     expect(await research.findDetails(company.id, null, { deep: true, force: true })).toEqual({ status: 'skipped', reason: 'exhausted' });
-    expect(ai).toHaveBeenCalledTimes(3);
+    expect(ai).toHaveBeenCalledTimes(2);
     const meta = (await h.prisma.company.findUniqueOrThrow({ where: { id: company.id } })).researchMeta as any;
     await h.prisma.company.update({ where: { id: company.id }, data: { researchMeta: { ...meta, contactsSearchedAt: new Date(Date.now() - 31 * DAY_MS).toISOString() } } });
     await research.findDetails(company.id, null);
-    expect(ai).toHaveBeenCalledTimes(4);
+    expect(ai).toHaveBeenCalledTimes(3);
+  });
+
+  describe('posta sunucusu yoklaması açıkken', () => {
+    beforeEach(() => {
+      process.env.CONTACT_SMTP_PROBE = 'true';
+      resetEnvForTests();
+    });
+    afterEach(() => {
+      process.env.CONTACT_SMTP_PROBE = 'false';
+      resetEnvForTests();
+    });
+
+    it('yayımlanmış adres yoksa olası adresler yoklanır; kutusu doğrulanan listeye girer, olmayan girmez', async () => {
+      const company = await firm('yoklanan', []);
+      jest.spyOn(research as any, 'sourcePage').mockResolvedValue('');
+      const ai = aiAnswers((req) =>
+        req.kind === 'contact_review'
+          ? { reviews: req.input.candidates.map((c: any) => ({ ref: c.ref, keep: true, roleType: 'recruiting', confidence: 30 })) }
+          : { contacts: [{ email: 'mert.ak@yoklanan.example', name: 'Mert Ak', roleType: 'recruiting', origin: 'likely', sourceUrl: null, evidence: 'İK yöneticisi; ad.soyad kalıbı' }], offices: [] },
+      );
+      const probe = jest.spyOn(smtpProbe, 'probeMailboxes').mockImplementation(async (_domain, emails) => ({
+        mx: true,
+        catchAll: false,
+        verdicts: new Map(emails.map((e): [string, smtpProbe.MailboxVerdict] => [e, ['mert.ak@yoklanan.example', 'ik@yoklanan.example'].includes(e) ? 'exists' : 'missing'])),
+      }));
+      await research.findDetails(company.id, null, { deep: true });
+      expect(kinds(ai)).toEqual(['company_contacts', 'contact_review']);
+      expect(probe).toHaveBeenCalledTimes(1);
+      expect(probe.mock.calls[0][0]).toBe('yoklanan.example');
+      expect(probe.mock.calls[0][1].slice(0, 3)).toEqual(['mert.ak@yoklanan.example', 'kariyer@yoklanan.example', 'ik@yoklanan.example']);
+      const saved = await h.prisma.contactPoint.findMany({ where: { companyId: company.id } });
+      const of = (email: string) => saved.find((c) => c.email === email);
+      expect(of('ik@yoklanan.example')).toMatchObject({ kind: 'official_hr', score: 55, verifiedAt: null });
+      expect(of('mert.ak@yoklanan.example')).toMatchObject({ kind: 'named_recruiter', score: 55, name: 'Mert Ak' });
+      expect(of('kariyer@yoklanan.example')).toBeUndefined();
+      expect(await research.hasSendableContact(company.id)).toBe(true);
+      expect((await h.prisma.company.findUniqueOrThrow({ where: { id: company.id } })).researchMeta).toMatchObject({ contactsDepth: 'max', contactsVersion: 2 });
+    });
+
+    it('posta sunucusu bir şey söylemezse kariyer@ ve info@ tahmini olarak listelenir ve elle seçilebilir', async () => {
+      const company = await firm('sessiz', []);
+      jest.spyOn(research as any, 'sourcePage').mockResolvedValue('');
+      aiAnswers(() => ({ contacts: [], offices: [] }));
+      jest.spyOn(smtpProbe, 'probeMailboxes').mockImplementation(async (_domain, emails) => ({ mx: true, catchAll: null, verdicts: new Map(emails.map((e): [string, smtpProbe.MailboxVerdict] => [e, 'unknown'])) }));
+      await research.findDetails(company.id, null, { deep: true });
+      const saved = await h.prisma.contactPoint.findMany({ where: { companyId: company.id }, orderBy: { email: 'asc' } });
+      expect(saved.map((c) => [c.email, c.kind])).toEqual([
+        ['info@sessiz.example', 'guessed'],
+        ['kariyer@sessiz.example', 'guessed'],
+      ]);
+      const opportunity = await h.prisma.opportunity.findFirstOrThrow({ where: { companyId: company.id } });
+      const preview = (await h.http().get(`/api/v1/home/preview/${opportunity.id}`).set(u.auth).expect(200)).body;
+      expect(preview.suggestedTo).toBeNull();
+      expect(preview.recipientOptions.map((o: any) => [o.email, o.manualOnly, o.label])).toEqual([
+        ['kariyer@sessiz.example', true, 'Tahmini (yayımlanmamış)'],
+        ['info@sessiz.example', true, 'Tahmini (yayımlanmamış)'],
+      ]);
+
+      const guessed = saved.find((c) => c.email === 'kariyer@sessiz.example')!;
+      const draft = await createDraft(h, u, company.id, null, { intentType: 'general_intent', contactId: guessed.id });
+      const queue = (sendMode: 'auto' | 'manual') => h.app.get(SendingService).queueSend({ workspaceId: workspaceId(), userId: null, draftId: draft.id, idempotencyKey: idem(), sendMode, mailAccountId: u.account.id });
+      await expect(queue('auto')).rejects.toMatchObject({ code: 'CONTACT_UNVERIFIED' });
+      expect((await queue('manual')).attempt).toMatchObject({ toEmail: 'kariyer@sessiz.example', sendMode: 'manual' });
+    });
+
+    it('alan adı mail almıyorsa tahmin üretilmez', async () => {
+      const company = await firm('postasiz', []);
+      jest.spyOn(research as any, 'sourcePage').mockResolvedValue('');
+      aiAnswers(() => ({ contacts: [], offices: [] }));
+      jest.spyOn(smtpProbe, 'probeMailboxes').mockImplementation(async (_domain, emails) => ({ mx: false, catchAll: null, verdicts: new Map(emails.map((e): [string, smtpProbe.MailboxVerdict] => [e, 'unknown'])) }));
+      await research.findDetails(company.id, null, { deep: true });
+      expect(await h.prisma.contactPoint.count({ where: { companyId: company.id } })).toBe(0);
+    });
+  });
+
+  it('alan adı bilinmeyen firmada modelin bulduğu site benimsenir; bekleyen öneri adresi firmanın adresi olur', async () => {
+    const company = (await h.http().post('/api/v1/companies').set(u.auth).send({ name: 'Sitesiz Gıda Ltd. Şti.', sectors: ['gıda'], district: 'Fatih' }).expect(201)).body;
+    await h.worker.drain();
+    await h.prisma.contactPoint.create({ data: { workspaceId: workspaceId(), companyId: company.id, email: 'info@sitesizgida.example', kind: 'candidate_hr', sourceUrl: 'https://www.sitesizgida.example/iletisim' } });
+    jest.spyOn(dns.promises, 'lookup').mockResolvedValue({ address: '127.0.0.1', family: 4 } as never);
+    jest.spyOn(research as any, 'crawlSite').mockResolvedValue([]);
+    jest.spyOn(research as any, 'sourcePage').mockResolvedValue('iletişim: info@sitesizgida.example');
+    aiAnswers(() => ({ website: 'https://www.sitesizgida.example', contacts: [], offices: [{ city: 'İstanbul', district: 'Fatih', sourceUrl: 'https://www.sitesizgida.example/iletisim' }] }));
+    await research.findDetails(company.id, null);
+    const updated = await h.prisma.company.findUniqueOrThrow({ where: { id: company.id } });
+    expect(updated).toMatchObject({ canonicalDomain: 'sitesizgida.example', website: 'https://www.sitesizgida.example/' });
+    expect(await h.prisma.contactPoint.findFirstOrThrow({ where: { companyId: company.id } })).toMatchObject({ email: 'info@sitesizgida.example', kind: 'general' });
+    expect(await research.hasSendableContact(company.id)).toBe(true);
+  });
+
+  it('modelin bildirdiği site ilan sitesiyse ya da başka firmanınsa benimsenmez', async () => {
+    const company = (await h.http().post('/api/v1/companies').set(u.auth).send({ name: 'Yoklanan Holding', sectors: ['holding'], district: 'Fatih' }).expect(201)).body;
+    await h.worker.drain();
+    jest.spyOn(dns.promises, 'lookup').mockResolvedValue({ address: '127.0.0.1', family: 4 } as never);
+    aiAnswers(() => ({ website: 'https://yoklanan.example', contacts: [], offices: [] }));
+    await research.findDetails(company.id, null);
+    expect((await h.prisma.company.findUniqueOrThrow({ where: { id: company.id } })).canonicalDomain).toBeNull();
+    const board = (await h.http().post('/api/v1/companies').set(u.auth).send({ name: 'Kariyer Tekstil', sectors: ['tekstil'], district: 'Fatih' }).expect(201)).body;
+    await h.worker.drain();
+    aiAnswers(() => ({ website: 'https://www.kariyer.net/firma-profil/kariyer-tekstil', contacts: [], offices: [] }));
+    await research.findDetails(board.id, null);
+    expect((await h.prisma.company.findUniqueOrThrow({ where: { id: board.id } })).canonicalDomain).toBeNull();
   });
 
   it('toplu adres araması yakın zamanda derin aranmış firmaları atlar', async () => {

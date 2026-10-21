@@ -14,6 +14,7 @@ import { ImportsModule } from './modules/imports/imports.module';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { MailModule } from './modules/mail/mail.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { ScrapersModule } from './modules/scrapers/scrapers.module';
 import { SourcesModule } from './modules/sources/sources.module';
 import { SystemModule } from './modules/system/system.module';
 import { WorkspaceModule } from './modules/workspace/workspace.module';
@@ -27,6 +28,7 @@ import { WorkspaceModule } from './modules/workspace/workspace.module';
     CandidatesModule,
     CompaniesModule,
     SourcesModule,
+    ScrapersModule,
     JobsModule,
     DocumentsModule,
     ImportsModule,

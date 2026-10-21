@@ -52,6 +52,8 @@ export interface ApplyOptions {
   sourceKind?: string;
   /** İlanı sitenin kendisi az önce duyurdu (iş alarmı): sayfası yoklanmaz, açık kabul edilir. */
   announced?: boolean;
+  /** Bildirim başlığında ilanların nereden geldiği ("Kariyer.net taraması"). */
+  origin?: string;
 }
 
 export interface FoundListing {
@@ -314,7 +316,7 @@ export class JobSearchService {
         eventType: 'notify',
         aggregateId: profile.id,
         dedupKey: `jobs-found:${taskId}`,
-        payload: { type: 'new_jobs', title: opts.announced ? `İş alarmından ${open.length} yeni ilan eklendi` : `${open.length} yeni ilan bulundu`, body: open.length > NOTIFIED_TITLES ? `${sample} ve ${open.length - NOTIFIED_TITLES} ilan daha` : sample, link: jobIds.length ? `/jobs?ids=${jobIds.join(',')}` : '/home' },
+        payload: { type: 'new_jobs', title: opts.origin ? `${opts.origin}: ${open.length} yeni ilan eklendi` : opts.announced ? `İş alarmından ${open.length} yeni ilan eklendi` : `${open.length} yeni ilan bulundu`, body: open.length > NOTIFIED_TITLES ? `${sample} ve ${open.length - NOTIFIED_TITLES} ilan daha` : sample, link: jobIds.length ? `/jobs?ids=${jobIds.join(',')}` : '/home' },
       });
     }
     return stats;

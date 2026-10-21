@@ -27,15 +27,15 @@ export interface AiSettings {
 export type ModelProvider = 'cli_claude' | 'cli_codex';
 export type ModelSettings = Partial<Record<ModelProvider, Partial<Record<AiKind | 'default', string>>>>;
 
-const LIGHT_KINDS: AiKind[] = ['cv_facts', 'title_expansion', 'title_analysis', 'company_contacts', 'company_sizes', 'reply_classification', 'inbound_review', 'job_alert'];
+const LIGHT_KINDS: AiKind[] = ['cv_facts', 'title_expansion', 'title_analysis', 'company_sizes', 'reply_classification', 'inbound_review', 'job_alert'];
 
 export const DEFAULT_MODELS: Record<ModelProvider, Partial<Record<AiKind | 'default', string>>> = {
-  cli_claude: { default: 'sonnet', ...Object.fromEntries(LIGHT_KINDS.map((k) => [k, 'haiku'])) },
+  cli_claude: { default: 'sonnet', ...Object.fromEntries(LIGHT_KINDS.map((k) => [k, 'haiku'])), company_contacts: 'sonnet', contact_review: 'opus' },
   cli_codex: { company_contacts: 'gpt-6.1-sol' },
 };
 
-/** Bu görevlerde sağlayıcı sırasından bağımsız olarak önce denenen sağlayıcılar (ör. web'de adres aramada ChatGPT daha çok adres buluyor). */
-const PREFERRED_PROVIDERS: Partial<Record<AiKind, ProviderName[]>> = { company_contacts: ['cli_codex'] };
+/** Bu görevlerde sağlayıcı sırasından bağımsız olarak önce denenen sağlayıcılar: adres araması Claude ile (Sonnet toplar, Opus doğrular); Claude yoksa ChatGPT yedektir. */
+const PREFERRED_PROVIDERS: Partial<Record<AiKind, ProviderName[]>> = { company_contacts: ['cli_claude', 'cli_codex'], contact_review: ['cli_claude'] };
 
 export function providerOrderFor(kind: AiKind, order: ProviderName[]): ProviderName[] {
   const preferred = (PREFERRED_PROVIDERS[kind] ?? []).filter((p) => order.includes(p));
