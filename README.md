@@ -11,43 +11,34 @@ Yavaş ama kararlı: iş aramanı senin yerine sürdüren, kendi sunucunda çal�
 - **Dönüşleri takip eder.** Gelen kutundaki geri dönen mailleri, otomatik yanıtları ve firma yanıtlarını okur, başvurunun durumunu günceller.
 - **Otopilot ile düzeltir.** Adres geçersizse firmanın sıradaki doğrulanmış adresine gönderir, ek sığmadıysa yalnızca CV ile dener, emin olamadığını onayına bırakır.
 - **İş alarmlarını okur.** Kariyer.net, LinkedIn, Indeed gibi sitelerin otomatik taramaya kapalı ilanlarını, bu sitelerde kurduğun iş alarmlarının maillerinden alıp listeye ekler.
-- **İlan sitelerini tarar.** Kariyer.net ve Indeed'in oturumsuz görülebilen arama sayfalarını 4 saatte bir (ya da elle) tarar; site erişimi engellerse durur ve bildirir. Ayrıntılar ve sitelerin güncel erişim durumu: [docs/SCRAPERS.md](docs/SCRAPERS.md).
-- **Açtığın ilan sayfasını aktarır.** Chrome eklentisi (`browser-extension/`) Kariyer.net ve Indeed'de kendi tarayıcında açtığın arama sonuç sayfasındaki ilanları okuyup aktarır; siteye kendi başına istek atmaz, doğrulama sayfasında durur. Kurulum: [browser-extension/README.md](browser-extension/README.md).
+- **İlan sitelerini tarar.** Kariyer.net, Indeed, Eleman.net, İşin Olsun ve Secretcv'nin oturumsuz görülebilen arama sayfalarını 4 saatte bir (ya da elle) tarar; site erişimi engellerse durur ve bildirir. Ayrıntılar ve sitelerin güncel erişim durumu: [docs/SCRAPERS.md](docs/SCRAPERS.md).
+- **Açtığın ilan sayfasını aktarır.** Chrome eklentisi (`browser-extension/`) Kariyer.net, Indeed, Eleman.net, İşin Olsun, Secretcv ve Yenibiriş'te kendi tarayıcında açtığın arama sonuç sayfasındaki ilanları okuyup aktarır; siteye kendi başına istek atmaz, doğrulama sayfasında durur. Kurulum: [browser-extension/README.md](browser-extension/README.md).
 - **Deneyimden öğrenir.** Hangi adreslerin ulaştığını ve hangi başvurulara yanıt geldiğini kaydeder; yeterli veri birikince sıralamaları buna göre iyileştirir.
 - **Birden çok kullanıcı.** Davet koduyla arkadaşlarını ekleyebilirsin; herkesin ayrı çalışma alanı, CV'si, mail hesabı ve geçmişi olur.
 
 ## Kurulum
 
-Gerekenler: [Docker](https://docs.docker.com/get-docker/) (Docker Desktop ya da Docker Engine + Compose v2) ve bir mail hesabı.
+Gereken tek şey [Docker Desktop](https://docs.docker.com/get-docker/) (Linux'ta Docker Engine + Compose v2). Docker açıkken terminale şunu yapıştır:
 
 ```bash
-git clone <bu-deponun-adresi> jobless-turtle
-cd jobless-turtle
-cp .env.example .env
+curl -fsSL https://raw.githubusercontent.com/onurmelikoglu/JoblessTurtle/main/install.sh | bash
 ```
 
-`.env` dosyasında aşağıdaki dört değeri doldur (her biri için yeni rastgele değer üret):
+Betik dosyaları `jobless-turtle` klasörüne indirir, gizli anahtarları bu bilgisayarda rastgele üretip `.env` dosyasını oluşturur, hazır imajları indirir, uygulamayı başlatır ve tarayıcıda açar. Depoyu zaten klonladıysan klasörün içinde `./install.sh` yeterli. Windows'ta komutu WSL (Ubuntu) terminalinde çalıştır.
 
-```bash
-openssl rand -base64 48   # JWT_SECRET
-openssl rand -base64 32   # APP_ENCRYPTION_KEY (tam 32 bayt olmalı)
-openssl rand -hex 24      # WEBHOOK_SECRET
-openssl rand -hex 24      # POSTGRES_PASSWORD
-```
+Açılan sayfada hesap oluştur. **İlk kayıt olan kullanıcı sunucu yöneticisi olur**; sonraki kullanıcılar yöneticinin oluşturduğu davet koduyla kaydolur. Claude/ChatGPT hesabını bağlamak ve tarayıcı eklentisini kurmak için terminal gerekmez: **Profilim › Kurulum** bölümündeki düğmeleri kullan.
 
-> `APP_ENCRYPTION_KEY` bağlı mail hesaplarının parolalarını şifreler. Kaybolursa hesapları yeniden bağlaman gerekir; yedeğini güvenli bir yerde tut. `.env` dosyasını hiçbir zaman paylaşma ya da commit etme.
+| Komut | Ne yapar |
+|---|---|
+| `./install.sh update` | Yeni sürümü indirip uygulamayı günceller (veriler korunur) |
+| `./install.sh status` | Servislerin durumunu gösterir |
+| `./install.sh stop` | Uygulamayı durdurur (veriler silinmez) |
 
-Başlat:
+> `.env` içindeki `APP_ENCRYPTION_KEY` bağlı mail hesaplarının parolalarını şifreler. Kaybolursa hesapları yeniden bağlaman gerekir; `.env` dosyasının yedeğini güvenli bir yerde tut, hiçbir zaman paylaşma ya da commit etme.
 
-```bash
-docker compose up -d --build
-```
+Önce denemek istersen `.env` içinde `SEED_DEMO=true` yapıp `docker compose up -d` çalıştır: `demo@ornek.local` / `demo12345` ile giriş yapılır, demo firmalar kurgusaldır ve gerçek siteye istek atılmaz.
 
-<http://localhost:8080> adresini aç ve hesap oluştur. **İlk kayıt olan kullanıcı sunucu yöneticisi olur**; sonraki kullanıcılar yöneticinin oluşturduğu davet koduyla kaydolur.
-
-Önce denemek istersen `.env` içinde `SEED_DEMO=true` yap: `demo@ornek.local` / `demo12345` ile giriş yapılır, demo firmalar kurgusaldır ve gerçek siteye istek atılmaz.
-
-Dışarıdan HTTPS ile erişim, mail sağlayıcıları, güncelleme, yedekleme ve sorun giderme için: [docs/SETUP.md](docs/SETUP.md).
+Elle kurulum, imajları kendi bilgisayarında derleme, dışarıdan HTTPS ile erişim, mail sağlayıcıları, yedekleme ve sorun giderme için: [docs/SETUP.md](docs/SETUP.md).
 
 ## Kullanım
 
@@ -110,7 +101,7 @@ CLI sağlayıcıları kişisel abonelik kullandığı için varsayılan olarak y
 
 ## İlkeler
 
-- **Atlatma yok.** Sitelere oturum açılmaz; korumalar (CAPTCHA, 403, bot doğrulaması) aşılmaz, tarayıcı kimliği taklit edilmez, vekil sunucu kullanılmaz. Kariyer.net ve Indeed'in yalnızca herkese açık arama sayfaları, robots.txt'e uyularak ve kendini tanıtan bir istemciyle taranır; erişim engellenen kaynak duraklatılır. Sohbet arayüzleri (claude.ai, chatgpt.com) otomatikleştirilmez.
+- **Atlatma yok.** Sitelere oturum açılmaz; korumalar (CAPTCHA, 403, bot doğrulaması) aşılmaz, tarayıcı kimliği taklit edilmez, vekil sunucu kullanılmaz. İlan sitelerinin yalnızca herkese açık arama sayfaları, robots.txt'e uyularak ve kendini tanıtan bir istemciyle taranır; erişim engellenen kaynak duraklatılır. Sohbet arayüzleri (claude.ai, chatgpt.com) otomatikleştirilmez.
 - **Yalnızca kendi mailinden, yalnızca doğrulanmış adreslere.** Tahmin edilmiş adrese gönderilmez; geri dönen adres kalıcı olarak kapatılır. Model alıcı, ek ya da yetki seçemez.
 - **"Gönderildi", mail sağlayıcısının kabulüdür**; teslim ya da okunma garantisi değildir. Sonucu belirsiz gönderim otomatik tekrarlanmaz.
 - **Gizlilik.** Gelen kutusunda yalnızca gönderdiğin başvurulara dönen mailler ve iş sitelerinin ilan bildirimleri okunur; diğer mailler okunmaz ve saklanmaz. Mail parolaları şifreli tutulur. Veriler senin sunucunda kalır.

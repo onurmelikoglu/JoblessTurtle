@@ -10,7 +10,7 @@ import { ScrapeError } from './engine/scrapers/types';
 /**
  * Canlı yapı kontrolü: her siteden tek bir sonuç sayfası (robots.txt'e uyarak, gerçek kullanıcı ajanıyla) istenir ve
  * üretimdeki ayrıştırıcıyla okunur. Veritabanına yazmaz, yeniden denemez. Site düzeni değişti mi, erişim engelli mi
- * görmek içindir. Kullanım: npm run scrapers:check -- [kariyer_net|indeed] [şehir] [anahtar kelime]
+ * görmek içindir. Kullanım: npm run scrapers:check -- [kariyer_net|indeed|eleman_net|isinolsun|secretcv|yenibiris] [şehir] [anahtar kelime]
  */
 async function check(source: ScraperSource, city: string, keyword: string | null) {
   const scraper = SCRAPERS[source];
@@ -41,7 +41,11 @@ async function check(source: ScraperSource, city: string, keyword: string | null
 
 async function main() {
   const [sourceArg, cityArg, ...keywordParts] = process.argv.slice(2);
-  const sources = sourceArg && isScraperSource(sourceArg) ? [sourceArg] : [...SCRAPER_SOURCES];
+  const sources = (sourceArg && isScraperSource(sourceArg) ? [sourceArg] : [...SCRAPER_SOURCES]).filter((source) => {
+    if (SCRAPERS[source].serverScraping) return true;
+    console.log(`– ${SCRAPERS[source].label}: sunucu taraması yok (yalnızca tarayıcı eklentisi); istek atılmadı`);
+    return false;
+  });
   const keyword = keywordParts.join(' ').trim() || null;
   let allOk = true;
   for (const source of sources) allOk = (await check(source, cityArg ?? 'İstanbul', keyword)) && allOk;

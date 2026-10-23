@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { homeApi } from '@/api/home';
 import { POLL_MS, queryKeys } from '@/api/queries';
 import { useMe } from '@/auth/session-context';
+import { SetupSection } from '@/features/setup/SetupNotice';
 import { LoadingBlock } from '@/ui/feedback';
 import { Notice } from '@/ui/Notice';
 import { AboutSection } from './AboutSection';
@@ -35,6 +36,7 @@ export function ProfilePage() {
               {policyBlocker}
             </Notice>
           )}
+          <SetupSection setup={setup} />
           <AboutSection setup={setup} onPolicy={setPolicyBlocker} />
           <DocumentsSection setup={setup} onPolicy={setPolicyBlocker} />
           <MailSection setup={setup} onPolicy={setPolicyBlocker} />

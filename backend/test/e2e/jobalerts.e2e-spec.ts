@@ -82,7 +82,7 @@ describe('iş alarmı postası ilana dönüşür', () => {
     const listed = home.companies.find((c: any) => c.name === 'Remax Yaman');
     expect(listed).toMatchObject({ class: 'open', matchingJobs: 1 });
     expect(listed.opportunities[0].links[0]).toMatchObject({ kind: 'kariyernet', label: "Kariyer.net'te başvur" });
-    const notes = (await h.http().get('/api/v1/notifications').set(u.auth).expect(200)).body;
+    const notes = (await h.http().get('/api/v1/notifications').set(u.auth).expect(200)).body.items;
     const note = notes.find((n: any) => n.type === 'new_jobs');
     expect(note.title).toBe('İş alarmından 2 yeni ilan eklendi');
     expect(note.link.split('=')[1].split(',').sort()).toEqual([remax.id, other.id].sort());

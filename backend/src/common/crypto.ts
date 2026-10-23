@@ -53,3 +53,20 @@ export function randomCode(length = 8): string {
   const buf = randomBytes(length);
   return Array.from(buf, (b) => alphabet[b % alphabet.length]).join('');
 }
+
+/**
+ * Adreste taşınabilen opak değer: amaç önekiyle AES-256-GCM şifrelenir, base64url kodlanır. Değer açığa çıkmaz ve
+ * değiştirilemez; başka bir amaçla üretilmiş değer açılmaz (null).
+ */
+export function sealForUrl(purpose: string, value: string): string {
+  return Buffer.from(encryptSecret(`${purpose}:${value}`)).toString('base64url');
+}
+
+export function openFromUrl(purpose: string, token: string): string | null {
+  try {
+    const plain = decryptSecret(Buffer.from(token, 'base64url').toString('utf8'));
+    return plain.startsWith(`${purpose}:`) ? plain.slice(purpose.length + 1) : null;
+  } catch {
+    return null;
+  }
+}

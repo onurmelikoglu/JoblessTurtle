@@ -9,3 +9,4 @@ backups/
 *.p12
 .claude/
 .DS_Store
+*.crx

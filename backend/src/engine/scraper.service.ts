@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma, ScraperRun } from '@prisma/client';
+import { createHash } from 'crypto';
+import { openFromUrl, sealForUrl } from '../common/crypto';
 import { env } from '../common/env';
 import { ExtensionSearch, ScraperHealth, ScraperImportResult, ScraperRunState, ScraperRunView, ScraperSourceStatus, ScraperStatus } from '../contracts/scrapers';
 import { ServerShape } from '../contracts/wire';
@@ -42,6 +44,8 @@ export type RunTrigger = 'schedule' | 'manual' | 'api' | 'extension';
 
 /** Eklenti çalışmaları kullanıcının açtığı sayfadan gelir: zamanlamayı, site kilidini ve sitenin sağlık durumunu etkilemez. */
 const EXTENSION_TRIGGER = 'extension';
+/** Aynı kullanıcının aynı sayfayı aynı kartlarla bu süre içinde yeniden göndermesi yeni çalışma açmaz, önceki sonuç döner. */
+const IMPORT_REPEAT_WINDOW_MS = 2 * 60_000;
 
 export interface RunRequest {
   source: ScraperSource;
@@ -85,7 +89,12 @@ export interface PageImport {
   source: unknown;
   url: string;
   payload: unknown;
+  /** Aramanın uygulamada başlatıldığı çalışma alanının şifreli etiketi (adresteki "#jt-import=<etiket>"). */
+  target?: string | null;
 }
+
+/** Eklenti aramalarının hedef etiketinin amacı; başka amaçla şifrelenmiş değer etiket olarak açılmaz. */
+const IMPORT_TARGET_PURPOSE = 'jt-import-target';
 
 /** Yöneticiye bildirilen sorun: sitenin engellemesi, hız sınırı ya da sayfa düzeninin değişmesi. */
 function problemOf(run: Pick<ScraperRun, 'state' | 'errors'>): 'blocked' | 'rate_limited' | 'selector' | null {
@@ -124,6 +133,7 @@ export class ScraperService {
   /** Ağ katmanı ve bekleme; testlerde değiştirilir. */
   fetcher: PageFetcher = defaultFetcher;
   sleep: Sleep = realSleep;
+  private readonly recentImports = new Map<string, { at: number; result: ServerShape<ScraperImportResult> }>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -146,6 +156,8 @@ export class ScraperService {
     for (const source of SCRAPER_SOURCES) {
       if (result.config.sources[source].keyword_mode === 'query' && !SCRAPERS[source].supportsKeywordQuery)
         throw new AppError(400, 'SCRAPER_CONFIG_INVALID', `${SCRAPER_LABELS[source]} anahtar kelimeli arama adresi doğrulanamadı (bot koruması); keyword_mode "local_filter" olmalı`);
+      if (result.config.sources[source].enabled && !SCRAPERS[source].serverScraping)
+        throw new AppError(400, 'SCRAPER_CONFIG_INVALID', `${SCRAPER_LABELS[source]} sunucudan gelen istekleri engelliyor; yalnızca tarayıcı eklentisiyle aktarılır, otomatik tarama açılamaz`);
     }
     const value = result.config as unknown as Prisma.InputJsonValue;
     await this.prisma.keyValue.upsert({ where: { key: CONFIG_KEY }, create: { key: CONFIG_KEY, value }, update: { value } });
@@ -160,6 +172,7 @@ export class ScraperService {
    */
   private async createRun(req: RunRequest): Promise<{ run: ScraperRun; created: boolean }> {
     if (!isScraperSource(req.source)) throw new AppError(400, 'SCRAPER_UNKNOWN', `Bilinmeyen site: ${String(req.source)}`);
+    if (!SCRAPERS[req.source].serverScraping) throw new AppError(400, 'SCRAPER_EXTENSION_ONLY', `${SCRAPER_LABELS[req.source]} sunucudan taranamıyor (bot koruması); ilanlar tarayıcı eklentisiyle aktarılır`);
     const config = await this.config();
     const defaults = sourceTargets(config, req.source);
     const cities = [...new Set((req.cities ?? defaults.cities).map((c) => c.trim()).filter(Boolean))].slice(0, MAX_REQUEST_CITIES);
@@ -216,6 +229,10 @@ export class ScraperService {
     const search = scraper.searchOfPage(page);
     if (!search) throw new AppError(400, 'IMPORT_URL_INVALID', `Adres bir ${scraper.label} arama sonuç sayfası değil`);
     const url = page.toString();
+    const targetWorkspaceId = await this.importTarget(req.target);
+    const repeatKey = `${req.userId}|${targetWorkspaceId ?? ''}|${source}|${url.split('#')[0]}|${createHash('sha256').update(JSON.stringify(req.payload ?? null)).digest('hex')}`;
+    const repeat = this.recentImports.get(repeatKey);
+    if (repeat && Date.now() - repeat.at < IMPORT_REPEAT_WINDOW_MS) return repeat.result;
 
     const tally = new RunTally();
     let parsed: ParsedPage | null = null;
@@ -227,34 +244,54 @@ export class ScraperService {
       this.pageFailed(tally, error);
     }
     const now = new Date();
-    const found = parsed ? scraper.listingsOf(parsed, search.city, { keywordMode: 'query', keywords: [], now }, (reason) => (tally.rejected[reason] = (tally.rejected[reason] ?? 0) + 1)) : null;
+    const found = parsed ? scraper.listingsOf(parsed, search.cities[0] ?? null, { keywordMode: 'query', keywords: [], now }, (reason) => (tally.rejected[reason] = (tally.rejected[reason] ?? 0) + 1)) : null;
     if (parsed && found && parsed.cards.length && !found.valid) this.pageFailed(tally, scraper.unreadableCards(parsed.cards.length, url));
 
     const config = await this.config();
     const run = await this.prisma.scraperRun.create({
-      data: { source, trigger: EXTENSION_TRIGGER, state: 'running', startedAt: now, cities: search.city ? [search.city] : [], keywords: search.keyword ? [search.keyword] : [], maxPages: 1, requestedById: req.userId },
+      data: { source, trigger: EXTENSION_TRIGGER, state: 'running', startedAt: now, cities: search.cities, keywords: search.keyword ? [search.keyword] : [], maxPages: 1, requestedById: req.userId, targetWorkspaceId },
     });
     if (found && !tally.pagesFailed) await this.absorbPage(tally, run, found.listings, config);
-    const memberships = await this.prisma.membership.findMany({ where: { userId: req.userId }, select: { workspaceId: true } });
-    const finished = await this.complete(run, source, tally, config, { crashed: false, workspaceIds: memberships.map((m) => m.workspaceId) });
+    const workspaceIds = targetWorkspaceId ? [targetWorkspaceId] : (await this.prisma.membership.findMany({ where: { userId: req.userId }, select: { workspaceId: true } })).map((m) => m.workspaceId);
+    const finished = await this.complete(run, source, tally, config, { crashed: false, workspaceIds });
     this.logger.log(`${scraper.label} eklenti aktarımı (${run.id}): ${finished.state} · ${tally.ids.size} ilan, ${tally.outcomes.new} yeni · ${finished.forwarded} çalışma alanına`);
-    if (finished.state === 'failed') return { status: 'failed', run_id: run.id, message: finished.errorSummary ?? 'Sayfa okunamadı' };
-    return {
-      status: 'imported',
-      run_id: run.id,
-      state: finished.state as 'succeeded' | 'partial',
-      listings_found: finished.listingsFound,
-      listings_new: finished.listingsNew,
-      listings_updated: finished.listingsUpdated,
-      forwarded: finished.forwarded,
-      has_next_page: parsed?.hasNextPage ?? false,
-    };
+    const result: ServerShape<ScraperImportResult> =
+      finished.state === 'failed'
+        ? { status: 'failed', run_id: run.id, message: finished.errorSummary ?? 'Sayfa okunamadı' }
+        : {
+            status: 'imported',
+            run_id: run.id,
+            state: finished.state as 'succeeded' | 'partial',
+            listings_found: finished.listingsFound,
+            listings_new: finished.listingsNew,
+            listings_updated: finished.listingsUpdated,
+            forwarded: finished.forwarded,
+            has_next_page: parsed?.hasNextPage ?? false,
+          };
+    this.rememberImport(repeatKey, result);
+    return result;
+  }
+
+  /** Etiket varsa aktarımın gideceği çalışma alanı; bozuk, başka amaçlı ya da artık olmayan çalışma alanının etiketi 400. */
+  private async importTarget(tag: string | null | undefined): Promise<string | null> {
+    if (!tag) return null;
+    const workspaceId = openFromUrl(IMPORT_TARGET_PURPOSE, tag);
+    const workspace = workspaceId ? await this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { id: true } }) : null;
+    if (!workspace) throw new AppError(400, 'IMPORT_TARGET_INVALID', 'Aramanın hedef etiketi geçersiz; aramayı uygulamadan yeniden aç');
+    return workspace.id;
+  }
+
+  private rememberImport(key: string, result: ServerShape<ScraperImportResult>) {
+    const now = Date.now();
+    for (const [k, v] of this.recentImports) if (now - v.at >= IMPORT_REPEAT_WINDOW_MS) this.recentImports.delete(k);
+    this.recentImports.set(key, { at: now, result });
   }
 
   /**
-   * Profilden eklenti için arama adresleri: Kariyer.net'te şehir sayfası (anahtar kelime adreste doğrulanamadı; ilanlar
-   * profile aktarılırken unvan süzgecinden geçer), Indeed'de unvan × şehir, en yeni önce. Sonundaki "#jt-import" eki
-   * eklentiye bu sekmedeki sonuç sayfalarını kendiliğinden aktarmasını söyler.
+   * Profilden eklenti için arama adresleri: her site için profilin pozisyonları ve şehirleri, sitenin tek aramada kabul
+   * ettiği kadarı birleştirilerek (BaseScraper.browserSearches; aynı adres bir kez). İlanlar profile aktarılırken yine
+   * unvan ve şehir süzgecinden geçer. Sondaki "#jt-import=<etiket>" eki eklentiye bu sekmedeki sonuç sayfalarını
+   * kendiliğinden aktarmasını ve aktarımın bu çalışma alanına gitmesini söyler (etiket şifrelidir, kimlik açığa çıkmaz).
    */
   async extensionSearches(workspaceId: string): Promise<ServerShape<ExtensionSearch>[]> {
     const profiles = await this.prisma.searchProfile.findMany({ where: { workspaceId, active: true }, include: { candidate: { select: { city: true } } }, orderBy: { createdAt: 'asc' } });
@@ -262,15 +299,11 @@ export class ScraperService {
       profiles.map((p) => ({ titles: p.exactTitles.length ? p.exactTitles : p.adjacentTitles, city: p.candidate.city ?? p.city })),
       sourceTargets(await this.config(), 'kariyer_net').cities,
     );
-    const link = (source: ScraperSource, city: string, keyword: string | null): ServerShape<ExtensionSearch> => ({
-      source,
-      label: SCRAPER_LABELS[source],
-      city,
-      keyword,
-      url: `${SCRAPERS[source].searchUrl({ city, keyword }, 1)}${EXTENSION_IMPORT_HASH}`,
-    });
-    const keywords = targets.titles.length ? targets.titles : [null];
-    return [...targets.cities.map((city) => link('kariyer_net', city, null)), ...keywords.flatMap((keyword) => targets.cities.map((city) => link('indeed', city, keyword)))];
+    const hash = `${EXTENSION_IMPORT_HASH}=${sealForUrl(IMPORT_TARGET_PURPOSE, workspaceId)}`;
+    const links = SCRAPER_SOURCES.flatMap((source) =>
+      SCRAPERS[source].browserSearches(targets.titles, targets.cities).map((search) => ({ source, label: SCRAPER_LABELS[source], cities: search.cities, keywords: search.keywords, url: `${search.url}${hash}` })),
+    );
+    return [...new Map(links.map((l) => [l.url, l])).values()];
   }
 
   private assertEnabled() {
@@ -461,7 +494,7 @@ export class ScraperService {
     if (!config.enabled) return { queued: [] };
     const queued: string[] = [];
     for (const source of SCRAPER_SOURCES) {
-      if (!config.sources[source].enabled || (await this.nextRunAt(source, config)) > now) continue;
+      if (!SCRAPERS[source].serverScraping || !config.sources[source].enabled || (await this.nextRunAt(source, config)) > now) continue;
       const { created } = await this.enqueue({ source, trigger: 'schedule' });
       if (created) queued.push(source);
     }
@@ -496,7 +529,8 @@ export class ScraperService {
       sources.push({
         source,
         label: SCRAPER_LABELS[source],
-        enabled: config.enabled && own.enabled,
+        enabled: config.enabled && own.enabled && SCRAPERS[source].serverScraping,
+        server_scraping: SCRAPERS[source].serverScraping,
         interval_hours: own.interval_hours,
         max_pages: own.max_pages,
         keyword_mode: SCRAPERS[source].keywordModeOf(own.keyword_mode),
@@ -505,7 +539,7 @@ export class ScraperService {
         health: healthOf(last),
         last_run: last ? toPublicRun(last) : null,
         active_run: active ? toPublicRun(active) : null,
-        next_run_at: config.enabled && own.enabled && !active ? await this.nextRunAt(source, config) : null,
+        next_run_at: config.enabled && own.enabled && SCRAPERS[source].serverScraping && !active ? await this.nextRunAt(source, config) : null,
         active_jobs: activeJobs,
         new_jobs_24h: newJobs,
       });

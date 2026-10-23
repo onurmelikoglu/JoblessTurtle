@@ -125,7 +125,7 @@ describe('ortak katalog: arkadaş hesabı aramadan firma görür', () => {
 
   it('eklenen firmalar için yapay zekâ çağrısı yapılmaz ve kullanıcıya bildirilir', async () => {
     expect(await h.prisma.aiTask.count({ where: { workspaceId: workspaceOf(b), kind: { in: ['company_report', 'company_contacts', 'company_sizes'] } } })).toBe(0);
-    const notes = (await h.http().get('/api/v1/notifications').set(b.auth).expect(200)).body;
+    const notes = (await h.http().get('/api/v1/notifications').set(b.auth).expect(200)).body.items;
     expect(notes.find((n: any) => n.type === 'catalog_seed').title).toBe('5 firma ortak listeden eklendi');
   });
 

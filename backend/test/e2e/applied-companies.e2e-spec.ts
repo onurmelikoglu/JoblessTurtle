@@ -89,7 +89,7 @@ describe('bildirimler 30 gün tutulur', () => {
         { workspaceId: workspaceId(), userId, eventId: 'yeni-29', type: 'test', title: 'yeni-29', channel: 'in_app', createdAt: new Date(Date.now() - 29 * 86_400_000) },
       ],
     });
-    const listed = (await h.http().get('/api/v1/notifications').set(u.auth).expect(200)).body.map((n: any) => n.title);
+    const listed = (await h.http().get('/api/v1/notifications').set(u.auth).expect(200)).body.items.map((n: any) => n.title);
     expect(listed).toContain('yeni-29');
     expect(listed).not.toContain('eski-40');
     expect(await h.worker.cleanupNotifications()).toBe(1);

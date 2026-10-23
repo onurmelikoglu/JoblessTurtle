@@ -7,6 +7,7 @@ import { ZodPipe } from '../../common/zod.pipe';
 import { toPublicJob } from '../../domain/scraped-jobs';
 import { SCRAPER_SOURCES } from '../../domain/scraper-config';
 import { ScraperService, toPublicRun } from '../../engine/scraper.service';
+import { SCRAPERS } from '../../engine/scrapers/registry';
 import { ScrapedJobRepository } from '../../engine/scrapers/scraped-job.repository';
 import { ExtensionKeyService } from './extension-key.service';
 
@@ -23,6 +24,7 @@ const importSchema = z.object({
   source: z.enum(SCRAPER_SOURCES),
   url: z.string().trim().min(1).max(2000),
   payload: z.unknown(),
+  target: z.string().trim().min(1).max(500).nullish(),
 });
 
 const isoDate = z
@@ -76,7 +78,7 @@ export class ScrapersController {
   @AdminOnly()
   @HttpCode(202)
   async run(@Ctx() ctx: RequestContext, @Body(new ZodPipe(runSchema)) body: z.infer<typeof runSchema>) {
-    const sources = body.source === 'all' ? [...SCRAPER_SOURCES] : [body.source];
+    const sources = body.source === 'all' ? SCRAPER_SOURCES.filter((source) => SCRAPERS[source].serverScraping) : [body.source];
     const runs = [];
     for (const source of sources) {
       const { run, created } = await this.scraper.enqueue({ source, cities: body.cities, keywords: body.keywords, max_pages: body.max_pages, trigger: 'manual', requestedById: ctx.userId });
@@ -160,7 +162,7 @@ export class ScrapersController {
   async importPage(@Headers('x-import-token') key: string | undefined, @Body() raw: unknown) {
     const userId = await this.extensionKeys.verify(key);
     const body = new ZodPipe(importSchema).transform(raw);
-    return this.scraper.importPage({ userId, source: body.source, url: body.url, payload: body.payload });
+    return this.scraper.importPage({ userId, source: body.source, url: body.url, payload: body.payload, target: body.target });
   }
 
   @Get('jobs')

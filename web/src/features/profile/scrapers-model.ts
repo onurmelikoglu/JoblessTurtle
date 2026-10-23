@@ -41,7 +41,9 @@ const ERROR_KIND: Record<ScraperErrorKind, string> = {
   forward: 'çalışma alanına aktarım',
 };
 
-const SOURCE_LABEL: Record<string, string> = { kariyer_net: 'Kariyer.net', indeed: 'Indeed' };
+export const EXTENSION_ONLY_NOTE = 'Site sunucudan gelen istekleri bot korumasıyla geri çeviriyor; otomatik tarama yok. İlanlar tarayıcı eklentisiyle, senin açtığın sayfadan aktarılır.';
+
+const SOURCE_LABEL: Record<string, string> = { kariyer_net: 'Kariyer.net', indeed: 'Indeed', eleman_net: 'Eleman.net', isinolsun: 'İşin Olsun', secretcv: 'Secretcv', yenibiris: 'Yenibiriş' };
 
 export const healthOf = (health: ScraperHealth) => HEALTH[health];
 

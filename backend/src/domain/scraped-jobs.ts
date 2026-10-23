@@ -53,6 +53,8 @@ const PART_SEPARATOR = /\s+-\s+|,|\//;
 const PARENTHETICAL = /\s*\([^)]*\)\s*/g;
 const MORE_LOCATIONS = /\s*\+\s*\d+.*$/;
 const TRACKING_PARAM = /^(utm_|fbclid$|gclid$|ref$|from$)/i;
+/** İstanbul'un yaka adı il adına eklenir ("İstanbul Anadolu Yakası - Kadıköy", "İstanbul Avrupa"); il İstanbul'dur. */
+const ISTANBUL_SIDE = /(İstanbul|Istanbul)\s+(Anadolu|Avrupa|Asya)(\s+Yakas[ıi])?/gu;
 
 const clean = (value: string | null | undefined, limit = FIELD_LIMIT) => {
   const text = (value ?? '').replace(/\s+/g, ' ').trim();
@@ -93,12 +95,12 @@ export function workModeOf(text: string | null | undefined): WorkMode | null {
 
 /**
  * Kart konumunu şehir ve ilçeye ayırır: "İstanbul(Avr.)", "İstanbul(Tümü)", "İzmir +81 il daha" → ilk şehir; "İstanbul(Asya) - Kadıköy" → İstanbul, Kadıköy;
- * "Kağıthane" (İstanbul ilçesi) → İstanbul, Kağıthane. Konum aranan şehrin bir parçasıysa şehir adı aranan şehirden gelir.
+ * "Kağıthane" (İstanbul ilçesi) → İstanbul, Kağıthane; "İstanbul Anadolu Yakası - Kadıköy" → İstanbul, Kadıköy. Konum aranan şehrin bir parçasıysa şehir adı aranan şehirden gelir.
  */
 export function splitLocation(location: string | null | undefined, searchedCity: string | null): { city: string | null; district: string | null } {
-  const text = clean(location)?.replace(PARENTHETICAL, ' ').replace(MORE_LOCATIONS, '').replace(/\s+/g, ' ').trim();
+  const text = clean(location)?.replace(ISTANBUL_SIDE, 'İstanbul').replace(PARENTHETICAL, ' ').replace(MORE_LOCATIONS, '').replace(/\s+/g, ' ').trim();
   if (!text) return { city: null, district: null };
-  const parts = text.split(PART_SEPARATOR).map((p) => p.trim()).filter(Boolean);
+  const parts = [...new Map(text.split(PART_SEPARATOR).map((p) => p.trim()).filter(Boolean).map((p) => [fold(p), p])).values()];
   const searched = fold(searchedCity);
   const cityPart = parts.find((p) => searched && fold(p) === searched);
   const detected = detectLocation(text);
@@ -110,10 +112,10 @@ export function splitLocation(location: string | null | undefined, searchedCity:
   return { city: parts[0] ?? null, district: parts[1] ?? null };
 }
 
-/** Kartlardaki göreli tarih ("Bugün", "2 gün", "3 saat önce"): kesin değilse ("30+ gün") tarih üretilmez. */
+/** Kartlardaki göreli tarih ("Bugün", "2 gün", "3 saat önce"): kesin değilse ("30+ gün", "Son 1 Hafta") tarih üretilmez. */
 export function relativeDate(text: string | null | undefined, now: Date): Date | null {
   const f = fold(text);
-  if (!f || /\+/.test(text ?? '')) return null;
+  if (!f || /\+/.test(text ?? '') || /^son\b/.test(f)) return null;
   const startOfDay = (offsetDays: number) => {
     const d = new Date(now.getTime() - offsetDays * DAY_MS);
     d.setUTCHours(0, 0, 0, 0);

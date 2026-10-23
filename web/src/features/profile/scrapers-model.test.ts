@@ -47,5 +47,6 @@ describe('çalışmanın kaynağı', () => {
   it('eklentiden gelen aktarım sunucu taramasından ayrılır', () => {
     expect(runSourceLabel(run({}))).toBe('Kariyer.net');
     expect(runSourceLabel(run({ source: 'indeed', trigger: 'extension' }))).toBe('Indeed (eklenti)');
+    expect(runSourceLabel(run({ source: 'yenibiris', trigger: 'extension' }))).toBe('Yenibiriş (eklenti)');
   });
 });

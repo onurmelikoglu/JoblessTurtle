@@ -4,7 +4,7 @@ import { useSyncExternalStore, type ReactNode } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { api } from '@/api/client';
 import { queryKeys } from '@/api/queries';
-import type { NotificationItem } from '@/api/types';
+import type { NotificationPage } from '@/api/types';
 import { useMe, useSession } from '@/auth/session-context';
 import { LogoMark, Wordmark } from '@/brand/Logo';
 import { cn } from '@/lib/cn';
@@ -24,8 +24,8 @@ function Header() {
   const { logout } = useSession();
   const navigate = useNavigate();
   const { choice, setChoice } = useTheme();
-  const unread = useQuery({ queryKey: [...queryKeys.notifications, 'unread'], queryFn: () => api.get<NotificationItem[]>('/v1/notifications', { unread: true }), refetchInterval: UNREAD_POLL_MS });
-  const unreadCount = unread.data?.length ?? 0;
+  const unread = useQuery({ queryKey: [...queryKeys.notifications, 'unread'], queryFn: () => api.get<NotificationPage>('/v1/notifications', { unread: true, limit: 1 }), refetchInterval: UNREAD_POLL_MS });
+  const unreadCount = unread.data?.unread ?? 0;
   const initial = me.user.displayName.trim().charAt(0).toLocaleUpperCase('tr') || '?';
 
   return (

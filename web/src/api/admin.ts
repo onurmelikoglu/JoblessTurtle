@@ -1,5 +1,5 @@
 import { api } from './client';
-import type { AdminUser, AiStatus, AiUsage, Invite, LearningOverview, LetterStyle, ModelSettings, ScraperConfig, ScraperHistoryPage, ScraperRunRequest, ScraperRunResponse, ScraperStatus, ServerSettings } from './types';
+import type { AdminUser, AiRouting, AiStatus, AiUsage, Invite, LearningOverview, LetterStyle, ModelSettings, ScraperConfig, ScraperHistoryPage, ScraperRunRequest, ScraperRunResponse, ScraperStatus, ServerSettings } from './types';
 
 export interface PasswordReset {
   email: string;
@@ -28,6 +28,7 @@ export const adminApi = {
   aiStatus: () => api.get<AiStatus>('/v1/ai/status'),
   updateAiSettings: (patch: AiSettingsPatch) => api.patch<AiSettingsResult>('/v1/ai/settings', patch),
   aiUsage: () => api.get<AiUsage>('/v1/admin/ai-usage'),
+  updateAiRouting: (patch: { providers?: Record<string, string>; models?: ModelSettings }) => api.patch<AiRouting>('/v1/ai/routing', patch),
 
   learning: () => api.get<LearningOverview>('/v1/admin/learning'),
   trainModels: () => api.post<LearningOverview>('/v1/admin/learning/train'),

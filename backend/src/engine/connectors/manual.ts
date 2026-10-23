@@ -43,4 +43,8 @@ export const manualConnectors: Connector[] = [
   // İlan sitelerinin herkese açık arama sayfalarının taraması (engine/scraper.service.ts); toplama worker'ın tarama kuyruğunda yapılır.
   manualConnector(WORKSPACE_SOURCE_KIND.kariyer_net, 'Kariyer.net taraması', { applyChannel: 'ats_form', aggregator: true }),
   manualConnector(WORKSPACE_SOURCE_KIND.indeed, 'Indeed taraması', { applyChannel: 'ats_form', aggregator: true }),
+  manualConnector(WORKSPACE_SOURCE_KIND.eleman_net, 'Eleman.net taraması', { applyChannel: 'ats_form', aggregator: true }),
+  manualConnector(WORKSPACE_SOURCE_KIND.isinolsun, 'İşin Olsun taraması', { applyChannel: 'ats_form', aggregator: true }),
+  manualConnector(WORKSPACE_SOURCE_KIND.secretcv, 'Secretcv taraması', { applyChannel: 'ats_form', aggregator: true }),
+  manualConnector(WORKSPACE_SOURCE_KIND.yenibiris, 'Yenibiriş (tarayıcı eklentisi)', { applyChannel: 'ats_form', aggregator: true }),
 ];

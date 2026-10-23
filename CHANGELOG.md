@@ -2,6 +2,67 @@
 
 ## Yayımlanmamış (dev)
 
+### Tek komutla kurulum ve hazır imajlar
+
+- **`install.sh`.** `curl -fsSL https://raw.githubusercontent.com/onurmelikoglu/JoblessTurtle/main/install.sh | bash` ya da klasörde `./install.sh`. Docker'ı kontrol eder, `.env`'i gizli anahtarları rastgele üreterek oluşturur (var olan `.env`'e dokunmaz), boş port seçer, hazır imajları indirir (indirilemezse yerelde derler), başlatır ve tarayıcıda açar. `update`, `status`, `stop` komutları; `JT_PORT`, `JT_DIR`, `JT_BUILD`, `JT_NO_OPEN`, `JT_YES` ayarları.
+- **Hazır imajlar.** `.github/workflows/release-images.yml` herkese açık depoda `main`'e her gönderimde `ghcr.io/onurmelikoglu/jobless-turtle-backend` (Claude/Codex CLI dahil) ve `-web` imajlarını amd64 + arm64 için yayınlar.
+- **Compose.** İmaj adları `BACKEND_IMAGE` / `WEB_IMAGE` ile seçilir; tanımsızsa eski yerel etiketler kullanılır (mevcut kurulumlar etkilenmez).
+
+### Terminalsiz kurulum: butonla hesap bağlama, API anahtarı, eklenti indirme ve Kurulum ekranı
+
+- **Kurulum ekranı (`/setup`).** İlk girişte sihirbazdan sonra açılır; Profilim'in başındaki **Kurulum** özetinden de ulaşılır. Adımlar ve durumları (Tamam / Eksik / İsteğe bağlı): profil ve CV, yapay zekâ bağlantısı, gönderim maili, tarayıcı eklentisi; her adımın işlemi yerinde. Ana sayfadaki mail uyarısının yerini, eksik zorunlu adımları sayan tek bir "Kurulumu tamamla" uyarısı aldı.
+- **Claude ve ChatGPT hesabını butonla bağlama (yönetici).** **Claude'u bağla**: giriş sayfası açılır, sayfanın verdiği kod uygulamaya yapıştırılır. **ChatGPT'yi bağla**: tek kullanımlık cihaz kodu gösterilir (yalnızca kendi başlattığın girişte girilmesi uyarısıyla), onay verilince ekran kendiliğinden güncellenir. 15 dakika zaman aşımı, aynı anda tek giriş, Vazgeç ve **Bağlantıyı kes**. Komutlar API konteynerinde çalışır; giriş bilgileri worker ile ortak `ai-cli-home` volume'üne yazılır (compose'da api servisine bağlandı). Kod ve token veritabanına ya da loglara yazılmaz; hata metninde adresler ve belirteç benzeri dizgiler gizlenir. Bağlantı değişince worker sağlayıcı listesini en geç 30 sn'de tazeler (`ai:providers-changed`).
+- **Claude bağlantı durumu.** Claude CLI artık yalnızca kurulu olduğu için değil, `claude auth status` girişli dediğinde kullanılabilir sayılır.
+- **API anahtarı.** Anthropic / OpenAI anahtarı arayüzden girilir, `APP_ENCRYPTION_KEY` ile şifreli saklanır (`ai:api-keys`), yalnızca son 4 karakteri gösterilir. Girilen anahtar, CLI'nin kullanılabildiği çalışma alanlarında varsayılan sıraya aboneliklerden sonra eklenir. `.env`'deki `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` yedek kalır ve eskisi gibi kendiliğinden sıraya girmez.
+- **Kopyala-yapıştır seçimi.** Hesap bağlamadan "Kopyala-yapıştır ile devam et" yapay zekâ adımını tamamlar (çalışma alanı ayarı, geri alınabilir).
+- **Tarayıcı eklentisi 1.4.0.** Web imajı eklentiyi `/downloads/jobless-turtle-extension.zip` olarak sunar (**Eklentiyi indir**). **Eşleştirme kodunu kopyala** tek dizgide adres ve anahtarı verir (`jt1.` + base64url JSON); eklenti ayarlarında tek alana yapıştırılır (adres ve anahtar alanları da çalışır), kaydederken adres izni istenir ve uygulama köprüsü kaydedilir. Uygulama eşleşmiş eklentiyi algılar (`data-jt-extension`) ve eski sürümde güncelleme önerir. İlk kurulumda ayarlar kendiliğinden açılır. Chrome Web Mağazası metni ve paketleme notu: `browser-extension/CHROME-WEB-STORE.md`.
+- **API.** Yeni: `GET /api/v1/ai/setup`, `POST /api/v1/ai/setup/manual`; yönetici: `GET /api/v1/ai/connect`, `POST /api/v1/ai/connect/{cli_claude|cli_codex}/login`, `POST …/code`, `DELETE …/login`, `POST …/logout`, `GET /api/v1/ai/api-keys`, `PUT|DELETE /api/v1/ai/api-keys/{anthropic_api|openai_api}`.
+- **Geçiş.** Veritabanı değişikliği yok. API, worker ve web birlikte güncellenir; api servisine `ai-cli-home` volume'ü bağlandığı için api de yeniden oluşturulur. Eklentiyi `chrome://extensions` sayfasında yenile.
+
+### Yapay zekâ: görev türüne göre sağlayıcı ve model seçimi (bütün kullanıcılar)
+
+- **Sağlayıcı seçimi.** Profilim › AI kullanımı ve modeller'de her görev türü için "Kullanılacak: Otomatik / Claude / ChatGPT" seçilir. Seçilen sağlayıcı önce denenir; limit ya da hata verirse diğeri devralır.
+- **Model seçimi.** Modeller elle yazılmaz, listeden seçilir: Claude için Haiku / Sonnet / Opus; ChatGPT için hesabın kullanabildiği modeller (worker, Codex CLI'nin model önbelleğinden okur ve on dakikada bir günceller). Listede olmayan bir model kaydedilemez.
+- **Herkese uygulanır.** Ayar sunucu genelidir (`server:ai-routing`), yalnızca yönetici değiştirir (`PATCH /api/v1/ai/routing`) ve davetlilerin çalışma alanlarında da geçerlidir (önceden modeller yalnızca yöneticinin çalışma alanına uygulanıyordu). İlk açılışta yöneticinin mevcut model ayarı kullanılır.
+- **Geçiş.** Veritabanı değişikliği yok.
+
+### Bildirimler: arama, tarih-saat filtresi, geçmişi temizleme
+
+- **Arama.** Bildirimler sayfasının üstünde arama kutusu: yazdıkça (300 ms gecikmeyle) başlıkta ve içerikte arar; büyük/küçük harf ve Türkçe harf farkı gözetilmez ("basvuru" → "Başvuru", "MAVİ" → "Mavi"). Birden çok sözcük yazılırsa hepsi geçmelidir.
+- **Tarih-saat aralığı.** Başlangıç / bitiş alanları ve hazır aralıklar (Son 1 saat, Bugün, Son 24 saat, Son 7 gün), "Yalnızca okunmamışlar", sonuç sayısı ve "Filtreyi temizle". Liste 30'ar kayıt yüklenir, "Daha fazla göster" ile devam eder.
+- **Geçmişi temizle.** Tarayıcı geçmişi gibi: Son 1 saat, Son 24 saat, Son 1 hafta, Tümü. Onay penceresi silinecek kapsamı söyler; silmeden sonra toast, liste ve üst menüdeki okunmamış sayacı yenilenir. Satırdaki × ile tek bildirim de silinir. Yalnızca kullanıcının bu çalışma alanındaki uygulama içi bildirimleri silinir; Telegram teslim kayıtlarına dokunulmaz.
+- **API.** `GET /api/v1/notifications` artık `q`, `from`, `to` (ISO 8601; 30 gün sınırı korunur), `unread`, `limit` (en çok 100, varsayılan 50), `cursor` alır ve `{ items, total, unread, next_cursor }` döndürür (önceden düz dizi, en çok 100 kayıt). Yeni: `DELETE /api/v1/notifications?range=1h|24h|7d|all` ve `DELETE /api/v1/notifications/{id}` → `{ deleted }`.
+- **Geçiş.** Veritabanı değişikliği yok. Yanıt biçimi değiştiği için API ve web birlikte güncellenir.
+
+### Eklenti: aramayı başlatan hesaba aktarım, en az sayıda arama
+
+- **Hangi hesaba?** Eklenti aktarımı artık aramayı uygulamada başlatan hesabın çalışma alanına gider (önceden her zaman anahtar sahibine). Uygulamanın verdiği arama adresleri `#jt-import=<etiket>` ekiyle gelir; etiket çalışma alanını şifreli taşır, sunucu doğrular (bozuk etiket `400`). Etiketsiz aktarım anahtar sahibine gider. Çalışma kaydına hedef çalışma alanı yazılır (`ScraperRun.targetWorkspaceId`).
+- **En az arama.** "… ara" düğmeleri pozisyon × şehir seçtirmez: Kariyer.net'te bütün şehirler tek aramada (`?ct=34,82,41&kw=…`), Indeed'de pozisyonlar VEYA ile (`"a" or "b"`, şehir başına), Eleman.net ve Secretcv'de pozisyon başına ülke geneli arama; İşin Olsun ve Yenibiriş birleşik aramayı desteklemediği için pozisyon × şehir. Tek arama doğrudan açılır, menü yalnızca birden çok arama gerekiyorsa çıkar. "Hepsini aç" en çok 20 sekme.
+- **Bildirim.** "N ilan aktarıldı, M'i profile uyuyor".
+- **Eklenti 1.3.0.** `chrome://extensions` sayfasında yenile.
+- **Geçiş.** `ScraperRun` tablosuna `targetWorkspaceId` kolonu (`20261023150000_scraper_run_target`, yalnız ekleme).
+
+### Yeni ilan siteleri: Eleman.net, İşin Olsun, Secretcv, Yenibiriş
+
+- **Sunucu taraması.** Eleman.net ve İşin Olsun üyeliksiz arama sayfalarıyla 4 saatte bir taranır (robots.txt izin veriyor, sunucudan erişim açık; anahtar kelime sitenin aramasında). Secretcv'de robots.txt arama ve sayfalamayı yasakladığı için yalnızca şehir sayfasının ilk sayfası okunur, anahtar kelimeler yerelde süzülür. Yenibiriş sunucudan gelen her isteği Cloudflare ile geri çevirdiği için sunucu taraması yoktur ve ayardan açılamaz.
+- **Eklenti 1.2.0.** Dört site de eklentiyle aktarılır (arama, sonraki sayfalar ve sitenin kendi sayfa geçişleri dahil); Firmalar'da her site için "… ara" düğmesi, "Hepsini aç" siteleri sırayla döner. Sayfa değişimi artık tüm kartlara bakılarak anlaşılır (sabit sponsorlu kartlı sitelerde otomatik aktarım takılmaz). `chrome://extensions` sayfasında eklentiyi bir kez yenilemek gerekir.
+- **Konum.** "İstanbul Anadolu Yakası - Kadıköy", "İstanbul Avrupa" gibi yaka adları il adına iner; tekrar eden konum parçaları birleşir. "Son 1 Hafta" gibi aralıklardan yayın tarihi üretilmez.
+- **Yönetici bölümü.** Yeni siteler İlan siteleri taraması bölümünde görünür; yalnızca eklentili site "Yalnızca eklenti" olarak işaretlenir. Youthall eklenmedi (staj ve yeni mezun platformu).
+- **Geçiş.** Veritabanı değişikliği yok; kayıtlı tarama ayarı yeni sitelerin varsayılanlarıyla tamamlanır. Ayrıntı: [docs/SCRAPERS.md](docs/SCRAPERS.md).
+
+### Eklenti: bütün pozisyonlar ve "Hepsini aç"
+
+- **Bütün pozisyonlar.** Eklenti aramaları profildeki aranan pozisyonların hepsini kapsar (önceden ilk ikisi; şimdi en çok 8).
+- **Hepsini aç.** Firmalar'da "Hepsini aç (N sekme)" düğmesi bütün pozisyon × şehir aramalarını (iki site, en çok 12) ayrı sekmelerde açar; her sekmedeki sonuçlar kendiliğinden aktarılır. Tarayıcının açılır pencere engelleyicisine takılmamak için sekmeleri eklenti açar; eklenti yalnızca kayıtlı uygulama adresinden gelen ve Kariyer.net / Indeed arama sonuç sayfası olan adresleri açar. Eklenti yoksa yalnızca ilk arama açılır.
+- **Eklentiyi yenile.** Eklenti 1.1.0: yeni `scripting` izni; `chrome://extensions` sayfasında yenile düğmesine bir kez basmak gerekir.
+
+### Eklenti: Kariyer.net'te unvanla arama, tekrar aktarım koruması
+
+- **Neden.** İlk kullanımda "Kariyer.net'te ara" genel şehir sayfasını açıyordu; sayfadaki ilanların hiçbiri profildeki unvanlara uymadığı için listeye ilan düşmedi. Aynı sayfa birkaç saniye içinde üç kez aktarıldı.
+- **Unvanla arama.** "Kariyer.net'te ara" artık profilin unvanı × şehir için anahtar kelimeli aramayı açar (`/is-ilanlari/<şehir>?kw=<unvan>`). Bu adres sunucudan doğrulamaya takılıyor, kullanıcının tarayıcısında açılıyor. Okuma betiği bu aramanın sonraki sayfalarını (`&cp=N`) tanır.
+- **Tekrar koruması.** Aynı kullanıcının aynı sayfayı aynı kartlarla 2 dakika içinde yeniden göndermesi yeni çalışma açmaz, önceki sonuç döner.
+- **Eklentiyi yenile.** `chrome://extensions` sayfasında eklentinin yenile düğmesine bir kez basmak gerekir (okuma dosyası değişti).
+
 ### Tarayıcı eklentisi: açtığın Kariyer.net / Indeed sayfasını aktar
 
 - **Neden.** İki site de sunucudan gelen istekleri bot korumasıyla engelliyor (PerimeterX, Cloudflare); iş alarmı kurmadan ilanları hızlıca almak için kullanıcının kendi tarayıcısında baktığı sayfa okunur.

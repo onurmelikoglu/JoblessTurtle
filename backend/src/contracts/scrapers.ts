@@ -50,6 +50,8 @@ export interface ScraperSourceStatus {
   source: ScraperSource;
   label: string;
   enabled: boolean;
+  /** false: site sunucudan gelen istekleri engelliyor; ilanlar yalnızca tarayıcı eklentisiyle aktarılır. */
+  server_scraping: boolean;
   interval_hours: number;
   max_pages: number;
   keyword_mode: 'query' | 'local_filter';
@@ -134,13 +136,16 @@ export interface ScraperImportRequest {
   url: string;
   /** Okuma betiğinin döndürdüğü "JT_PAGE " sonrası JSON. */
   payload: unknown;
+  /** Aramanın açıldığı adresteki "#jt-import=<etiket>" etiketi: aktarım o çalışma alanına gider; yoksa anahtar sahibine. */
+  target?: string | null;
 }
 
+/** Tarayıcıda açılacak arama: kapsadığı şehirler (boş: ülke geneli, şehir aktarımda süzülür) ve pozisyonlar. */
 export interface ExtensionSearch {
   source: ScraperSource;
   label: string;
-  city: string;
-  keyword: string | null;
+  cities: string[];
+  keywords: string[];
   url: string;
 }
 

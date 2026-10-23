@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { isRejection, normalizeCard } from '../../src/domain/scraped-jobs';
-import { searchTargetsOf } from '../../src/domain/scraper-config';
+import { SCRAPER_SOURCES, searchTargetsOf } from '../../src/domain/scraper-config';
 import { EXTRACTORS_PATH, renderExtractors } from '../../src/engine/scrapers/extension-extractors';
 import { IndeedScraper } from '../../src/engine/scrapers/indeed.scraper';
 import { KariyerNetScraper } from '../../src/engine/scrapers/kariyer-net.scraper';
@@ -90,21 +90,21 @@ describe('eklentinin gönderdiği adres', () => {
   const search = (scraper: KariyerNetScraper | IndeedScraper, url: string) => scraper.searchOfPage(new URL(url));
 
   it('Kariyer.net: şehir, sayfa numarası, ilçe ve pozisyon sayfaları; şehir yoldan okunur', () => {
-    expect(search(kariyer, 'https://www.kariyer.net/is-ilanlari/istanbul')).toEqual({ city: 'İstanbul', keyword: null });
-    expect(search(kariyer, 'https://www.kariyer.net/is-ilanlari/kahramanmaras-3')).toEqual({ city: 'Kahramanmaraş', keyword: null });
-    expect(search(kariyer, 'https://www.kariyer.net/is-ilanlari/istanbul+asya-kadikoy?kw=flutter')).toEqual({ city: 'İstanbul', keyword: 'flutter' });
-    expect(search(kariyer, 'https://www.kariyer.net/is-ilanlari/flutter-developer')).toEqual({ city: null, keyword: null });
+    expect(search(kariyer, 'https://www.kariyer.net/is-ilanlari/istanbul')).toEqual({ cities: ['İstanbul'], keyword: null });
+    expect(search(kariyer, 'https://www.kariyer.net/is-ilanlari/kahramanmaras-3')).toEqual({ cities: ['Kahramanmaraş'], keyword: null });
+    expect(search(kariyer, 'https://www.kariyer.net/is-ilanlari/istanbul+asya-kadikoy?kw=flutter')).toEqual({ cities: ['İstanbul'], keyword: 'flutter' });
+    expect(search(kariyer, 'https://www.kariyer.net/is-ilanlari/flutter-developer')).toEqual({ cities: [], keyword: null });
   });
 
   it('Kariyer.net: başka host, ilan ayrıntısı ve başka yollar reddedilir', () => {
-    for (const url of ['https://kariyer.net/is-ilanlari/istanbul', 'https://www.kariyer.net.example.test/is-ilanlari/istanbul', 'http://www.kariyer.net/is-ilanlari/istanbul', 'https://www.kariyer.net/is-ilani/ilan-4500102', 'https://www.kariyer.net/is-ilanlari/', 'https://www.kariyer.net/is-ilanlari/istanbul/ilan'])
+    for (const url of ['https://kariyer.net/is-ilanlari/istanbul', 'https://www.kariyer.net.example.test/is-ilanlari/istanbul', 'http://www.kariyer.net/is-ilanlari/istanbul', 'https://www.kariyer.net/is-ilani/ilan-4500102', 'https://www.kariyer.net/is-ilanlari/istanbul/ilan', 'https://www.kariyer.net/is-ilanlarim'])
       expect(search(kariyer, url)).toBeNull();
   });
 
   it('Indeed: şehir "l", anahtar kelime "q"; başka yol ya da host reddedilir', () => {
-    expect(search(indeed, INDEED_URL)).toEqual({ city: 'İstanbul', keyword: 'flutter' });
-    expect(search(indeed, 'https://tr.indeed.com/jobs?q=&l=%C4%B0stanbul%2C+Kad%C4%B1k%C3%B6y&start=10')).toEqual({ city: 'İstanbul', keyword: null });
-    expect(search(indeed, 'https://tr.indeed.com/jobs?q=flutter')).toEqual({ city: null, keyword: 'flutter' });
+    expect(search(indeed, INDEED_URL)).toEqual({ cities: ['İstanbul'], keyword: 'flutter' });
+    expect(search(indeed, 'https://tr.indeed.com/jobs?q=&l=%C4%B0stanbul%2C+Kad%C4%B1k%C3%B6y&start=10')).toEqual({ cities: ['İstanbul'], keyword: null });
+    expect(search(indeed, 'https://tr.indeed.com/jobs?q=flutter')).toEqual({ cities: [], keyword: 'flutter' });
     for (const url of ['https://tr.indeed.com/viewjob?jk=0a1b2c3d4e5f6a7b', 'https://www.indeed.com/jobs?q=flutter', 'https://tr.indeed.com.example.test/jobs?q=flutter'])
       expect(search(indeed, url)).toBeNull();
   });
@@ -119,7 +119,7 @@ describe('eklentinin okuma dosyası', () => {
   it('her site için betik, köken ve arama sayfası yolu taşır; betik siteye istek atmaz ya da gezinmez', () => {
     const scope: { JT_EXTRACTORS?: Record<string, { origin: string; path: RegExp; read: () => string }> } = {};
     new Function('globalThis', renderExtractors())(scope);
-    expect(Object.keys(scope.JT_EXTRACTORS ?? {})).toEqual(['kariyer_net', 'indeed']);
+    expect(Object.keys(scope.JT_EXTRACTORS ?? {})).toEqual([...SCRAPER_SOURCES]);
     expect(scope.JT_EXTRACTORS?.kariyer_net.path.test('/is-ilanlari/istanbul-2')).toBe(true);
     expect(scope.JT_EXTRACTORS?.indeed.path.test('/jobs')).toBe(true);
     expect(scope.JT_EXTRACTORS?.indeed.path.test('/viewjob')).toBe(false);
@@ -128,7 +128,7 @@ describe('eklentinin okuma dosyası', () => {
 });
 
 describe('eklenti aramaları', () => {
-  it('profillerin ilk iki unvanı ve şehir seçimindeki iller; tekrarlar elenir', () => {
+  it('profillerin aranan pozisyonlarının hepsi ve şehir seçimindeki iller; tekrarlar elenir', () => {
     expect(
       searchTargetsOf(
         [
@@ -137,7 +137,9 @@ describe('eklenti aramaları', () => {
         ],
         ['Ankara'],
       ),
-    ).toEqual({ titles: ['Flutter Developer', 'Mobile Developer'], cities: ['İstanbul', 'Kocaeli'] });
+    ).toEqual({ titles: ['Flutter Developer', 'Mobile Developer', 'iOS Developer'], cities: ['İstanbul', 'Kocaeli'] });
+    const many = Array.from({ length: 12 }, (_, i) => `Pozisyon ${i + 1}`);
+    expect(searchTargetsOf([{ titles: many, city: 'Ankara' }], []).titles).toEqual(many.slice(0, 8));
   });
 
   it('profilde şehir yoksa tarama ayarındaki şehirler; unvan yoksa boş', () => {

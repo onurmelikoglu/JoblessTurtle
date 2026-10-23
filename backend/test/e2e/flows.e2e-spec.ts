@@ -83,7 +83,7 @@ describe('tekil gönderim, idempotency ve tekrar engeli', () => {
     const app = (await h.http().get(`/api/v1/applications/${res.body.applicationId}`).set(u.auth).expect(200)).body;
     expect(app.attempt.state).toBe('provider_accepted');
     expect(app.attempt.providerMessageId).toMatch(/^fake-/);
-    const notes = (await h.http().get('/api/v1/notifications').set(u.auth).expect(200)).body;
+    const notes = (await h.http().get('/api/v1/notifications').set(u.auth).expect(200)).body.items;
     expect(notes.find((n: any) => n.type === 'send_accepted').body).toMatch(/garanti/);
 
     // Aynı anahtar + aynı içerik → aynı başvuru; farklı içerik → 409

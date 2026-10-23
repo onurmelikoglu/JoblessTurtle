@@ -24,6 +24,9 @@ async function keyOf(u: User): Promise<string> {
   return res.body.key as string;
 }
 
+/** Kısa süreli tekrar koruması süreç belleğindedir; testler arası ve "pencere geçti" senaryosu için boşaltılır. */
+const forgetRecentImports = () => (scraper as unknown as { recentImports: Map<string, unknown> }).recentImports.clear();
+
 function send(key: string | null, body: Record<string, unknown>) {
   const req = h.http().post('/api/v1/scrapers/import');
   return (key === null ? req : req.set('X-Import-Token', key)).send(body);
@@ -47,6 +50,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   jest.spyOn(h.app.get(AiService), 'run').mockResolvedValue({ status: 'unavailable', taskId: null, provider: null } as never);
+  forgetRecentImports();
   await h.prisma.scraperRun.deleteMany();
   await h.prisma.scrapedJob.deleteMany();
   await h.prisma.extensionKey.deleteMany();
@@ -153,10 +157,22 @@ describe('sayfa aktarımı: kayıt, tekilleştirme ve profile aktarım', () => {
     expect(note?.title).toBe('Kariyer.net (tarayıcı eklentisi): 1 yeni ilan eklendi');
   });
 
-  it('aynı sayfa yeniden aktarılınca yeni kayıt açılmaz; başka kullanıcının aktarımı onun profiline eklenir', async () => {
+  it('aynı sayfa hemen yeniden gönderilirse yeni çalışma açılmaz, önceki sonuç döner', async () => {
+    const memberKey = await keyOf(member);
+    const body = { source: 'kariyer_net', url: KARIYER_PAGE, payload: payload('kariyer_net', PAGE) };
+    const first = await send(memberKey, body).expect(200);
+    const repeats = await Promise.all([send(memberKey, body), send(memberKey, { ...body, url: `${KARIYER_PAGE}#jt-import` })]);
+    for (const r of repeats) expect(r.body).toEqual(first.body);
+    expect(await h.prisma.scraperRun.count()).toBe(1);
+    const otherPage = await send(memberKey, { ...body, payload: payload('kariyer_net', PAGE.slice(0, 2)) }).expect(200);
+    expect(otherPage.body.run_id).not.toBe(first.body.run_id);
+  });
+
+  it('aynı sayfa sonra yeniden aktarılınca yeni kayıt açılmaz; başka kullanıcının aktarımı onun profiline eklenir', async () => {
     const memberKey = await keyOf(member);
     const body = { source: 'kariyer_net', url: KARIYER_PAGE, payload: payload('kariyer_net', PAGE) };
     await send(memberKey, body).expect(200);
+    forgetRecentImports();
     const again = await send(memberKey, body).expect(200);
     expect(again.body).toMatchObject({ status: 'imported', listings_found: 3, listings_new: 0, listings_updated: 0, forwarded: 0 });
     expect(await h.prisma.scrapedJob.count()).toBe(3);
@@ -194,12 +210,97 @@ describe('eklenti çalışmaları zamanlamayı etkilemez', () => {
 });
 
 describe('profilden eklenti aramaları', () => {
-  it('Kariyer.net şehir sayfası ve Indeed unvan × şehir, en yeni önce; sonunda #jt-import', async () => {
+  it('her sitede en az sayıda arama (Kariyer.net çok şehirli, Indeed pozisyonlar VEYA ile); sonunda hesabın şifreli etiketi', async () => {
     const res = await h.http().get('/api/v1/scrapers/extension/searches').set(member.auth).expect(200);
-    expect(res.body.searches).toEqual([
-      { source: 'kariyer_net', label: 'Kariyer.net', city: 'İstanbul', keyword: null, url: `${KARIYER}/is-ilanlari/istanbul#jt-import` },
-      { source: 'indeed', label: 'Indeed', city: 'İstanbul', keyword: 'Kreatif Direktör', url: 'https://tr.indeed.com/jobs?q=Kreatif%20Direkt%C3%B6r&l=%C4%B0stanbul&sort=date#jt-import' },
-      { source: 'indeed', label: 'Indeed', city: 'İstanbul', keyword: 'Creative Director', url: 'https://tr.indeed.com/jobs?q=Creative%20Director&l=%C4%B0stanbul&sort=date#jt-import' },
+    const searches = res.body.searches as { source: string; label: string; cities: string[]; keywords: string[]; url: string }[];
+    const tags = new Set(searches.map((s) => s.url.split('#')[1]));
+    expect(tags.size).toBe(1);
+    const [tag] = [...tags];
+    expect(tag).toMatch(/^jt-import=[A-Za-z0-9_-]+$/);
+    expect(tag).not.toContain(workspaceOf(member));
+    expect(searches.map((s) => [s.source, s.cities, s.keywords, s.url.split('#')[0]])).toEqual([
+      ['kariyer_net', ['İstanbul'], ['Kreatif Direktör'], `${KARIYER}/is-ilanlari?ct=34,82&kw=Kreatif%20Direkt%C3%B6r`],
+      ['kariyer_net', ['İstanbul'], ['Creative Director'], `${KARIYER}/is-ilanlari?ct=34,82&kw=Creative%20Director`],
+      ['indeed', ['İstanbul'], ['Kreatif Direktör', 'Creative Director'], 'https://tr.indeed.com/jobs?q=%22Kreatif%20Direkt%C3%B6r%22%20or%20%22Creative%20Director%22&l=%C4%B0stanbul&sort=date'],
+      ['eleman_net', [], ['Kreatif Direktör'], 'https://www.eleman.net/is-ilanlari?aranan=Kreatif+Direkt%C3%B6r'],
+      ['eleman_net', [], ['Creative Director'], 'https://www.eleman.net/is-ilanlari?aranan=Creative+Director'],
+      ['isinolsun', ['İstanbul'], ['Kreatif Direktör'], 'https://isinolsun.com/is-ilanlari?kw=Kreatif+Direkt%C3%B6r&lc=%C4%B0stanbul'],
+      ['isinolsun', ['İstanbul'], ['Creative Director'], 'https://isinolsun.com/is-ilanlari?kw=Creative+Director&lc=%C4%B0stanbul'],
+      ['secretcv', [], ['Kreatif Direktör'], 'https://www.secretcv.com/is-ilanlari/ara-is-ilanlari?k=Kreatif%20Direkt%C3%B6r'],
+      ['secretcv', [], ['Creative Director'], 'https://www.secretcv.com/is-ilanlari/ara-is-ilanlari?k=Creative%20Director'],
+      ['yenibiris', ['İstanbul'], ['Kreatif Direktör'], 'https://www.yenibiris.com/is-ilanlari/istanbul?q=Kreatif+Direkt%C3%B6r'],
+      ['yenibiris', ['İstanbul'], ['Creative Director'], 'https://www.yenibiris.com/is-ilanlari/istanbul?q=Creative+Director'],
     ]);
+  });
+});
+
+describe('aramayı başlatan hesaba aktarım', () => {
+  const tagOf = async (u: User) => {
+    const res = await h.http().get('/api/v1/scrapers/extension/searches').set(u.auth).expect(200);
+    return (res.body.searches[0].url as string).split('#jt-import=')[1];
+  };
+  const page = (id: number) => payload('kariyer_net', [kariyerCard(id, 'Kreatif Direktör', `Hedef Ajans ${id}`)]);
+  const jobsIn = (u: User, id: number) => h.prisma.job.count({ where: { workspaceId: workspaceOf(u), company: { name: `Hedef Ajans ${id}` } } });
+
+  it('A\'nın anahtarıyla B\'nin etiketli aramasından gelen sayfa yalnız B\'ye; etiketsiz sayfa A\'ya gider; geçersiz etiket 400', async () => {
+    const key = await keyOf(admin);
+    const forMember = await send(key, { source: 'kariyer_net', url: `${KARIYER}/is-ilanlari?ct=34,82&kw=kreatif`, payload: page(5300001), target: await tagOf(member) }).expect(200);
+    expect(forMember.body).toMatchObject({ status: 'imported', forwarded: 1 });
+    expect([await jobsIn(member, 5300001), await jobsIn(admin, 5300001)]).toEqual([1, 0]);
+    const run = await h.prisma.scraperRun.findUniqueOrThrow({ where: { id: forMember.body.run_id } });
+    expect(run).toMatchObject({ targetWorkspaceId: workspaceOf(member), cities: ['İstanbul'], keywords: ['kreatif'] });
+    expect(run.requestedById).toBe((await h.prisma.user.findUniqueOrThrow({ where: { email: admin.email } })).id);
+
+    await send(key, { source: 'kariyer_net', url: KARIYER_PAGE, payload: page(5300002) }).expect(200);
+    expect([await jobsIn(member, 5300002), await jobsIn(admin, 5300002)]).toEqual([0, 1]);
+
+    for (const target of ['bozuk', `${(await tagOf(member)).slice(0, 20)}x${(await tagOf(member)).slice(21)}`]) {
+      const res = await send(key, { source: 'kariyer_net', url: KARIYER_PAGE, payload: page(5300003), target }).expect(400);
+      expect(res.body.error.code).toBe('IMPORT_TARGET_INVALID');
+    }
+    expect(await h.prisma.scrapedJob.count({ where: { externalId: '5300003' } })).toBe(0);
+  });
+
+  it('aynı sayfa yeniden aktarılınca hedefte kayıt ve bildirim çoğalmaz; ortak kayıtta görülmüş ilan da hedefe eklenir', async () => {
+    const key = await keyOf(admin);
+    await send(key, { source: 'kariyer_net', url: KARIYER_PAGE, payload: page(5300011) }).expect(200);
+    const tag = await tagOf(member);
+    const first = await send(key, { source: 'kariyer_net', url: `${KARIYER}/is-ilanlari/istanbul-2`, payload: page(5300011), target: tag }).expect(200);
+    expect(first.body).toMatchObject({ listings_new: 0, forwarded: 1 });
+    await h.worker.drain();
+    const notes = () => h.prisma.notification.count({ where: { workspaceId: workspaceOf(member), type: 'new_jobs' } });
+    const before = await notes();
+    const again = await send(key, { source: 'kariyer_net', url: `${KARIYER}/is-ilanlari/istanbul-3`, payload: page(5300011), target: tag }).expect(200);
+    expect(again.body).toMatchObject({ forwarded: 0 });
+    await h.worker.drain();
+    expect(await notes()).toBe(before);
+    expect(await jobsIn(member, 5300011)).toBe(1);
+  });
+});
+
+describe('yeni siteler', () => {
+  it('Yenibiriş (yalnızca eklenti) sayfası aktarılır, profile uyan ilan eklenir; sunucuya istek atılmaz', async () => {
+    const key = await keyOf(member);
+    const cards: Row[] = [
+      ['https://www.yenibiris.com/is-ilani/kreatif-direktor/1300101', 'Kreatif Direktör', 'Midye Ajans', 'İstanbul Anadolu Yakası - Kadıköy', 'Bugün', 'Tam zamanlı|Hibrit'],
+      ['https://www.yenibiris.com/is-ilani/muhasebe-uzmani/1300102', 'Muhasebe Uzmanı', 'Defter Ltd.', 'İstanbul Avrupa Yakası', 'Son 1 Hafta', 'Tam zamanlı|İş Yerinde'],
+    ];
+    const res = await send(key, { source: 'yenibiris', url: 'https://www.yenibiris.com/is-ilanlari/istanbul?q=kreatif', payload: payload('yenibiris', cards) }).expect(200);
+    expect(res.body).toMatchObject({ status: 'imported', listings_found: 2, listings_new: 2, forwarded: 1 });
+    expect(await h.prisma.scraperRun.findUniqueOrThrow({ where: { id: res.body.run_id } })).toMatchObject({ source: 'yenibiris', trigger: 'extension', cities: ['İstanbul'], keywords: ['kreatif'] });
+    expect(await h.prisma.scrapedJob.findFirstOrThrow({ where: { source: 'yenibiris', externalId: '1300101' } })).toMatchObject({ city: 'İstanbul', district: 'Kadıköy', workMode: 'hybrid' });
+    expect(await h.prisma.job.count({ where: { workspaceId: workspaceOf(member), listings: { some: { source: { kind: 'scrape_yenibiris' } } } } })).toBe(1);
+  });
+
+  it('Eleman.net, İşin Olsun ve Secretcv sayfaları kendi adreslerinden aktarılır; başka sitenin adresi reddedilir', async () => {
+    const key = await keyOf(member);
+    const eleman = await send(key, { source: 'eleman_net', url: 'https://www.eleman.net/is-ilanlari/istanbul?sy=2', payload: payload('eleman_net', [['https://www.eleman.net/is-ilani/kreatif-direktor-i4900201', 'Kreatif Direktör', 'Kabuk Ajans', 'İstanbul Avrupa - Şişli', null]]) }).expect(200);
+    expect(eleman.body).toMatchObject({ status: 'imported', listings_new: 1 });
+    const isinolsun = await send(key, { source: 'isinolsun', url: 'https://isinolsun.com/is-ilanlari?kw=kreatif&lc=%C4%B0stanbul', payload: payload('isinolsun', [['https://isinolsun.com/is-ilani/grafik-tasarimci-yosun-0ioj99998888777766665555444433332222', 'Grafik Tasarımcı', 'Yosun Reklam', 'Moda Mah., Kadıköy, İstanbul', 'Tam Zamanlı']]) }).expect(200);
+    expect(isinolsun.body).toMatchObject({ status: 'imported', listings_new: 1 });
+    const secretcv = await send(key, { source: 'secretcv', url: 'https://www.secretcv.com/is-ilanlari/ara-is-ilanlari?k=kreatif', payload: payload('secretcv', [['https://www.secretcv.com/kabuk/art-director-is-ilanlari-1890201', 'Art Director', 'Kabuk Stüdyo', 'İstanbul Avrupa', 'İlan Tarihi: Bugün']]) }).expect(200);
+    expect(secretcv.body).toMatchObject({ status: 'imported', listings_new: 1 });
+    expect(await h.prisma.scrapedJob.findFirstOrThrow({ where: { source: 'isinolsun' } })).toMatchObject({ externalId: '99998888777766665555444433332222', city: 'İstanbul', district: 'Kadıköy' });
+    await send(key, { source: 'secretcv', url: 'https://www.eleman.net/is-ilanlari/istanbul', payload: payload('secretcv', []) }).expect(400);
   });
 });

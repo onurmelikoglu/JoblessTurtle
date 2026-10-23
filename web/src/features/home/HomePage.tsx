@@ -1,9 +1,10 @@
-import { Building2, Inbox, Mail, MailWarning, Send, Sparkles } from 'lucide-react';
+import { Building2, Inbox, MailWarning, Send, Sparkles } from 'lucide-react';
 import { useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { errorText } from '@/api/client';
 import { useApplications, useCompanies, useHomeState, useInbox, useRefreshHome } from '@/api/queries';
 import type { HomeState } from '@/api/types';
+import { SetupNotice } from '@/features/setup/SetupNotice';
 import { SetupWizard } from '@/features/setup/SetupWizard';
 import { LINK_PARAMS, withoutParams } from '@/notification-links';
 import { Button } from '@/ui/Button';
@@ -64,19 +65,7 @@ function Dashboard({ state }: { state: HomeState }) {
   return (
     <div className="flex flex-col gap-4">
       <h1 className="sr-only">Ana sayfa</h1>
-      {state.setup.missing.includes('mail') && (
-        <Notice
-          tone="warn"
-          icon={<Mail className="size-5 shrink-0" aria-hidden />}
-          action={
-            <Link to="/profile" className="font-medium text-brand hover:underline">
-              Mail bağla
-            </Link>
-          }
-        >
-          Başvuru gönderebilmek için mail hesabını bağla.
-        </Notice>
-      )}
+      <SetupNotice setup={state.setup} />
       {waiting.length > 0 && (
         <Notice
           icon={<Sparkles className="size-5 shrink-0" aria-hidden />}

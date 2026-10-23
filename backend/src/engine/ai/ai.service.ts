@@ -1,6 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AiTask, Prisma } from '@prisma/client';
-import { hashObject } from '../../common/crypto';
+import { promises as fs } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
+import { decryptSecret, encryptSecret, hashObject } from '../../common/crypto';
+import type { ApiKeyStatus } from '../../contracts/ai-setup';
+import type { ServerShape } from '../../contracts/wire';
 import { AppError, notFound } from '../../common/errors';
 import { OutboxService } from '../../common/outbox.service';
 import { PrismaService } from '../../common/prisma.service';
@@ -8,7 +13,20 @@ import { UsageService } from '../../common/usage.service';
 import { AI_CLASS_LABELS, AI_CLASSES, AiClass, aiClassOf, budgetBlock, classUsageKey, dailyCeiling, dailyShare, utilizationAllows, utilizationOpensAt, UtilizationWindow } from '../../domain/ai-budget';
 import { currentAiClass, noteAiCall } from './ai-context';
 import { buildPrompt } from './prompts';
-import { PROVIDER_LABELS, ProviderFile, ProviderLimitError, ProviderName, ProviderUsage, TEXT_PROVIDERS, WEB_RESEARCH_KINDS } from './providers';
+import {
+  API_KEY_PROVIDERS,
+  ApiKeyProvider,
+  apiKeySource,
+  PROVIDER_LABELS,
+  ProviderFile,
+  ProviderLimitError,
+  ProviderName,
+  ProviderUsage,
+  resetProviderCache,
+  setStoredApiKeys,
+  TEXT_PROVIDERS,
+  WEB_RESEARCH_KINDS,
+} from './providers';
 import { AiKind, extractJson } from './schemas';
 import { templateOutput } from './template-provider';
 import { validateAiOutput, ValidationContext } from './validate';
@@ -22,10 +40,41 @@ export interface AiSettings {
   /** Günlük keşifte profil başına önerilecek en fazla firma. */
   discoveryLimit?: number;
   models?: ModelSettings;
+  /** Görev türüne göre önce denenecek sağlayıcı (sunucu geneli yönlendirme); yoksa otomatik sıra. */
+  kindProviders?: KindProviders;
+  /** Kurulumda gerçek sağlayıcı yerine kopyala-yapıştır köprüsüyle devam etmek seçildi. */
+  manualAccepted?: boolean;
 }
 
 export type ModelProvider = 'cli_claude' | 'cli_codex';
 export type ModelSettings = Partial<Record<ModelProvider, Partial<Record<AiKind | 'default', string>>>>;
+export type KindProviders = Partial<Record<AiKind, ModelProvider>>;
+
+/**
+ * Sunucu geneli yapay zekâ yönlendirmesi: görev türüne göre hangi sağlayıcının önce deneneceği ve sağlayıcı başına
+ * modeller. Yalnızca yönetici değiştirir; bütün çalışma alanlarına uygulanır.
+ */
+export interface AiRouting {
+  providers: KindProviders;
+  models: ModelSettings;
+}
+
+export const AI_ROUTING_KEY = 'server:ai-routing';
+/** Worker'ın Codex CLI önbelleğinden okuduğu, hesabın kullanabildiği ChatGPT modelleri. */
+export const CODEX_MODELS_KEY = 'ai:codex-models';
+
+export interface ModelOption {
+  value: string;
+  label: string;
+  description?: string;
+}
+
+/** Claude Code CLI model takma adları; CLI bunları güncel sürüme çevirir. */
+export const CLAUDE_MODEL_OPTIONS: ModelOption[] = [
+  { value: 'haiku', label: 'Haiku', description: 'Hızlı ve ucuz; kısa, kurallı işler' },
+  { value: 'sonnet', label: 'Sonnet', description: 'Dengeli; çoğu iş için varsayılan' },
+  { value: 'opus', label: 'Opus', description: 'En güçlü; yavaş ve kotayı çabuk tüketir' },
+];
 
 const LIGHT_KINDS: AiKind[] = ['cv_facts', 'title_expansion', 'title_analysis', 'company_sizes', 'reply_classification', 'inbound_review', 'job_alert'];
 
@@ -37,8 +86,12 @@ export const DEFAULT_MODELS: Record<ModelProvider, Partial<Record<AiKind | 'defa
 /** Bu görevlerde sağlayıcı sırasından bağımsız olarak önce denenen sağlayıcılar: adres araması Claude ile (Sonnet toplar, Opus doğrular); Claude yoksa ChatGPT yedektir. */
 const PREFERRED_PROVIDERS: Partial<Record<AiKind, ProviderName[]>> = { company_contacts: ['cli_claude', 'cli_codex'], contact_review: ['cli_claude'] };
 
-export function providerOrderFor(kind: AiKind, order: ProviderName[]): ProviderName[] {
-  const preferred = (PREFERRED_PROVIDERS[kind] ?? []).filter((p) => order.includes(p));
+/**
+ * Görevin sağlayıcı sırası: yöneticinin bu görev için seçtiği sağlayıcı önce, sonra görevin tercih edilenleri, sonra genel
+ * sıra. Seçilen sağlayıcı limit ya da hata verirse sıradaki yedek olarak devralır.
+ */
+export function providerOrderFor(kind: AiKind, order: ProviderName[], chosen?: ModelProvider): ProviderName[] {
+  const preferred = [...new Set([...(chosen ? [chosen] : []), ...(PREFERRED_PROVIDERS[kind] ?? [])])].filter((p) => order.includes(p));
   return [...preferred, ...order.filter((p) => !preferred.includes(p))];
 }
 
@@ -60,6 +113,18 @@ export function escalationModelFor(provider: string, model: string | undefined):
 const AI_USAGE_KEY = 'ai:tasks';
 /** Worker'ın düzenli durum kaydı; yapay zekâ işleri worker'da çalıştığı için hangi sağlayıcının kurulu olduğu buradan okunur. */
 export const WORKER_HEARTBEAT_KEY = 'worker:heartbeat';
+/** Arayüzden hesap bağlanınca, çıkılınca ya da API anahtarı değişince yazılır; worker kurulu sağlayıcı listesini hemen tazeler. */
+export const PROVIDERS_CHANGED_KEY = 'ai:providers-changed';
+/** Arayüzden girilen API anahtarları (AES-256-GCM ile şifreli). */
+export const API_KEYS_KEY = 'ai:api-keys';
+const API_KEYS_SYNC_MS = 30_000;
+
+interface StoredApiKey {
+  secret: string;
+  last4: string;
+  savedAt: string;
+}
+
 const PROVIDER_COOLDOWN_MS = 60 * 60_000;
 export const LIMIT_SWITCH_UTILIZATION = 0.9;
 const limitsKey = (provider: string) => `provider:limits:${provider}`;
@@ -141,6 +206,7 @@ export const DEFAULT_AI_SETTINGS: AiSettings = { providerOrder: ['manual', 'temp
 @Injectable()
 export class AiService {
   private readonly logger = new Logger('AI');
+  private apiKeysSyncedAt = 0;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -149,6 +215,7 @@ export class AiService {
   ) {}
 
   async settings(workspaceId: string): Promise<AiSettings & { ownerIsAdmin: boolean; cliAllowed: boolean; maxDailyTaskLimit: number | null }> {
+    await this.syncApiKeys();
     const ws = await this.prisma.workspace.findUniqueOrThrow({ where: { id: workspaceId } });
     const owner = await this.prisma.user.findUnique({ where: { id: ws.ownerId } });
     const ownerIsAdmin = !!owner?.isAdmin;
@@ -159,11 +226,16 @@ export class AiService {
     if (server) {
       s.dailyTaskLimit = server.inviteeDailyLimit;
       s.discoveryLimit = Math.min(s.discoveryLimit ?? INVITEE_DISCOVERY_LIMIT, INVITEE_DISCOVERY_LIMIT);
-      s.models = undefined;
     }
+    const routing = await this.routing();
+    s.models = routing.models;
+    s.kindProviders = routing.providers;
     const defaultOrders = [DEFAULT_AI_SETTINGS.providerOrder.join(), ['cli_claude', ...DEFAULT_AI_SETTINGS.providerOrder].join()];
     const usesDefaultOrder = !stored.providerOrder || defaultOrders.includes(stored.providerOrder.join());
-    if (usesDefaultOrder && cliAllowed) s.providerOrder = ['cli_claude', 'cli_codex', ...DEFAULT_AI_SETTINGS.providerOrder];
+    // Arayüzden girilen API anahtarı, yönetici CLI'yı paylaştığı çalışma alanlarında varsayılan sıraya CLI'lardan sonra
+    // girer. .env'deki anahtar eskisi gibi yalnızca elle sıraya eklenince kullanılır (habersiz ücretli kullanım olmasın).
+    const storedKeyProviders = API_KEY_PROVIDERS.filter((p) => apiKeySource(p) === 'stored');
+    if (usesDefaultOrder && cliAllowed) s.providerOrder = ['cli_claude', 'cli_codex', ...storedKeyProviders, ...DEFAULT_AI_SETTINGS.providerOrder];
     if (!s.providerOrder.includes('template')) s.providerOrder = [...s.providerOrder, 'template'];
     return { ...s, ownerIsAdmin, cliAllowed, maxDailyTaskLimit: server?.inviteeDailyLimit ?? null };
   }
@@ -254,7 +326,76 @@ export class AiService {
     return (await this.classStatus(workspaceId, { local: true })).find((c) => c.aiClass === aiClass)?.open ?? true;
   }
 
+  /**
+   * Kurulum listesindeki yapay zekâ adımı: çalışma alanının sırasındaki gerçek sağlayıcılardan şu an kullanılabilenler.
+   * Hesap bağlama API sürecinde yapıldığı için CLI'ların durumuna da bu süreçte bakılır (worker ile ortak ev klasörü).
+   */
+  async setupStatus(workspaceId: string) {
+    const settings = await this.settings(workspaceId);
+    const usable: ProviderName[] = [];
+    for (const name of this.realProviders(settings)) if ((await TEXT_PROVIDERS[name].available()).ok) usable.push(name);
+    return { ready: usable.length > 0, usable, manualAccepted: settings.manualAccepted === true, cliAllowed: settings.cliAllowed };
+  }
+
+  async markProvidersChanged() {
+    resetProviderCache();
+    const value = { at: new Date().toISOString() };
+    await this.prisma.keyValue.upsert({ where: { key: PROVIDERS_CHANGED_KEY }, create: { key: PROVIDERS_CHANGED_KEY, value }, update: { value } });
+  }
+
+  async providersChangedAt(): Promise<number> {
+    const kv = await this.prisma.keyValue.findUnique({ where: { key: PROVIDERS_CHANGED_KEY } });
+    const at = (kv?.value as { at?: string } | null)?.at;
+    return at ? new Date(at).getTime() : 0;
+  }
+
+  private async storedApiKeys(): Promise<Partial<Record<ApiKeyProvider, StoredApiKey>>> {
+    const kv = await this.prisma.keyValue.findUnique({ where: { key: API_KEYS_KEY } });
+    return (kv?.value ?? {}) as Partial<Record<ApiKeyProvider, StoredApiKey>>;
+  }
+
+  /** Şifreli anahtarlar en çok 30 saniyede bir okunup sağlayıcılara verilir; API'de değiştirilince worker bu sürede görür. */
+  async syncApiKeys(force = false) {
+    if (!force && Date.now() - this.apiKeysSyncedAt < API_KEYS_SYNC_MS) return;
+    this.apiKeysSyncedAt = Date.now();
+    const stored = await this.storedApiKeys();
+    const plain: Partial<Record<ApiKeyProvider, string>> = {};
+    for (const provider of API_KEY_PROVIDERS) {
+      const entry = stored[provider];
+      if (!entry) continue;
+      try {
+        plain[provider] = decryptSecret(entry.secret);
+      } catch {
+        this.logger.warn(`${PROVIDER_LABELS[provider]} anahtarı çözülemedi (APP_ENCRYPTION_KEY değişmiş olabilir); yeniden girilmeli`);
+      }
+    }
+    setStoredApiKeys(plain);
+  }
+
+  async apiKeyStatus(): Promise<Record<ApiKeyProvider, ServerShape<ApiKeyStatus>>> {
+    await this.syncApiKeys(true);
+    const stored = await this.storedApiKeys();
+    const status = (provider: ApiKeyProvider): ServerShape<ApiKeyStatus> => {
+      const source = apiKeySource(provider);
+      return { source, last4: source === 'stored' ? (stored[provider]?.last4 ?? null) : null, savedAt: source === 'stored' && stored[provider] ? new Date(stored[provider].savedAt) : null };
+    };
+    return { anthropic_api: status('anthropic_api'), openai_api: status('openai_api') };
+  }
+
+  async saveApiKey(provider: ApiKeyProvider, key: string | null) {
+    const stored = await this.storedApiKeys();
+    const next = { ...stored };
+    if (key) next[provider] = { secret: encryptSecret(key), last4: key.slice(-4), savedAt: new Date().toISOString() };
+    else delete next[provider];
+    const value = next as unknown as Prisma.InputJsonValue;
+    await this.prisma.keyValue.upsert({ where: { key: API_KEYS_KEY }, create: { key: API_KEYS_KEY, value }, update: { value } });
+    await this.syncApiKeys(true);
+    await this.markProvidersChanged();
+    return this.apiKeyStatus();
+  }
+
   async installedProviders(): Promise<Record<string, boolean>> {
+    await this.syncApiKeys();
     const entries = await Promise.all(Object.entries(TEXT_PROVIDERS).map(async ([name, provider]) => [name, (await provider.available()).ok] as const));
     return Object.fromEntries(entries);
   }
@@ -323,10 +464,73 @@ export class AiService {
       webResearch: patch.webResearch ?? current.webResearch,
       dailyDiscovery: patch.dailyDiscovery ?? current.dailyDiscovery,
       discoveryLimit: patch.discoveryLimit ?? current.discoveryLimit,
-      models: current.ownerIsAdmin ? (patch.models ?? current.models) : undefined,
+      ...((patch.manualAccepted ?? current.manualAccepted) !== undefined ? { manualAccepted: patch.manualAccepted ?? current.manualAccepted } : {}),
     };
     await this.prisma.workspace.update({ where: { id: workspaceId }, data: { aiSettings: next as Prisma.InputJsonValue } });
+    if (patch.models && current.ownerIsAdmin) await this.updateRouting({ models: patch.models });
     return this.providerStatus(workspaceId);
+  }
+
+  /**
+   * Sunucu geneli yönlendirme. Henüz kaydedilmemişse yöneticinin çalışma alanındaki eski model ayarı kullanılır (bu
+   * ayar önceden yalnızca yöneticinin çalışma alanına uygulanıyordu).
+   */
+  async routing(): Promise<AiRouting> {
+    const kv = await this.prisma.keyValue.findUnique({ where: { key: AI_ROUTING_KEY } });
+    if (kv) {
+      const stored = kv.value as Partial<AiRouting>;
+      return { providers: stored.providers ?? {}, models: stored.models ?? {} };
+    }
+    const admin = await this.prisma.workspace.findFirst({ where: { ownerId: { in: (await this.prisma.user.findMany({ where: { isAdmin: true }, select: { id: true } })).map((u) => u.id) } }, orderBy: { createdAt: 'asc' } });
+    return { providers: {}, models: ((admin?.aiSettings ?? {}) as Partial<AiSettings>).models ?? {} };
+  }
+
+  /** Yalnızca yönetici çağırır (denetim API katmanında). Gönderilen alanlar mevcut yönlendirmenin üzerine yazılır. */
+  async updateRouting(patch: Partial<AiRouting>): Promise<AiRouting> {
+    const current = await this.routing();
+    const next: AiRouting = { providers: patch.providers ?? current.providers, models: patch.models ?? current.models };
+    const value = next as unknown as Prisma.InputJsonValue;
+    await this.prisma.keyValue.upsert({ where: { key: AI_ROUTING_KEY }, create: { key: AI_ROUTING_KEY, value }, update: { value } });
+    return next;
+  }
+
+  /** Seçim kutularının seçenekleri: Claude takma adları ve worker'ın bildirdiği ChatGPT modelleri; kayıtlı ama listede olmayan değer de eklenir. */
+  async modelOptions(): Promise<Record<ModelProvider, ModelOption[]>> {
+    const kv = await this.prisma.keyValue.findUnique({ where: { key: CODEX_MODELS_KEY } });
+    const codex = ((kv?.value as { models?: ModelOption[] } | null)?.models ?? []) as ModelOption[];
+    const fallback: ModelOption[] = Object.values(DEFAULT_MODELS.cli_codex)
+      .filter((m): m is string => !!m)
+      .map((value) => ({ value, label: value }));
+    const options: Record<ModelProvider, ModelOption[]> = { cli_claude: [...CLAUDE_MODEL_OPTIONS], cli_codex: codex.length ? codex : fallback };
+    const { models } = await this.routing();
+    for (const provider of Object.keys(options) as ModelProvider[]) {
+      for (const value of Object.values(models[provider] ?? {})) {
+        if (value && !options[provider].some((o) => o.value === value)) options[provider].push({ value, label: value, description: 'Listede yok; sağlayıcı artık sunmuyor olabilir' });
+      }
+    }
+    return options;
+  }
+
+  /**
+   * Worker'da: Codex CLI'nin model önbelleğinden (~/.codex/models_cache.json) hesabın kullanabildiği, listede görünen
+   * modelleri okuyup kaydeder. Dosya yoksa (Codex kurulu değil) bir şey yazmaz.
+   */
+  async refreshCodexModels(): Promise<number> {
+    const file = join(process.env.CODEX_HOME ?? join(homedir(), '.codex'), 'models_cache.json');
+    let raw: string;
+    try {
+      raw = await fs.readFile(file, 'utf8');
+    } catch {
+      return 0;
+    }
+    const parsed = JSON.parse(raw) as { models?: { slug?: string; display_name?: string; description?: string; visibility?: string }[] };
+    const models: ModelOption[] = (parsed.models ?? [])
+      .filter((m) => m.slug && m.visibility !== 'hide')
+      .map((m) => ({ value: m.slug!, label: m.display_name ?? m.slug!, ...(m.description ? { description: m.description } : {}) }));
+    if (!models.length) return 0;
+    const value = { at: new Date().toISOString(), models } as unknown as Prisma.InputJsonValue;
+    await this.prisma.keyValue.upsert({ where: { key: CODEX_MODELS_KEY }, create: { key: CODEX_MODELS_KEY, value }, update: { value } });
+    return models.length;
   }
 
   async run(req: AiRunRequest): Promise<AiRunResult> {
@@ -358,7 +562,7 @@ export class AiService {
       context: { ...(req.context ?? {}), validation, aiClass } as Prisma.InputJsonValue,
     };
 
-    for (const name of providerOrderFor(req.kind, settings.providerOrder)) {
+    for (const name of providerOrderFor(req.kind, settings.providerOrder, settings.kindProviders?.[req.kind])) {
       if (name === 'template') break;
       if (req.onlyProviders && !req.onlyProviders.includes(name)) continue;
       if (name === 'manual') {

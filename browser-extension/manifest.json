@@ -2,17 +2,24 @@
   "manifest_version": 3,
   "name": "Jobless Turtle — ilan aktarıcı",
   "short_name": "Jobless Turtle",
-  "version": "1.0.0",
-  "description": "Kariyer.net ve Indeed'de açtığın arama sonuç sayfasındaki ilanları Jobless Turtle'a aktarır. Siteye kendi başına istek atmaz.",
+  "version": "1.4.0",
+  "description": "Kariyer.net, Indeed, Eleman.net, İşin Olsun, Secretcv ve Yenibiriş'te açtığın arama sonuç sayfasındaki ilanları Jobless Turtle'a aktarır. Siteye kendi başına istek atmaz.",
   "icons": { "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
   "action": { "default_title": "Jobless Turtle ayarları", "default_icon": { "32": "icons/icon-32.png" } },
   "options_ui": { "page": "options.html", "open_in_tab": true },
   "background": { "service_worker": "background.js" },
-  "permissions": ["storage"],
+  "permissions": ["storage", "scripting"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
   "content_scripts": [
     {
-      "matches": ["https://www.kariyer.net/is-ilanlari/*", "https://tr.indeed.com/jobs*"],
+      "matches": [
+        "https://www.kariyer.net/is-ilanlari*",
+        "https://tr.indeed.com/jobs*",
+        "https://www.eleman.net/is-ilanlari*",
+        "https://isinolsun.com/is-ilanlari*",
+        "https://www.secretcv.com/is-ilanlari*",
+        "https://www.yenibiris.com/is-ilanlari*"
+      ],
       "js": ["extractors.js", "content.js"],
       "run_at": "document_idle"
     }

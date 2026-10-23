@@ -2,7 +2,9 @@ import type { IsoDate } from '@contracts/home';
 
 export type * from '@contracts/home';
 export type * from '@contracts/learning';
+export type * from '@contracts/notifications';
 export type * from '@contracts/scrapers';
+export type * from '@contracts/ai-setup';
 
 export interface AuthStatus {
   needsSetup: boolean;
@@ -13,16 +15,6 @@ export interface Me {
   user: { id: string; email: string; displayName: string; isAdmin: boolean };
   workspace: { id: string; name: string; automationPaused: boolean };
   telegramLinked: boolean;
-}
-
-export interface NotificationItem {
-  id: string;
-  type: string;
-  title: string;
-  body: string | null;
-  link: string | null;
-  readAt: IsoDate | null;
-  createdAt: IsoDate;
 }
 
 export interface AiTaskDetail {
@@ -36,12 +28,28 @@ export interface AiTaskDetail {
 
 export type ModelSettings = Record<string, Record<string, string>>;
 
+export type ModelProviderName = 'cli_claude' | 'cli_codex';
+
+export interface ModelOption {
+  value: string;
+  label: string;
+  description?: string;
+}
+
+/** Sunucu geneli yapay zekâ yönlendirmesi: görev türüne göre önce denenen sağlayıcı ve sağlayıcı başına modeller. */
+export interface AiRouting {
+  providers: Partial<Record<string, ModelProviderName>>;
+  models: ModelSettings;
+}
+
 export interface AiStatus {
   settings: { dailyTaskLimit: number; models?: ModelSettings };
   providers: { name: string; label: string; available: boolean; detail: string }[];
   kindLabels: Record<string, string>;
   defaultModels: ModelSettings;
   cooldowns: Record<string, string | undefined>;
+  routing: AiRouting;
+  modelOptions: Record<ModelProviderName, ModelOption[]>;
 }
 
 export interface AiUsage {

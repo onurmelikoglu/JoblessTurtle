@@ -1,12 +1,15 @@
-import { Body, Controller, Get, Injectable, Module, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Injectable, Module, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { z } from 'zod';
-import { Ctx, RequestContext } from '../../common/auth';
+import { AdminOnly, Ctx, RequestContext } from '../../common/auth';
 import { AppError, notFound } from '../../common/errors';
 import { PrismaService } from '../../common/prisma.service';
 import { ZodPipe } from '../../common/zod.pipe';
-import { AiService, DEFAULT_MODELS, modelFor } from '../../engine/ai/ai.service';
-import { PROVIDER_LABELS, TEXT_PROVIDERS, resetProviderCache } from '../../engine/ai/providers';
+import { AiService, DEFAULT_MODELS, ModelProvider, modelFor } from '../../engine/ai/ai.service';
+import { API_KEY_PROVIDERS, ApiKeyProvider, PROVIDER_LABELS, TEXT_PROVIDERS, resetProviderCache } from '../../engine/ai/providers';
 import { AI_KIND_LABELS } from '../../engine/ai/schemas';
+import type { AiSetupStatus, ConnectProvider } from '../../contracts/ai-setup';
+import type { ServerShape } from '../../contracts/wire';
+import { AiConnectService, CONNECT_PROVIDERS } from './ai-connect.service';
 
 const settingsSchema = z.object({
   providerOrder: z.array(z.enum(['cli_claude', 'cli_codex', 'manual', 'ollama', 'anthropic_api', 'openai_api', 'template'])).optional(),
@@ -17,15 +20,63 @@ const settingsSchema = z.object({
   models: z.record(z.enum(['cli_claude', 'cli_codex']), z.record(z.string(), z.string().max(80))).optional(),
 });
 
+const MODEL_PROVIDERS = ['cli_claude', 'cli_codex'] as const;
+const connectProviderPipe = new ZodPipe(z.enum(CONNECT_PROVIDERS as [ConnectProvider, ...ConnectProvider[]]));
+/** Claude'un giriş sayfasının verdiği kod tek parça olmalı; satır sonu sürecin girişine ikinci bir yanıt yazdırmasın. */
+const loginCodeSchema = z.object({ code: z.string().trim().min(4).max(2000).regex(/^\S+$/, 'Kod boşluk içeremez') });
+const apiKeyProviderPipe = new ZodPipe(z.enum(API_KEY_PROVIDERS as [ApiKeyProvider, ...ApiKeyProvider[]]));
+const apiKeySchema = z.object({ key: z.string().trim().min(20).max(400).regex(/^\S+$/, 'Anahtar boşluk içeremez') });
+const manualSchema = z.object({ accepted: z.boolean() });
+const routingSchema = z.object({
+  providers: z.record(z.string(), z.enum(['auto', ...MODEL_PROVIDERS])).optional(),
+  models: z.record(z.enum(MODEL_PROVIDERS), z.record(z.string(), z.string().max(80))).optional(),
+});
+
 @Injectable()
 export class AiApiService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ai: AiService,
+    private readonly connect: AiConnectService,
   ) {}
 
   async status(ctx: RequestContext) {
-    return { ...(await this.ai.providerStatus(ctx.workspaceId)), kindLabels: AI_KIND_LABELS, defaultModels: DEFAULT_MODELS, cooldowns: await this.ai.cooldowns() };
+    const [providerStatus, routing, modelOptions, cooldowns] = await Promise.all([this.ai.providerStatus(ctx.workspaceId), this.ai.routing(), this.ai.modelOptions(), this.ai.cooldowns()]);
+    return { ...providerStatus, kindLabels: AI_KIND_LABELS, defaultModels: DEFAULT_MODELS, cooldowns, routing, modelOptions };
+  }
+
+  /**
+   * Görev türüne göre sağlayıcı ve modeller (sunucu geneli). Model adı yalnızca seçenek listesinden gelebilir; boş değer
+   * "varsayılan" demektir. "auto" seçilen görevin kaydı silinir.
+   */
+  async updateRouting(body: z.infer<typeof routingSchema>) {
+    const kinds = new Set(Object.keys(AI_KIND_LABELS));
+    const providers = body.providers
+      ? Object.fromEntries(
+          Object.entries(body.providers).filter(([kind, provider]) => {
+            if (!kinds.has(kind)) throw new AppError(400, 'AI_KIND_UNKNOWN', `Bilinmeyen görev türü: ${kind}`);
+            return provider !== 'auto';
+          }),
+        )
+      : undefined;
+    let models = body.models;
+    if (models) {
+      const options = await this.ai.modelOptions();
+      models = Object.fromEntries(
+        Object.entries(models).map(([provider, byKind]) => [
+          provider,
+          Object.fromEntries(
+            Object.entries(byKind).filter(([kind, model]) => {
+              if (kind !== 'default' && !kinds.has(kind)) throw new AppError(400, 'AI_KIND_UNKNOWN', `Bilinmeyen görev türü: ${kind}`);
+              if (model && !options[provider as ModelProvider].some((o) => o.value === model)) throw new AppError(400, 'AI_MODEL_UNKNOWN', `${model} bu sağlayıcının model listesinde yok`);
+              return !!model;
+            }),
+          ),
+        ]),
+      );
+    }
+    await this.ai.updateRouting({ ...(providers ? { providers } : {}), ...(models ? { models } : {}) });
+    return this.ai.routing();
   }
 
   async tasks(ctx: RequestContext, status?: string) {
@@ -41,6 +92,22 @@ export class AiApiService {
     const t = await this.prisma.aiTask.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
     if (!t) throw notFound('AI görevi');
     return { ...t, kindLabel: AI_KIND_LABELS[t.kind as keyof typeof AI_KIND_LABELS], chatLinks: { claude: 'https://claude.ai/new', chatgpt: 'https://chatgpt.com/' } };
+  }
+
+  /**
+   * Kurulum listesinin yapay zekâ adımı. Herkes kendi çalışma alanının durumunu görür; hesap bağlama ve anahtar
+   * bilgisi yalnızca yöneticiye döner.
+   */
+  async setup(ctx: RequestContext): Promise<ServerShape<AiSetupStatus>> {
+    const status = await this.ai.setupStatus(ctx.workspaceId);
+    if (!ctx.isAdmin) return { ...status, canManage: false, connections: null, apiKeys: null };
+    const [connections, apiKeys] = await Promise.all([this.connect.statuses(), this.ai.apiKeyStatus()]);
+    return { ...status, canManage: true, connections, apiKeys };
+  }
+
+  async acceptManual(ctx: RequestContext, accepted: boolean): Promise<ServerShape<AiSetupStatus>> {
+    await this.ai.updateSettings(ctx.workspaceId, { manualAccepted: accepted });
+    return this.setup(ctx);
   }
 
   /** Bağlantı testi: kısa bir istemle sağlayıcının JSON döndürdüğünü doğrular. */
@@ -67,7 +134,68 @@ export class AiController {
   constructor(
     private readonly svc: AiApiService,
     private readonly ai: AiService,
+    private readonly connect: AiConnectService,
   ) {}
+
+  @Get('connect')
+  @AdminOnly()
+  connections() {
+    return this.connect.statuses();
+  }
+
+  @Post('connect/:provider/login')
+  @AdminOnly()
+  startLogin(@Param('provider', connectProviderPipe) provider: ConnectProvider) {
+    return this.connect.start(provider);
+  }
+
+  @Post('connect/:provider/code')
+  @AdminOnly()
+  submitLoginCode(@Param('provider', connectProviderPipe) provider: ConnectProvider, @Body(new ZodPipe(loginCodeSchema)) body: z.infer<typeof loginCodeSchema>) {
+    return this.connect.submitCode(provider, body.code);
+  }
+
+  @Delete('connect/:provider/login')
+  @AdminOnly()
+  cancelLogin(@Param('provider', connectProviderPipe) provider: ConnectProvider) {
+    this.connect.cancel(provider);
+    return this.connect.status(provider);
+  }
+
+  @Post('connect/:provider/logout')
+  @AdminOnly()
+  logout(@Param('provider', connectProviderPipe) provider: ConnectProvider) {
+    return this.connect.logout(provider);
+  }
+
+  @Get('setup')
+  setup(@Ctx() ctx: RequestContext) {
+    return this.svc.setup(ctx);
+  }
+
+  @Post('setup/manual')
+  acceptManual(@Ctx() ctx: RequestContext, @Body(new ZodPipe(manualSchema)) body: z.infer<typeof manualSchema>) {
+    return this.svc.acceptManual(ctx, body.accepted);
+  }
+
+  @Get('api-keys')
+  @AdminOnly()
+  apiKeys() {
+    return this.ai.apiKeyStatus();
+  }
+
+  /** Anthropic / OpenAI API anahtarı: şifreli saklanır, bir daha gösterilmez (yalnızca son 4 karakteri). */
+  @Put('api-keys/:provider')
+  @AdminOnly()
+  saveApiKey(@Param('provider', apiKeyProviderPipe) provider: ApiKeyProvider, @Body(new ZodPipe(apiKeySchema)) body: z.infer<typeof apiKeySchema>) {
+    return this.ai.saveApiKey(provider, body.key);
+  }
+
+  @Delete('api-keys/:provider')
+  @AdminOnly()
+  deleteApiKey(@Param('provider', apiKeyProviderPipe) provider: ApiKeyProvider) {
+    return this.ai.saveApiKey(provider, null);
+  }
 
   @Get('status')
   status(@Ctx() ctx: RequestContext) {
@@ -77,6 +205,12 @@ export class AiController {
   @Patch('settings')
   settings(@Ctx() ctx: RequestContext, @Body(new ZodPipe(settingsSchema)) body: z.infer<typeof settingsSchema>) {
     return this.ai.updateSettings(ctx.workspaceId, body as any);
+  }
+
+  @Patch('routing')
+  @AdminOnly()
+  routing(@Body(new ZodPipe(routingSchema)) body: z.infer<typeof routingSchema>) {
+    return this.svc.updateRouting(body);
   }
 
   @Post('test')
@@ -115,5 +249,5 @@ export class AiController {
   }
 }
 
-@Module({ controllers: [AiController], providers: [AiApiService] })
+@Module({ controllers: [AiController], providers: [AiApiService, AiConnectService] })
 export class AiModule {}

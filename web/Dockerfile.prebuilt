@@ -2,8 +2,11 @@
 #   (cd web && npm ci && npm run build)
 #   WEB_DOCKERFILE=Dockerfile.prebuilt docker compose up -d --build --no-deps web
 FROM alpine:3.20 AS site
-RUN apk add --no-cache brotli zstd
+RUN apk add --no-cache brotli zstd zip
 COPY web/dist /site
+COPY browser-extension /extension
+# Profilim › Tarayıcı eklentisi › Eklentiyi indir: Chrome'a "Paketlenmemiş öğe yükle" ile kurulan klasörün zip'i.
+RUN mkdir -p /site/downloads && cd /extension && zip -qr -X /site/downloads/jobless-turtle-extension.zip . -x '*.md' '*.pem' '*.crx' '.*' '*/.*'
 COPY web/assemble.sh /usr/local/bin/assemble.sh
 RUN sh /usr/local/bin/assemble.sh /site
 

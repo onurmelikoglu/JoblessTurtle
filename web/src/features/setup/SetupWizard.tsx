@@ -1,5 +1,6 @@
 import { CircleCheck, Search } from 'lucide-react';
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { homeApi, type DocumentType } from '@/api/home';
 import { useAction } from '@/api/queries';
 import type { HomeState, ProfileInput } from '@/api/types';
@@ -32,6 +33,7 @@ export function SetupWizard({ state }: { state: HomeState }) {
   const me = useMe();
   const { setup } = state;
   const { busy, run } = useAction();
+  const navigate = useNavigate();
   const [step, setStep] = useState(() => firstStep(setup.missing));
   const [about, setAbout] = useState(() => ({
     displayName: setup.candidate?.displayName ?? me.user.displayName,
@@ -67,9 +69,11 @@ export function SetupWizard({ state }: { state: HomeState }) {
     setUploading(null);
   };
 
-  const finish = () => {
+  /** Profil kaydedilince arama başlar; kalan adımlar (yapay zekâ, eklenti) Kurulum ekranında tamamlanır. */
+  const finish = async () => {
     if (positions.length === 0) return toast.error('En az bir pozisyon ekle');
-    return run(() => homeApi.saveProfile({ ...profile(), positions, cities, allowRemote }), { success: 'Kurulum tamamlandı; arama başladı' });
+    const saved = await run(() => homeApi.saveProfile({ ...profile(), positions, cities, allowRemote }), { success: 'Profil hazır; arama başladı' });
+    if (saved) navigate('/setup');
   };
 
   const setField = (key: keyof typeof about) => (value: string) => setAbout((current) => ({ ...current, [key]: value }));

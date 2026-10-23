@@ -9,6 +9,7 @@
 export const INDEED = {
   origin: 'https://tr.indeed.com',
   searchPath: '/jobs',
+  searchPagePath: /^\/jobs\/?$/,
   pageSize: 10,
   viewJobPath: (jobKey: string) => `/viewjob?jk=${encodeURIComponent(jobKey)}`,
   embeddedData: 'window.mosaic.providerData["mosaic-provider-jobcards"]=',

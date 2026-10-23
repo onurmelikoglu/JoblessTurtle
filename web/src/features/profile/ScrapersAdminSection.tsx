@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { CircleAlert, Play } from 'lucide-react';
 import { adminApi } from '@/api/admin';
 import { useAction } from '@/api/queries';
-import type { ScraperConfig, ScraperRunView, ScraperSourceStatus } from '@/api/types';
+import type { ScraperConfig, ScraperRunView, ScraperSource, ScraperSourceStatus } from '@/api/types';
 import { useMe } from '@/auth/session-context';
 import { cn } from '@/lib/cn';
 import { fmtAgo, fmtDateTime, fmtUntil } from '@/lib/format';
@@ -14,7 +14,7 @@ import { TagsInput } from '@/ui/TagsInput';
 import { TONE_TEXT } from '@/ui/tones';
 import { adminKeys, useAdminRefresh } from './admin-queries';
 import { Divider, LimitField, Loaded, Section, SubSection } from './parts';
-import { ACTIVE_POLL_MS, errorKinds, healthOf, IDLE_POLL_MS, INTERVAL_OPTIONS, isActive, keywordNote, PAGE_OPTIONS, runSourceLabel, runSummary, stateLabel, stateTone } from './scrapers-model';
+import { ACTIVE_POLL_MS, errorKinds, EXTENSION_ONLY_NOTE, healthOf, IDLE_POLL_MS, INTERVAL_OPTIONS, isActive, keywordNote, PAGE_OPTIONS, runSourceLabel, runSummary, stateLabel, stateTone } from './scrapers-model';
 
 const RUN_HEADINGS = ['Zaman', 'Site', 'Durum', 'Sonuç', 'Hata'];
 
@@ -60,6 +60,12 @@ function LastRun({ source }: { source: ScraperSourceStatus }) {
 
 function SourceRow({ source, busy, onRun, onPatch }: { source: ScraperSourceStatus; busy: boolean; onRun: () => void; onPatch: (patch: Record<string, unknown>) => void }) {
   const health = healthOf(source.health);
+  if (!source.server_scraping)
+    return (
+      <SubSection title={source.label} action={<Badge tone="neutral">Yalnızca eklenti</Badge>}>
+        <p className="text-sm text-ink-soft">{EXTENSION_ONLY_NOTE}</p>
+      </SubSection>
+    );
   return (
     <SubSection
       title={source.label}
@@ -124,7 +130,7 @@ function TargetsEditor({ config, busy, onPatch }: { config: ScraperConfig; busy:
 }
 
 /**
- * Kariyer.net ve Indeed'in herkese açık arama sayfalarının taraması: site başına durum, son çalışmanın ölçümleri,
+ * İlan sitelerinin (Kariyer.net, Indeed, Eleman.net, İşin Olsun, Secretcv; Yenibiriş yalnızca eklentiyle) herkese açık arama sayfalarının taraması: site başına durum, son çalışmanın ölçümleri,
  * elle tarama ve ayarlar. Site engellerse (CAPTCHA, 403) tarama durur ve burada nedeniyle görünür.
  */
 export function ScrapersAdminSection() {
@@ -144,7 +150,7 @@ export function ScrapersAdminSection() {
   const scan = (source: string) =>
     run(
       async () => {
-        const result = await adminApi.runScrapers({ source: source as 'kariyer_net' | 'indeed' });
+        const result = await adminApi.runScrapers({ source: source as ScraperSource });
         await refresh();
         return result;
       },
@@ -154,7 +160,7 @@ export function ScrapersAdminSection() {
   return (
     <Section title="İlan siteleri taraması">
       <p className="text-sm text-ink-soft">
-        Kariyer.net ve Indeed'in oturum açmadan görülebilen arama sayfaları belirli aralıklarla taranır. Site erişimi engellerse (güvenlik doğrulaması, 403) tarama durur, sana bildirilir ve bir gün beklenir; engel aşılmaya çalışılmaz. Bu sitelerin
+        İlan sitelerinin oturum açmadan görülebilen arama sayfaları belirli aralıklarla taranır; robots.txt'in izin vermediği sayfalar okunmaz. Site erişimi engellerse (güvenlik doğrulaması, 403) tarama durur, sana bildirilir ve bir gün beklenir; engel aşılmaya çalışılmaz. Bu sitelerin
         eksiksiz kaynağı yine iş alarmı mailleridir.
       </p>
       <Loaded query={status}>

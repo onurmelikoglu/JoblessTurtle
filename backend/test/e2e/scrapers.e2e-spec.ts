@@ -89,7 +89,7 @@ beforeEach(async () => {
   await h.prisma.scraperRun.deleteMany();
   await h.prisma.scrapedJob.deleteMany();
   await h.prisma.keyValue.deleteMany({ where: { key: 'scraper:config' } });
-  await config({ cities: ['İstanbul'], sources: { kariyer_net: { max_pages: 3 } } });
+  await config({ cities: ['İstanbul'], sources: { kariyer_net: { max_pages: 3 }, eleman_net: { enabled: false }, isinolsun: { enabled: false }, secretcv: { enabled: false } } });
 });
 
 afterEach(() => {
@@ -218,6 +218,50 @@ describe('çalışma alanlarına aktarım', () => {
     await runNow({ source: 'kariyer_net' });
     const again = await h.prisma.job.count({ where: { workspaceId: workspaceOf(admin), title: 'Kreatif Direktör', company: { name: 'Midye Ajans' } } });
     expect(again).toBe(1);
+  });
+});
+
+describe('yeni siteler: Eleman.net, İşin Olsun, Secretcv, Yenibiriş', () => {
+  const ELEMAN = 'https://www.eleman.net/is-ilanlari/istanbul';
+  const lastPage = (html: string) => html.replace(/<nav>.*<\/nav>/s, '');
+
+  it('Eleman.net şehir sayfaları "sy" ile dolaşılır; başka numarayla aynı ilan yeniden yayın sayılır; İstanbul yaka adı il adına iner', async () => {
+    const calls = serve({ [ELEMAN]: ok(fixture('eleman-net-istanbul.html')), [`${ELEMAN}?sy=2`]: ok(lastPage(fixture('eleman-net-istanbul.html')).replace(/49001/g, '49002')) });
+    const [run] = await runNow({ source: 'eleman_net' });
+    expect(await finished(run.id)).toMatchObject({ source: 'eleman_net', state: 'succeeded', pages_visited: 2, listings_found: 6, listings_new: 3, duplicates: 3 });
+    expect(calls).toEqual(['https://www.eleman.net/robots.txt', ELEMAN, `${ELEMAN}?sy=2`]);
+    const job = await h.prisma.scrapedJob.findFirstOrThrow({ where: { source: 'eleman_net', externalId: '4900102' } });
+    expect(job).toMatchObject({ companyName: 'Kabuk Yazılım Anonim Şirketi', city: 'İstanbul', district: 'Esenyurt' });
+  });
+
+  it('İşin Olsun gömülü veriden okunur; aynı ilanlar gelen sayfada durulur', async () => {
+    const calls = serve({ 'https://isinolsun.com/is-ilanlari/istanbul': ok(fixture('isinolsun-istanbul.html')), 'https://isinolsun.com/is-ilanlari/istanbul?pn=2': ok(fixture('isinolsun-istanbul.html')) });
+    const [run] = await runNow({ source: 'isinolsun' });
+    expect(await finished(run.id)).toMatchObject({ state: 'succeeded', pages_visited: 2, listings_found: 2 });
+    expect(calls).toHaveLength(3);
+  });
+
+  it('Secretcv yalnızca şehir sayfasının ilk sayfasını okur (robots.txt sayfalamayı yasaklıyor)', async () => {
+    await config({ sources: { secretcv: { max_pages: 5 } } });
+    const calls = serve({ 'https://www.secretcv.com/is-ilanlari/istanbul-is-ilanlari': ok(fixture('secretcv-istanbul.html')) });
+    const [run] = await runNow({ source: 'secretcv' });
+    expect(await finished(run.id)).toMatchObject({ state: 'succeeded', pages_visited: 1, listings_found: 2 });
+    expect(calls).toEqual(['https://www.secretcv.com/robots.txt', 'https://www.secretcv.com/is-ilanlari/istanbul-is-ilanlari']);
+  });
+
+  it('Yenibiriş sunucudan taranmaz: elle tarama ve otomatik taramayı açma reddedilir, "all" onu atlar', async () => {
+    const calls = serve({});
+    const refused = await h.http().post('/api/v1/scrapers/run').set(admin.auth).send({ source: 'yenibiris' }).expect(400);
+    expect(refused.body.error.code).toBe('SCRAPER_EXTENSION_ONLY');
+    await h.http().post('/api/v1/scrapers/config').set(admin.auth).send({ sources: { yenibiris: { enabled: true } } }).expect(400);
+    const status = (await h.http().get('/api/v1/scrapers/status').set(admin.auth).expect(200)).body.sources.find((s: any) => s.source === 'yenibiris');
+    expect(status).toMatchObject({ label: 'Yenibiriş', server_scraping: false, enabled: false, next_run_at: null });
+    await config({ sources: { kariyer_net: { enabled: false }, indeed: { enabled: false } } });
+    expect(await scraper.scheduleDue()).toEqual({ queued: [] });
+    expect(calls).toEqual([]);
+    const all = await h.http().post('/api/v1/scrapers/run').set(admin.auth).send({ source: 'all' }).expect(202);
+    expect(all.body.runs.map((r: any) => r.source)).toEqual(['kariyer_net', 'indeed', 'eleman_net', 'isinolsun', 'secretcv']);
+    await h.worker.drain();
   });
 });
 
@@ -404,7 +448,7 @@ describe('API', () => {
     expect(history.body.items).toHaveLength(1);
     expect(history.body.items[0]).toMatchObject({ state: 'succeeded', listings_new: 3 });
     const status = await h.http().get('/api/v1/scrapers/status').set(member.auth).expect(200);
-    expect(status.body.sources.map((s: any) => s.source)).toEqual(['kariyer_net', 'indeed']);
+    expect(status.body.sources.map((s: any) => s.source)).toEqual(['kariyer_net', 'indeed', 'eleman_net', 'isinolsun', 'secretcv', 'yenibiris']);
     expect(status.body.sources[0]).toMatchObject({ health: 'ok', active_jobs: 3, new_jobs_24h: 3, keyword_mode: 'local_filter', interval_hours: 4 });
     expect(status.body.sources[1]).toMatchObject({ health: 'never', max_pages: 1 });
   });

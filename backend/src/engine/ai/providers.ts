@@ -73,15 +73,22 @@ export function limitResetAt(text: string): Date | null {
   return Number.isNaN(at.getTime()) ? null : at;
 }
 
+export interface ProviderAvailability {
+  ok: boolean;
+  detail: string;
+  /** CLI sağlayıcılarında programın kurulu olup olmadığı; kurulu ama giriş yapılmamışsa true, ok false olur. */
+  installed?: boolean;
+}
+
 export interface TextProvider {
   name: ProviderName;
   /** Yalnızca sunucu sahibinin workspace'inde kullanılabilir mi (kişisel abonelik). */
   ownerOnly: boolean;
-  available(): Promise<{ ok: boolean; detail: string }>;
+  available(): Promise<ProviderAvailability>;
   complete(prompt: string, opts: ProviderRunOptions): Promise<ProviderResult>;
 }
 
-function runProcess(cmd: string, args: string[], stdin: string, timeoutMs: number, files: ProviderFile[] = []): Promise<{ code: number | null; stdout: string; stderr: string }> {
+export function runProcess(cmd: string, args: string[], stdin: string, timeoutMs: number, files: ProviderFile[] = []): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     // Boş geçici dizinde çalıştırılır; CLI'nin proje dosyalarına erişimi olmaz.
     const cwd = mkdtempSync(path.join(tmpdir(), 'ai-cli-'));
@@ -108,11 +115,11 @@ function runProcess(cmd: string, args: string[], stdin: string, timeoutMs: numbe
   });
 }
 
-const availabilityCache = new Map<string, { at: number; value: { ok: boolean; detail: string } }>();
-async function cached(key: string, fn: () => Promise<{ ok: boolean; detail: string }>) {
+const availabilityCache = new Map<string, { at: number; value: ProviderAvailability }>();
+async function cached(key: string, fn: () => Promise<ProviderAvailability>) {
   const hit = availabilityCache.get(key);
   if (hit && Date.now() - hit.at < 60_000) return hit.value;
-  let value: { ok: boolean; detail: string };
+  let value: ProviderAvailability;
   try {
     value = await fn();
   } catch (e) {
@@ -146,6 +153,19 @@ export function parseClaudeStream(stdout: string) {
   return { result, limits: [...windows.values()] };
 }
 
+/**
+ * `claude auth status --json` çıktısındaki giriş durumu. Çıktı okunamazsa (eski sürüm, beklenmeyen biçim) null döner;
+ * bu durumda CLI kullanılabilir sayılır, ilk gerçek çağrı sonucu belirler.
+ */
+export function claudeLoggedIn(stdout: string): boolean | null {
+  try {
+    const parsed = JSON.parse(stdout) as { loggedIn?: unknown };
+    return typeof parsed.loggedIn === 'boolean' ? parsed.loggedIn : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Claude Code CLI: `claude -p` başsız mod. Giriş host üzerinde `claude` ile bir kez yapılır. */
 export const cliClaudeProvider: TextProvider = {
   name: 'cli_claude',
@@ -153,7 +173,9 @@ export const cliClaudeProvider: TextProvider = {
   available: () =>
     cached('cli_claude', async () => {
       const r = await runProcess(env().CLAUDE_CLI_PATH, ['--version'], '', 15000);
-      return r.code === 0 ? { ok: true, detail: r.stdout.trim() } : { ok: false, detail: r.stderr.trim() || 'claude bulunamadı' };
+      if (r.code !== 0) return { ok: false, installed: false, detail: r.stderr.trim() || 'claude bulunamadı' };
+      const status = await runProcess(env().CLAUDE_CLI_PATH, ['auth', 'status', '--json'], '', 15000);
+      return claudeLoggedIn(status.stdout) === false ? { ok: false, installed: true, detail: 'Claude hesabı bağlı değil' } : { ok: true, installed: true, detail: r.stdout.trim() };
     }),
   async complete(prompt, opts) {
     const webTools = WEB_RESEARCH_KINDS.includes(opts.kind) && opts.webResearch && env().AI_CLI_WEB_RESEARCH ? 'WebSearch,WebFetch' : '';
@@ -207,6 +229,15 @@ function parseCodexEvents(stdout: string) {
 /** Çok adımlı web araştırması gereken görevlerde varsayılan "low" akıl yürütme yetersiz kalıyor. */
 const CODEX_REASONING: Partial<Record<string, string>> = { company_contacts: 'medium', contact_review: 'medium' };
 
+export function codexLoggedIn(code: number | null, output: string): boolean {
+  return code === 0 && !/not logged in/i.test(output);
+}
+
+/** Codex geçici HOME'da yardımcı dosya uyarısı da yazabiliyor; sürüm satırı ayıklanır. */
+function codexVersion(stdout: string): string {
+  return stdout.split('\n').find((line) => /codex/i.test(line) && !/warning/i.test(line))?.trim() ?? stdout.trim();
+}
+
 /** Codex CLI: ChatGPT hesabıyla `codex login --device-auth` sonrası başsız çalıştırma. */
 export const cliCodexProvider: TextProvider = {
   name: 'cli_codex',
@@ -214,10 +245,11 @@ export const cliCodexProvider: TextProvider = {
   available: () =>
     cached('cli_codex', async () => {
       const version = await runProcess(env().CODEX_CLI_PATH, ['--version'], '', 15000);
-      if (version.code !== 0) return { ok: false, detail: version.stderr.trim() || 'codex bulunamadı' };
+      if (version.code !== 0) return { ok: false, installed: false, detail: version.stderr.trim() || 'codex bulunamadı' };
       const status = await runProcess(env().CODEX_CLI_PATH, ['login', 'status'], '', 15000);
-      const loggedIn = status.code === 0 && !/not logged in/i.test(status.stdout + status.stderr);
-      return loggedIn ? { ok: true, detail: version.stdout.trim() } : { ok: false, detail: 'ChatGPT girişi yapılmamış (codex login --device-auth)' };
+      return codexLoggedIn(status.code, status.stdout + status.stderr)
+        ? { ok: true, installed: true, detail: codexVersion(version.stdout) }
+        : { ok: false, installed: true, detail: 'ChatGPT hesabı bağlı değil' };
     }),
   async complete(prompt, opts) {
     const web = WEB_RESEARCH_KINDS.includes(opts.kind) && opts.webResearch && env().AI_CLI_WEB_RESEARCH;
@@ -277,14 +309,34 @@ export const ollamaProvider: TextProvider = {
   },
 };
 
+export type ApiKeyProvider = 'anthropic_api' | 'openai_api';
+export const API_KEY_PROVIDERS: ApiKeyProvider[] = ['anthropic_api', 'openai_api'];
+
+/** Arayüzden girilip veritabanında şifreli saklanan anahtarlar (çözülmüş hâli yalnızca bellekte); yoksa ortam değişkeni kullanılır. */
+let storedApiKeys: Partial<Record<ApiKeyProvider, string>> = {};
+
+export function setStoredApiKeys(keys: Partial<Record<ApiKeyProvider, string>>) {
+  if (keys.anthropic_api !== storedApiKeys.anthropic_api) anthropicClient = null;
+  storedApiKeys = { ...keys };
+}
+
+export function apiKeyFor(provider: ApiKeyProvider): string | undefined {
+  return storedApiKeys[provider] || (provider === 'anthropic_api' ? env().ANTHROPIC_API_KEY : env().OPENAI_API_KEY) || undefined;
+}
+
+export function apiKeySource(provider: ApiKeyProvider): 'stored' | 'env' | null {
+  if (storedApiKeys[provider]) return 'stored';
+  return (provider === 'anthropic_api' ? env().ANTHROPIC_API_KEY : env().OPENAI_API_KEY) ? 'env' : null;
+}
+
 let anthropicClient: Anthropic | null = null;
 
 export const anthropicApiProvider: TextProvider = {
   name: 'anthropic_api',
   ownerOnly: false,
-  available: async () => (env().ANTHROPIC_API_KEY ? { ok: true, detail: `model: ${env().ANTHROPIC_MODEL}` } : { ok: false, detail: 'ANTHROPIC_API_KEY tanımlı değil' }),
+  available: async () => (apiKeyFor('anthropic_api') ? { ok: true, detail: `model: ${env().ANTHROPIC_MODEL}` } : { ok: false, detail: 'Claude API anahtarı girilmemiş' }),
   async complete(prompt, opts) {
-    anthropicClient ??= new Anthropic({ apiKey: env().ANTHROPIC_API_KEY });
+    anthropicClient ??= new Anthropic({ apiKey: apiKeyFor('anthropic_api') });
     // Güvenlik sınıflandırıcısı reddederse sunucu tarafı yedek modele geçilir (fallbacks: 'default').
     const response = await anthropicClient.beta.messages.create({
       model: opts.model ?? env().ANTHROPIC_MODEL,
@@ -305,11 +357,11 @@ export const anthropicApiProvider: TextProvider = {
 export const openaiApiProvider: TextProvider = {
   name: 'openai_api',
   ownerOnly: false,
-  available: async () => (env().OPENAI_API_KEY ? { ok: true, detail: `model: ${env().OPENAI_MODEL}` } : { ok: false, detail: 'OPENAI_API_KEY tanımlı değil' }),
+  available: async () => (apiKeyFor('openai_api') ? { ok: true, detail: `model: ${env().OPENAI_MODEL}` } : { ok: false, detail: 'OpenAI API anahtarı girilmemiş' }),
   async complete(prompt) {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${env().OPENAI_API_KEY}` },
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKeyFor('openai_api')}` },
       body: JSON.stringify({ model: env().OPENAI_MODEL, response_format: { type: 'json_object' }, messages: [{ role: 'user', content: prompt }] }),
       signal: AbortSignal.timeout(env().AI_CLI_TIMEOUT_SECONDS * 1000),
     });

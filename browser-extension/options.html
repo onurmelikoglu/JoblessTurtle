@@ -23,14 +23,17 @@
   <body>
     <main>
       <h1>Jobless Turtle — ilan aktarıcı</h1>
-      <p class="lead">Kariyer.net ve Indeed'de açtığın arama sonuç sayfalarındaki ilanları uygulamana aktarır.</p>
+      <p class="lead">Kariyer.net, Indeed, Eleman.net, İşin Olsun, Secretcv ve Yenibiriş'te açtığın arama sonuç sayfalarındaki ilanları uygulamana aktarır.</p>
       <form id="form">
+        <label for="pairing">Eşleştirme kodu</label>
+        <input id="pairing" autocomplete="off" spellcheck="false" placeholder="jt1.…" />
+        <div class="hint">Uygulamada Profilim → Tarayıcı eklentisi → Eşleştirme kodu üret. Kodu buraya yapıştırınca adres ve anahtar kendiliğinden dolar; sonra Kaydet ve dene.</div>
         <label for="appUrl">Uygulama adresi</label>
         <input id="appUrl" type="url" placeholder="http://localhost:8080" required />
         <div class="hint">Jobless Turtle'ı tarayıcında açtığın adres. Kaydedince Chrome bu adrese erişim izni ister.</div>
         <label for="importKey">Eklenti anahtarı</label>
         <input id="importKey" type="password" autocomplete="off" placeholder="jt_…" required />
-        <div class="hint">Uygulamada Profilim → Tarayıcı eklentisi → Anahtar üret.</div>
+        <div class="hint">Eşleştirme kodu kullandıysan doludur.</div>
         <div class="row">
           <button type="submit">Kaydet ve dene</button>
           <button type="button" class="secondary" id="test">Bağlantıyı dene</button>
@@ -40,7 +43,7 @@
       <ul>
         <li>Eklenti yalnızca senin açtığın sayfayı okur; siteye kendi başına istek atmaz, gezinmez, tıklamaz.</li>
         <li>Sayfada doğrulama (CAPTCHA) çıkarsa aktarım yapılmaz; doğrulamayı tamamlayıp tekrar dene.</li>
-        <li>Uygulamadaki "Kariyer.net'te ara" / "Indeed'de ara" bağlantılarıyla açılan sekmede her sonuç sayfası kendiliğinden aktarılır.</li>
+        <li>Uygulamanın Firmalar sekmesindeki "… ara" bağlantılarıyla açılan sekmede her sonuç sayfası kendiliğinden aktarılır.</li>
       </ul>
     </main>
     <script src="options.js"></script>

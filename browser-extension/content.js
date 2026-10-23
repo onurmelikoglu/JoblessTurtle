@@ -7,6 +7,7 @@
 
   const IMPORT_HASH = 'jt-import';
   const AUTO_KEY = 'jt-import-auto';
+  const TARGET_KEY = 'jt-import-target';
   const DONE_KEY = 'jt-import-done';
   const PAGE_PREFIX = 'JT_PAGE ';
   const URL_WATCH_MS = 700;
@@ -123,7 +124,7 @@
     const r = response.result;
     if (r.status === 'verification') return show('warn', 'Sayfada doğrulama var; tamamlayınca tekrar dene.');
     if (r.status === 'failed') return show('error', `Sayfa okunamadı: ${r.message}`);
-    const matched = r.forwarded ? `${possessive(r.forwarded)} profiline uyuyor` : 'profiline yeni uyan ilan yok';
+    const matched = r.forwarded ? `${possessive(r.forwarded)} profile uyuyor` : 'profile yeni uyan ilan yok';
     show('ok', `${r.listings_found} ilan aktarıldı, ${matched}.`);
   }
 
@@ -155,13 +156,15 @@
       show('warn', 'Sayfada doğrulama var; tamamlayınca tekrar dene.');
       return 'verification';
     }
-    const signature = page.cards.length ? JSON.stringify(page.cards[0]) : null;
+    // Sitenin kendi sayfa geçişinden sonra eski kartlar bir süre ekranda kalır; sabit sponsorlu kartlar yüzünden ilk
+    // kart yetmez, kartların tümüne bakılır.
+    const signature = page.cards.length ? JSON.stringify(page.cards.map((card) => card[0])) : null;
     if (auto && (!page.cards.length || signature === lastSignature)) return 'empty';
     busy = true;
     button.disabled = true;
     button.textContent = 'Aktarılıyor…';
     try {
-      const response = await chrome.runtime.sendMessage({ type: 'jt-import', source: extractor.source, url: location.href, payload: page });
+      const response = await chrome.runtime.sendMessage({ type: 'jt-import', source: extractor.source, url: pageKey(), payload: page, target: session.get(TARGET_KEY) });
       report(response);
       if (response?.ok) lastSignature = signature;
       return response?.ok ? 'done' : 'error';
@@ -206,7 +209,13 @@
     host.style.display = extractorHere() ? 'block' : 'none';
   }
 
-  if (location.hash.includes(IMPORT_HASH)) session.set(AUTO_KEY, '1');
+  // "#jt-import=<etiket>": arama uygulamada hangi hesaptan açıldıysa aktarım oraya gider. Etiket sekmede saklanır (site
+  // kendi sayfa geçişlerinde eki atar); bu sekmedeki düğmeyle yapılan aktarım da aynı hesaba gider.
+  const importHash = location.hash.match(new RegExp(`^#${IMPORT_HASH}(?:=([A-Za-z0-9_-]+))?$`));
+  if (importHash) {
+    session.set(AUTO_KEY, '1');
+    if (importHash[1]) session.set(TARGET_KEY, importHash[1]);
+  }
   document.documentElement.append(host);
   syncVisibility();
   autoImport();

@@ -2,7 +2,28 @@
 
 Kısa tanıtım ve kullanım için: [README](../README.md).
 
-## 1. Docker Compose ile kurulum
+## 1. Kurulum
+
+### 1a. Tek komutla (önerilen)
+
+[Docker Desktop](https://docs.docker.com/get-docker/) açıkken:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/onurmelikoglu/JoblessTurtle/main/install.sh | bash
+```
+
+ya da depoyu klonladıysan klasörün içinde `./install.sh`. Betik:
+
+1. Docker'ın kurulu ve çalışır olduğunu kontrol eder.
+2. `.env` yoksa `.env.example`'dan oluşturur; `POSTGRES_PASSWORD`, `JWT_SECRET`, `APP_ENCRYPTION_KEY`, `WEBHOOK_SECRET` değerlerini bu bilgisayarda rastgele üretir, boş bir port seçer (varsayılan 8080) ve Claude/ChatGPT köprüsünü açar (`INSTALL_AI_CLI=true`). `.env` varsa gizli anahtarlara dokunmaz.
+3. Hazır imajları GitHub Container Registry'den indirir (`ghcr.io/onurmelikoglu/jobless-turtle-backend`, `-web`). İndirilemezse imajları bu bilgisayarda derler.
+4. Uygulamayı başlatır, hazır olunca tarayıcıda açar.
+
+Ayarlar: `JT_PORT=8090` (port), `JT_DIR=~/jobless-turtle` (klonsuz kurulumda klasör), `JT_BUILD=1` (indirmek yerine derle), `JT_NO_OPEN=1` (tarayıcıyı açma), `JT_YES=1` (soru sorma).
+
+**`APP_ENCRYPTION_KEY` kaybolursa bağlı mail hesapları yeniden bağlanmalıdır**; `.env` dosyasının yedeğini güvenli bir yerde tut. `.env` dosyasını paylaşma ve commit etme.
+
+### 1b. Elle (imajları kendin derleyerek)
 
 1. [Docker Desktop](https://docs.docker.com/get-docker/) (ya da Docker Engine + Compose v2) kur.
 2. Depoyu klonla ve ortam dosyasını hazırla:
@@ -37,6 +58,10 @@ Kısa tanıtım ve kullanım için: [README](../README.md).
 Uygulama senin bilgisayarında çalışıyorsa bilgisayar açık, internete bağlı ve uyku moduna geçmeyecek şekilde ayarlı olmalıdır. Servisler `restart: unless-stopped` ve sağlık kontrolü taşır. Kesintiden sonra worker kuyrukları yeniden kontrol eder; sonucu belirsiz gönderim otomatik tekrarlanmaz.
 
 ### Güncelleme
+
+Tek komutla kurduysan: `./install.sh update` (yeni imajları indirir, yalnızca uygulama konteynerlerini yeniler).
+
+Elle derliyorsan:
 
 ```bash
 git pull
@@ -111,44 +136,58 @@ Kariyer.net, LinkedIn ve Indeed ilanlarının otomatik taranmasına izin vermez.
 
 Ayrıca Kariyer.net ve Indeed'in oturumsuz arama sayfaları 4 saatte bir taranır; şehirler, aralık ve sayfa sınırı **Profilim › İlan siteleri taraması** bölümünden (yönetici) değiştirilir, aynı yerden elle tarama başlatılır. Site erişimi engellerse tarama durur ve yöneticiye bildirilir. Sunucuda tamamen kapatmak için `.env` içinde `SCRAPERS_ENABLED=false`. Sitelerin güncel erişim durumu, API ve ayarlar: [SCRAPERS.md](SCRAPERS.md).
 
+### Tarayıcı eklentisi
+
+Kariyer.net, Indeed ve Yenibiriş sunucudan gelen istekleri engellediği için bu sitelerdeki ilanlar, senin tarayıcında açtığın arama sayfasından bir Chrome eklentisiyle aktarılır. Kurulum › Tarayıcı eklentisi (ya da Profilim › Tarayıcı eklentisi):
+
+1. **Eklentiyi indir** ile zip dosyasını indir ve bir klasöre aç.
+2. Chrome'da `chrome://extensions` → sağ üstten **Geliştirici modu** → **Paketlenmemiş öğe yükle** → zipten çıkan klasörü seç. Eklentinin ayarları kendiliğinden açılır.
+3. Uygulamada **Eşleştirme kodunu kopyala**, eklenti ayarlarındaki **Eşleştirme kodu** alanına yapıştır, **Kaydet ve dene**. Chrome uygulama adresine erişim izni ister.
+
+Eşleşince uygulama eklentiyi algılar ve adımı "Tamam" gösterir; eklentinin yeni sürümü varsa uyarır. Ayrıntılar: [browser-extension/README.md](../browser-extension/README.md).
+
 ## 4. Yapay zekâ
 
-Firma ve ilan bulma, firma araştırması, yazı hazırlama ve mail dönüşlerini okuma bir yapay zekâ modeliyle yapılır. Sohbet arayüzleri (claude.ai, chatgpt.com) bot ile otomatikleştirilmez; resmî komut satırı araçları ya da kopyala-yapıştır köprüsü kullanılır.
+Firma ve ilan bulma, firma araştırması, yazı hazırlama ve mail dönüşlerini okuma bir yapay zekâ modeliyle yapılır. Sohbet arayüzleri (claude.ai, chatgpt.com) bot ile otomatikleştirilmez; resmî komut satırı araçları, API anahtarı ya da kopyala-yapıştır köprüsü kullanılır.
 
-Durum ve ayarlar **Profilim › AI kullanımı ve modeller** bölümündedir: sağlayıcıların durumu, görev türüne göre model seçimi, günlük işlem limiti ve kullanım geçmişi. Sağlayıcı sırası Claude → ChatGPT → kopyala-yapıştır'dır; Claude limit hatası verirse ChatGPT'ye geçilir.
+Bağlantı **Kurulum** ekranından yapılır (ilk girişte sihirbazdan sonra açılır; sonradan **Profilim › Kurulum › Kurulum listesini aç**). Terminal gerekmez. Durum ve ayarlar **Profilim › AI kullanımı ve modeller** bölümündedir: sağlayıcıların durumu, görev türüne göre model seçimi, günlük işlem limiti ve kullanım geçmişi. Sağlayıcı sırası Claude → ChatGPT → API anahtarı → kopyala-yapıştır'dır; biri limit hatası verirse sıradaki devralır.
 
-### a) Claude Code CLI (kendi Claude aboneliğinle, arka planda)
+### a) Claude ya da ChatGPT aboneliğini bağlama (yönetici)
 
-- **Docker ile:** `.env` içinde `INSTALL_AI_CLI=true` → `docker compose up -d --build worker` → bir kez giriş yap:
+Claude Code ve Codex CLI'leri `install.sh` ile kurulan imajda hazır gelir (elle kurulumda `.env` içinde `INSTALL_AI_CLI=true`, sonra imajı yeniden derle). Hesap bağlama yalnızca sunucu yöneticisine açıktır.
 
-  ```bash
-  docker compose exec -it worker claude    # tarayıcıdaki giriş adımlarını izle, sonra /exit
-  ```
-
-  Giriş bilgileri `ai-cli-home` volume'ünde kalır; repoya ya da imaja girmez.
-- **Docker olmadan:** `npm i -g @anthropic-ai/claude-code`, `claude` komutuyla bir kez giriş yap, uygulamayı `./scripts/dev.sh` ile çalıştır.
+- **Claude (Pro / Max):** Kurulum › Yapay zekâ bağlantısı › **Claude'u bağla** → **Claude giriş sayfasını aç** → hesabınla giriş yapıp izin ver → sayfanın sonunda verilen kodu kopyala → uygulamadaki alana yapıştırıp **Kodu gönder**. Kart "Bağlı" ve hesabın adresi görünür.
+- **ChatGPT (Plus / Pro):** **ChatGPT'yi bağla** → **ChatGPT giriş sayfasını aç** (auth.openai.com/codex/device) → ekrandaki tek kullanımlık kodu gir. Onay verince ekran kendiliğinden "Bağlı" olur. Kodu yalnızca girişi bu ekranda kendin başlattıysan gir; bir site ya da başka biri sana kod verdiyse girme.
+- Giriş bağlantısı ve kod 15 dakika geçerlidir; süre dolarsa ya da **Vazgeç** dersen yeniden başlatırsın. Aynı anda tek giriş yapılır. **Bağlantıyı kes** hesaptan çıkar.
+- Giriş komutları API konteynerinde çalışır; giriş bilgileri worker ile ortak `ai-cli-home` volume'üne (`/home/node`) yazılır, repoya ya da imaja girmez, veritabanına ve loglara kod ya da token yazılmaz. Worker bağlantı değişince sağlayıcı listesini en geç 30 saniyede tazeler.
 
 Araştırma ve keşifte CLI'ya yalnızca web araması ve sayfa okuma araçları açılır; komut çalıştırma ve dosya düzenleme kapalıdır, CLI boş bir geçici dizinde çalışır.
 
-Abonelik kişisel olduğu için CLI sağlayıcıları varsayılan olarak yalnızca sunucu sahibinin çalışma alanında kullanılır. Yönetici **Davetliler benim Claude aboneliğimi kullanabilir** seçeneğini açarsa davetliler de kullanır; davetli başına günlük limit ayrıca ayarlanır.
+Abonelik kişisel olduğu için CLI sağlayıcıları varsayılan olarak yalnızca sunucu sahibinin çalışma alanında kullanılır. Yönetici **Davetliler benim Claude aboneliğimi kullanabilir** seçeneğini açarsa davetliler de kullanır (arayüzden girilen API anahtarı da); davetli başına günlük limit ayrıca ayarlanır.
 
-### b) Codex CLI (ChatGPT hesabınla)
+**Terminalle (yedek yol):** arayüz kullanılamıyorsa giriş worker'da elle de yapılabilir:
 
-`INSTALL_AI_CLI=true` ile kurulur; bir kez giriş:
+```bash
+docker compose exec -it worker claude auth login --claudeai
+```
 
 ```bash
 docker compose exec -it worker codex login --device-auth
 ```
 
-Argümanlar sürüme göre değişebilir; gerekirse `CODEX_CLI_ARGS` ile ayarla (varsayılan `exec --skip-git-repo-check -`).
+Codex argümanları sürüme göre değişebilir; gerekirse `CODEX_CLI_ARGS` ile ayarla (varsayılan `exec --skip-git-repo-check -`).
+
+### b) API anahtarı
+
+Kurulum › Yapay zekâ bağlantısı › **Abonelik yerine API anahtarı kullan**: Claude (Anthropic) ya da OpenAI anahtarını gir, **Kaydet**. Anahtar `APP_ENCRYPTION_KEY` ile şifrelenip veritabanında saklanır, bir daha gösterilmez (yalnızca son 4 karakteri). Kullandıkça ücretlendirilir; aboneliklerden sonra sıraya girer. `.env` içindeki `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` yedek olarak kalır: arayüzden anahtar girilmemişse onlar kullanılır (`.env` anahtarı sıraya kendiliğinden eklenmez). `APP_ENCRYPTION_KEY` değişirse kayıtlı anahtar çözülemez; yeniden girilir.
 
 ### c) Kopyala-yapıştır köprüsü
 
-CLI yoksa görev "seni bekliyor" olarak düşer ve ana sayfada bildirilir: **istemi kopyala → Claude ya da ChatGPT sohbetine yapıştır → cevabı geri yapıştır**. Cevap şemayla ve kaynak kurallarıyla doğrulanır; kurallara aykırıysa gerekçesiyle reddedilir. Herkes kendi hesabıyla kullanabilir.
+Hesap bağlamadan da kullanılır: Kurulum'da **Kopyala-yapıştır ile devam et**. Görev "seni bekliyor" olarak düşer ve ana sayfada bildirilir: **istemi kopyala → Claude ya da ChatGPT sohbetine yapıştır → cevabı geri yapıştır**. Cevap şemayla ve kaynak kurallarıyla doğrulanır; kurallara aykırıysa gerekçesiyle reddedilir. Herkes kendi hesabıyla kullanabilir.
 
 ### d) İsteğe bağlı
 
-Yerel model: `OLLAMA_URL=http://host.docker.internal:11434`. API anahtarları: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`. Hiçbir sağlayıcı yoksa şablon modu çalışır: yazılar hazır kalıplardan oluşur, araştırma yapılmaz, bilgi uydurulmaz.
+Yerel model: `OLLAMA_URL=http://host.docker.internal:11434`. Hiçbir sağlayıcı yoksa şablon modu çalışır: yazılar hazır kalıplardan oluşur, araştırma yapılmaz, bilgi uydurulmaz.
 
 ### Günlük kullanım ve öncelikler
 

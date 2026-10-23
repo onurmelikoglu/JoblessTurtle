@@ -19,6 +19,7 @@ import { AddressBookService } from '../engine/address-book.service';
 import { AppliedCompaniesService } from '../engine/applied-companies.service';
 import { withAiClass } from '../engine/ai/ai-context';
 import { AiService, AiSettings, DEFAULT_AI_SETTINGS, WORKER_HEARTBEAT_KEY } from '../engine/ai/ai.service';
+import { resetProviderCache } from '../engine/ai/providers';
 import { UsageService } from '../common/usage.service';
 import { AutomationService, predraftBudget } from '../engine/automation.service';
 import { AutopilotService } from '../engine/autopilot.service';
@@ -763,7 +764,13 @@ export class WorkerService implements OnApplicationShutdown {
     const counts: Record<string, unknown> = {};
     for (const [name, q] of this.queues) counts[name] = await q.getJobCounts('waiting', 'active', 'delayed', 'failed');
     const pendingOutbox = await this.prisma.outboxEvent.count({ where: { processingState: 'pending' } });
-    if (Date.now() - this.installedProviders.at > PROVIDER_CHECK_EVERY_MS) this.installedProviders = { at: Date.now(), value: await this.ai.installedProviders() };
+    // Arayüzden hesap bağlanınca ya da API anahtarı değişince seyrek kontrol beklenmeden tazelenir.
+    const changedAt = await this.ai.providersChangedAt();
+    if (changedAt > this.installedProviders.at) resetProviderCache();
+    if (Date.now() - this.installedProviders.at > PROVIDER_CHECK_EVERY_MS || changedAt > this.installedProviders.at) {
+      this.installedProviders = { at: Date.now(), value: await this.ai.installedProviders() };
+      await this.ai.refreshCodexModels().catch((e) => this.logger.warn(`ChatGPT model listesi okunamadı: ${(e as Error).message}`));
+    }
     const value = { at: new Date().toISOString(), pid: process.pid, queues: counts, pendingOutbox, providers: this.installedProviders.value } as Prisma.InputJsonValue;
     await this.prisma.keyValue.upsert({ where: { key: WORKER_HEARTBEAT_KEY }, create: { key: WORKER_HEARTBEAT_KEY, value }, update: { value } });
   }

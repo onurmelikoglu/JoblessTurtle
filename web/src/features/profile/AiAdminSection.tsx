@@ -1,4 +1,5 @@
 import { CircleCheck, CirclePause, RefreshCw } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import type { AiStatus, AiUsage } from '@/api/types';
 import { cn } from '@/lib/cn';
 import { fmtCount, fmtDateTime } from '@/lib/format';
@@ -29,7 +30,13 @@ function ProviderList({ providers, cooldowns }: { providers: AiStatus['providers
           );
         })}
       </ul>
-      <p className="text-xs text-ink-soft">Sıra: Claude → ChatGPT → kopyala-yapıştır. Claude limit hatası verirse otomatik olarak ChatGPT kullanılır. ChatGPT için bir kez giriş gerekir: terminalde "docker compose exec -it worker codex login --device-auth".</p>
+      <p className="text-xs text-ink-soft">
+        Sıra: Claude → ChatGPT → API anahtarı → kopyala-yapıştır. Claude limit hatası verirse otomatik olarak sıradaki kullanılır. Hesap bağlamak ya da API anahtarı girmek için{' '}
+        <Link to="/setup" className="font-medium text-brand hover:underline">
+          Kurulum
+        </Link>
+        .
+      </p>
     </SubSection>
   );
 }

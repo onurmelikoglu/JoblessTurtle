@@ -116,7 +116,7 @@ describe('ilan araması: bulunan ilanlar süzülür, tekilleşir ve kaydedilir',
   it('uygunsuz ve kapanmış ilanların firması oluşturulmaz; kullanıcıya bulunan ilan sayısı bildirilir', async () => {
     expect(await h.prisma.company.count({ where: { workspaceId: workspaceOf(u), name: { in: ['Uzak Studio', 'Kapalı Ajans', 'Adressiz'] } } })).toBe(0);
     expect(await h.prisma.job.count({ where: { workspaceId: workspaceOf(u), title: 'Muhasebe Uzmanı' } })).toBe(0);
-    const notes = (await h.http().get('/api/v1/notifications').set(u.auth).expect(200)).body;
+    const notes = (await h.http().get('/api/v1/notifications').set(u.auth).expect(200)).body.items;
     expect(notes.find((n: any) => n.type === 'new_jobs')).toMatchObject({ title: '2 yeni ilan bulundu', body: 'Yeni Ajans — Kreatif Direktör · Bilinen Ajans Group — Art Director' });
   });
 

@@ -12,10 +12,20 @@ export const KARIYER_NET = {
   cityPath: (citySlug: string, page: number) => `/is-ilanlari/${citySlug}${page > 1 ? `-${page}` : ''}`,
   keywordQuery: 'kw',
   /**
+   * Çok şehirli arama: /is-ilanlari?ct=<kodlar>&kw=<pozisyon>, sayfalar "&cp=N". 23 Ekim 2026'da tarayıcıda doğrulandı:
+   * ?ct=34,82,41&kw=creative director tek sayfada Kocaeli ve İstanbul'un iki yakasından ilan getirdi. Kodlar il plaka
+   * kodudur; İstanbul iki kodla (34 ve 82, iki yaka) aranır; site İstanbul adresini kendisi "?ct=34,82" biçimine çevirir.
+   * Hangi kodun hangi yaka olduğu ölçülemedi (ikinci istekte doğrulama sayfası çıktı), bu yüzden İstanbul seçimi her zaman
+   * iki yakayı birden verir. Birden çok pozisyonun tek "kw" içinde VEYA ile aranması doğrulanmadı: pozisyon başına arama.
+   */
+  cityCodesQuery: 'ct',
+  queryPageParam: 'cp',
+  istanbulCodes: [34, 82],
+  /**
    * Eklentinin aktardığı arama sayfaları: şehir, ilçe ("istanbul+avrupa-sisli") ya da pozisyon eki, isteğe bağlı sayfa
    * numarası. İlçe biçimi 23 Ekim 2026'da gerçek sayfadaki bağlantılardan okundu.
    */
-  searchPagePath: /^\/is-ilanlari\/([a-z0-9+-]+?)(?:-\d+)?\/?$/,
+  searchPagePath: /^\/is-ilanlari(?:\/([a-z0-9+-]+?)(?:-\d+)?)?\/?$/,
   listingPath: /^\/is-ilani\/.+-(\d+)\/?$/,
   selectors: {
     listRoot: '[data-test="list-items"]',

@@ -1,5 +1,5 @@
 # Jobless Turtle — yerel/VPS kurulum
-# Kullanım: cp .env.example .env  →  değerleri doldurun  →  docker compose up -d --build
+# Kolay kurulum: ./install.sh (hazır imajları indirir, .env'i üretir). Elle: cp .env.example .env → docker compose up -d --build
 # Arayüz: http://localhost:${WEB_PORT:-8080}   API dokümantasyonu: /api/docs
 name: is-firma-takip
 
@@ -8,7 +8,8 @@ x-backend: &backend
     context: ./backend
     args:
       INSTALL_AI_CLI: ${INSTALL_AI_CLI:-false}
-  image: is-firma-takip/backend:1.0.0
+  # install.sh hazır imajı kullanır (BACKEND_IMAGE); tanımsızsa yerel derleme etiketi.
+  image: ${BACKEND_IMAGE:-is-firma-takip/backend:1.0.0}
   restart: unless-stopped
   env_file: .env
   environment:
@@ -54,6 +55,10 @@ services:
   api:
     <<: *backend
     command: ["api"]
+    # Profilim › Kurulum'daki Claude/ChatGPT girişi API'de çalışır; giriş bilgileri worker ile ortak klasöre yazılır.
+    volumes:
+      - documents:/data/storage
+      - ai-cli-home:/home/node
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 10s
@@ -77,7 +82,7 @@ services:
       context: .
       # Hızlı derleme: `cd web && npm ci && npm run build`, sonra WEB_DOCKERFILE=Dockerfile.prebuilt (bkz. docs/SETUP.md)
       dockerfile: web/${WEB_DOCKERFILE:-Dockerfile}
-    image: is-firma-takip/web:1.0.0
+    image: ${WEB_IMAGE:-is-firma-takip/web:1.0.0}
     restart: unless-stopped
     ports:
       - "${WEB_PORT:-8080}:80"

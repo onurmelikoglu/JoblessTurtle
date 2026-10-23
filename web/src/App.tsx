@@ -10,6 +10,7 @@ import { LoginPage } from '@/features/auth/LoginPage';
 import { HomePage } from '@/features/home/HomePage';
 import { NotificationsPage } from '@/features/notifications/NotificationsPage';
 import { ProfilePage } from '@/features/profile/ProfilePage';
+import { SetupPage } from '@/features/setup/SetupPage';
 import { AppShell } from '@/layout/AppShell';
 import { Button } from '@/ui/Button';
 import { ConfirmProvider } from '@/ui/ConfirmProvider';
@@ -73,6 +74,7 @@ export function App() {
                 <Route element={<Protected />}>
                   <Route index element={<HomePage />} />
                   <Route path="/profile" element={<ProfilePage />} />
+                  <Route path="/setup" element={<SetupPage />} />
                   <Route path="/notifications" element={<NotificationsPage />} />
                 </Route>
                 <Route path="*" element={<Navigate to="/" replace />} />

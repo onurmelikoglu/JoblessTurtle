@@ -1,4 +1,5 @@
 import * as cheerio from 'cheerio';
+import { citySlug } from '../../../domain/provinces';
 import { RawCard } from '../../../domain/scraped-jobs';
 import { fold } from '../../../domain/text';
 import { KARIYER_NET } from '../selectors/kariyer-net';
@@ -16,9 +17,7 @@ export function stripCompanyPrefix(title: string, company: string): string {
 }
 
 /** Şehir adı Kariyer.net adres ekine çevrilir: "İstanbul" → "istanbul", "Kahramanmaraş" → "kahramanmaras". */
-export function kariyerCitySlug(city: string): string {
-  return fold(city).replace(/\s+/g, '-');
-}
+export const kariyerCitySlug = citySlug;
 
 /** Bir sonuç sayfasını kartlara ayırır. Sayfa yapısı yoksa (liste kökü ve kart yok) selector hatası fırlatır. */
 export function parseKariyerNetPage(html: string, ctx: { citySlug: string; page: number }): ParsedPage {

@@ -7,10 +7,17 @@ import { FetchedPage, PageContext, ParsedPage, ScrapeError, SearchTarget } from 
 
 export type KeywordMode = (typeof KEYWORD_MODES)[number];
 
-/** Eklentiden gelen sayfanın araması; şehir adreste yoksa (pozisyon sayfası gibi) null. */
+/** Eklentiden gelen sayfanın araması; adreste şehir yoksa (pozisyon sayfası, ülke geneli arama) boş. */
 export interface ImportedSearch {
-  city: string | null;
+  cities: string[];
   keyword: string | null;
+}
+
+/** Kullanıcının tarayıcısında açılacak bir arama: kapsadığı şehirler (boş: ülke geneli) ve pozisyonlar. */
+export interface BrowserSearch {
+  cities: string[];
+  keywords: string[];
+  url: string;
 }
 
 export interface CollectOptions {
@@ -41,6 +48,13 @@ export abstract class BaseScraper {
   abstract readonly blockMarkers: readonly string[];
   /** Site anahtar kelimeyi arama adresinde destekliyor mu (doğrulanmış biçim)? Desteklemiyorsa ilanlar yerelde süzülür. */
   abstract readonly supportsKeywordQuery: boolean;
+  /** Eklentinin okuma betiğini çalıştırdığı arama sonuç sayfalarının yolu (sitenin kökünde). */
+  abstract readonly searchPagePath: RegExp;
+  /**
+   * Sunucu bu siteyi tarayabilir mi? Site sunucudan gelen her isteği (robots.txt dahil) bot korumasıyla geri çeviriyorsa
+   * false: ilanlar yalnızca kullanıcının tarayıcısındaki eklentiyle alınır, zamanlanmış ya da elle tarama açılmaz.
+   */
+  readonly serverScraping: boolean = true;
 
   abstract searchUrl(target: SearchTarget, page: number): string;
   protected abstract parse(html: string, ctx: PageContext): ParsedPage;
@@ -119,6 +133,20 @@ export abstract class BaseScraper {
    * okunabildiği kadar), değilse null. Başka bir adresten gelen veri kaydedilmez.
    */
   abstract searchOfPage(url: URL): ImportedSearch | null;
+
+  /** Kullanıcının kendi tarayıcısında açacağı arama adresi; sunucu taramasının erişemediği arama biçimleri de olabilir. */
+  browserSearchUrl(target: SearchTarget): string {
+    return this.searchUrl(target, 1);
+  }
+
+  /**
+   * Profilin pozisyonları ve şehirleri için en az sayıda tarayıcı araması. Varsayılan pozisyon × şehir; site tek aramada
+   * birden çok şehri ya da pozisyonu kabul ediyorsa (gerçek sayfada doğrulanmış biçimle) alt sınıf birleştirir.
+   */
+  browserSearches(titles: string[], cities: string[]): BrowserSearch[] {
+    const keywords: (string | null)[] = titles.length ? titles : [null];
+    return keywords.flatMap((keyword) => cities.map((city) => ({ cities: [city], keywords: keyword ? [keyword] : [], url: this.browserSearchUrl({ city, keyword }) })));
+  }
 
   /** Bir aramanın sayfaları: sayfa alınamazsa o arama biter (sonraki sayfa bilinemez); yeni ilan çıkmayan sayfada durulur. */
   private async collectTarget(client: ScraperHttpClient, target: SearchTarget, opts: CollectOptions, hooks: CollectHooks): Promise<void> {

@@ -1064,6 +1064,8 @@ model ScraperRun {
   errors          Json      @default("[]")
   errorSummary    String?
   requestedById   String?
+  // Eklenti aktarımının gittiği çalışma alanı: aramayı uygulamada başlatan hesabınki (etiketsiz aktarımda anahtar sahibininki).
+  targetWorkspaceId String?
   queuedAt        DateTime  @default(now())
   startedAt       DateTime?
   finishedAt      DateTime?

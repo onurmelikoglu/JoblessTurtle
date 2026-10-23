@@ -137,7 +137,7 @@ describe('otopilot: "Otomatik başvur" açıkken geri dönen başvuru kendiliği
     expect((await h.prisma.applicationAttempt.findUniqueOrThrow({ where: { id: retry.id } })).state).toBe('provider_accepted');
     const [before, after] = await Promise.all([sentContent(first), sentContent(retry)]);
     expect([after.subject, after.body, after.documentIds]).toEqual([before.subject, before.body, before.documentIds]);
-    const notes = (await h.http().get('/api/v1/notifications').set(u.auth).expect(200)).body;
+    const notes = (await h.http().get('/api/v1/notifications').set(u.auth).expect(200)).body.items;
     expect(notes.find((n: any) => n.type === 'autopilot').title).toBe('Otopilot: siradaki ajans başvurusu yeniden gönderiliyor');
   });
 
@@ -469,7 +469,7 @@ describe('otopilot: gelen kutusundan günlüğe', () => {
     expect(await h.prisma.autopilotAction.findUnique({ where: { inboundMessageId: tooOld.id } })).toBeNull();
     expect(await retryOf(first.id)).toBeNull();
     await h.worker.drain();
-    const notes = (await h.http().get('/api/v1/notifications').set(u.auth).expect(200)).body;
+    const notes = (await h.http().get('/api/v1/notifications').set(u.auth).expect(200)).body.items;
     expect(notes.some((n: any) => n.type === 'autopilot' && /mail dönüşü için öneri hazırladı/.test(n.title))).toBe(true);
     expect((await autopilot.sweep(workspaceId())).proposed).toBe(0);
 

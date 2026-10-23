@@ -295,6 +295,13 @@ echo '{"type":"result","is_error":false,"result":"{\\"ok\\": true}"}'
     expect(providerOrderFor('company_contacts', ['cli_claude', 'template'])).toEqual(['cli_claude', 'template']);
   });
 
+  it('yöneticinin görev için seçtiği sağlayıcı önce denenir, diğeri yedek kalır; kurulu olmayan seçim sırayı değiştirmez', () => {
+    expect(providerOrderFor('company_contacts', ['cli_claude', 'cli_codex', 'manual', 'template'], 'cli_codex')).toEqual(['cli_codex', 'cli_claude', 'manual', 'template']);
+    expect(providerOrderFor('company_report', ['cli_claude', 'cli_codex', 'template'], 'cli_codex')).toEqual(['cli_codex', 'cli_claude', 'template']);
+    expect(providerOrderFor('company_report', ['cli_codex', 'cli_claude', 'template'], 'cli_claude')).toEqual(['cli_claude', 'cli_codex', 'template']);
+    expect(providerOrderFor('company_report', ['cli_claude', 'manual', 'template'], 'cli_codex')).toEqual(['cli_claude', 'manual', 'template']);
+  });
+
   it('istenen model CLI argümanına geçer', async () => {
     await cliClaudeProvider.complete('istem', { kind: 'cv_facts', model: 'haiku' });
     expect(readFileSync(argsFile, 'utf8')).toContain('--model haiku');
