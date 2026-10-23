@@ -58,8 +58,13 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: |
+            web/package-lock.json
+            backend/package-lock.json
       - run: npm ci
+      # Arayüz sözleşme tiplerini backend/src/contracts'tan alır; o dosyaların içe aktardığı paketlerin (zod) tipleri gerekir.
+      - run: npm ci --ignore-scripts
+        working-directory: backend
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
