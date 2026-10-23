@@ -11,6 +11,11 @@ export const KARIYER_NET = {
   origin: 'https://www.kariyer.net',
   cityPath: (citySlug: string, page: number) => `/is-ilanlari/${citySlug}${page > 1 ? `-${page}` : ''}`,
   keywordQuery: 'kw',
+  /**
+   * Eklentinin aktardığı arama sayfaları: şehir, ilçe ("istanbul+avrupa-sisli") ya da pozisyon eki, isteğe bağlı sayfa
+   * numarası. İlçe biçimi 23 Ekim 2026'da gerçek sayfadaki bağlantılardan okundu.
+   */
+  searchPagePath: /^\/is-ilanlari\/([a-z0-9+-]+?)(?:-\d+)?\/?$/,
   listingPath: /^\/is-ilani\/.+-(\d+)\/?$/,
   selectors: {
     listRoot: '[data-test="list-items"]',

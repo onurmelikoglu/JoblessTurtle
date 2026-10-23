@@ -11,6 +11,7 @@ import { AccountSection } from './AccountSection';
 import { AdminSection } from './AdminSection';
 import { AiAdminSection } from './AiAdminSection';
 import { DocumentsSection } from './DocumentsSection';
+import { ExtensionSection } from './ExtensionSection';
 import { LearningAdminSection } from './LearningAdminSection';
 import { LettersSection } from './LettersSection';
 import { MailSection } from './MailSection';
@@ -38,6 +39,7 @@ export function ProfilePage() {
           <DocumentsSection setup={setup} onPolicy={setPolicyBlocker} />
           <MailSection setup={setup} onPolicy={setPolicyBlocker} />
           <LettersSection />
+          <ExtensionSection />
           <AccountSection />
           {me.user.isAdmin && (
             <>

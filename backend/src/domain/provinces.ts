@@ -14,3 +14,8 @@ const PROVINCES = [
 export function provinceByPlate(plate: number): string | null {
   return Number.isInteger(plate) && plate >= 1 && plate <= PROVINCES.length ? PROVINCES[plate - 1] : null;
 }
+
+/** Adı koşula uyan il ("istanbul" adres ekine karşılık gelen il gibi); yoksa null. */
+export function findProvince(matches: (name: string) => boolean): string | null {
+  return PROVINCES.find(matches) ?? null;
+}

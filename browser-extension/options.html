@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <title>Jobless Turtle — eklenti ayarları</title>
+    <style>
+      body { font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; color: #1b1b1b; background: #f6f7f5; margin: 0; }
+      main { max-width: 560px; margin: 40px auto; padding: 24px; background: #fff; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.08); }
+      h1 { font-size: 18px; margin: 0 0 4px; color: #0E5138; }
+      p.lead { margin: 0 0 20px; color: #555; }
+      label { display: block; font-weight: 600; margin: 16px 0 6px; }
+      input { width: 100%; box-sizing: border-box; padding: 9px 10px; border: 1px solid #ccd3cf; border-radius: 8px; font: inherit; }
+      .hint { font-size: 12px; color: #666; margin-top: 4px; }
+      .row { display: flex; gap: 10px; margin-top: 20px; }
+      button { border: 0; border-radius: 8px; padding: 9px 16px; font: 600 14px/1 inherit; font-family: inherit; cursor: pointer; background: #0E5138; color: #fff; }
+      button.secondary { background: #e7ece9; color: #0E5138; }
+      #status { margin-top: 16px; min-height: 20px; }
+      #status.ok { color: #0E5138; }
+      #status.error { color: #c53030; }
+      ul { padding-left: 18px; color: #444; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Jobless Turtle — ilan aktarıcı</h1>
+      <p class="lead">Kariyer.net ve Indeed'de açtığın arama sonuç sayfalarındaki ilanları uygulamana aktarır.</p>
+      <form id="form">
+        <label for="appUrl">Uygulama adresi</label>
+        <input id="appUrl" type="url" placeholder="http://localhost:8080" required />
+        <div class="hint">Jobless Turtle'ı tarayıcında açtığın adres. Kaydedince Chrome bu adrese erişim izni ister.</div>
+        <label for="importKey">Eklenti anahtarı</label>
+        <input id="importKey" type="password" autocomplete="off" placeholder="jt_…" required />
+        <div class="hint">Uygulamada Profilim → Tarayıcı eklentisi → Anahtar üret.</div>
+        <div class="row">
+          <button type="submit">Kaydet ve dene</button>
+          <button type="button" class="secondary" id="test">Bağlantıyı dene</button>
+        </div>
+      </form>
+      <div id="status" role="status"></div>
+      <ul>
+        <li>Eklenti yalnızca senin açtığın sayfayı okur; siteye kendi başına istek atmaz, gezinmez, tıklamaz.</li>
+        <li>Sayfada doğrulama (CAPTCHA) çıkarsa aktarım yapılmaz; doğrulamayı tamamlayıp tekrar dene.</li>
+        <li>Uygulamadaki "Kariyer.net'te ara" / "Indeed'de ara" bağlantılarıyla açılan sekmede her sonuç sayfası kendiliğinden aktarılır.</li>
+      </ul>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

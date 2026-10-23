@@ -7,6 +7,12 @@ import { FetchedPage, PageContext, ParsedPage, ScrapeError, SearchTarget } from 
 
 export type KeywordMode = (typeof KEYWORD_MODES)[number];
 
+/** Eklentiden gelen sayfanın araması; şehir adreste yoksa (pozisyon sayfası gibi) null. */
+export interface ImportedSearch {
+  city: string | null;
+  keyword: string | null;
+}
+
 export interface CollectOptions {
   cities: string[];
   keywords: string[];
@@ -75,6 +81,45 @@ export abstract class BaseScraper {
     await runPool(this.targets(opts.cities, opts.keywords, mode), opts.concurrency, (target) => this.collectTarget(client, target, { ...opts, keywordMode: mode }, hooks), hooks.stopped);
   }
 
+  /** Sayfanın kartları standart ilana çevrilir; zorunlu alanı eksik kart uydurulmaz, yerel anahtar kelime süzgeci uygulanır. */
+  listingsOf(parsed: ParsedPage, searchedCity: string | null, opts: Pick<CollectOptions, 'keywordMode' | 'keywords' | 'now'>, onReject: (reason: CardRejection) => void) {
+    const listings: ScrapedListing[] = [];
+    const ids: string[] = [];
+    let valid = 0;
+    for (const card of parsed.cards) {
+      const listing = normalizeCard(this.source, card, { origin: this.origin, searchedCity, now: opts.now });
+      if (isRejection(listing)) {
+        onReject(listing);
+        continue;
+      }
+      valid++;
+      ids.push(listing.externalId);
+      if (opts.keywordMode === 'local_filter' && !matchesKeywords(listing, opts.keywords)) continue;
+      listings.push(listing);
+    }
+    return { listings, valid, ids };
+  }
+
+  unreadableCards(count: number, url: string): ScrapeError {
+    return new ScrapeError('selector', `${count} kartın hiçbirinden firma, unvan, şehir ve bağlantı birlikte okunamadı; kart düzeni değişmiş olabilir`, { url });
+  }
+
+  /**
+   * Kullanıcının tarayıcısında (Jobless Turtle eklentisi) çalışan okuma betiği: kullanıcının açtığı sayfadaki kartları,
+   * sonraki sayfa bilgisini ve doğrulama sayfası işaretini "JT_PAGE {…}" metni olarak döndürür. Betik siteye istek atmaz,
+   * gezinmez, tıklamaz, yazmaz.
+   */
+  abstract browserScript(): string;
+
+  /** Betiğin döndürdüğü veriyi sunucudaki kart biçimine çevirir; doğrulama sayfasıysa "blocked", yapı yoksa "selector" hatası. */
+  abstract fromBrowser(payload: unknown, url: string): ParsedPage;
+
+  /**
+   * Eklentinin gönderdiği adres bu sitenin arama sonuç sayfası mı? Öyleyse aranan şehir ve anahtar kelime (adresten
+   * okunabildiği kadar), değilse null. Başka bir adresten gelen veri kaydedilmez.
+   */
+  abstract searchOfPage(url: URL): ImportedSearch | null;
+
   /** Bir aramanın sayfaları: sayfa alınamazsa o arama biter (sonraki sayfa bilinemez); yeni ilan çıkmayan sayfada durulur. */
   private async collectTarget(client: ScraperHttpClient, target: SearchTarget, opts: CollectOptions, hooks: CollectHooks): Promise<void> {
     const seen = new Set<string>();
@@ -87,29 +132,15 @@ export abstract class BaseScraper {
         hooks.pageFailed(e instanceof ScrapeError ? e : new ScrapeError('parse', errorMessage(e), { url: ctx.url }), ctx);
         return;
       }
-      const listings: ScrapedListing[] = [];
-      let valid = 0;
-      let unseen = 0;
-      for (const card of parsed.cards) {
-        const listing = normalizeCard(this.source, card, { origin: this.origin, searchedCity: target.city, now: opts.now });
-        if (isRejection(listing)) {
-          hooks.cardRejected(listing, ctx);
-          continue;
-        }
-        valid++;
-        if (!seen.has(listing.externalId)) {
-          seen.add(listing.externalId);
-          unseen++;
-        }
-        if (opts.keywordMode === 'local_filter' && !matchesKeywords(listing, opts.keywords)) continue;
-        listings.push(listing);
-      }
+      const { listings, valid, ids } = this.listingsOf(parsed, target.city, opts, (reason) => hooks.cardRejected(reason, ctx));
+      const unseen = ids.filter((id) => !seen.has(id));
+      unseen.forEach((id) => seen.add(id));
       if (parsed.cards.length && !valid) {
-        hooks.pageFailed(new ScrapeError('selector', `${parsed.cards.length} kartın hiçbirinden firma, unvan, şehir ve bağlantı birlikte okunamadı; kart düzeni değişmiş olabilir`, { url: ctx.url }), ctx);
+        hooks.pageFailed(this.unreadableCards(parsed.cards.length, ctx.url), ctx);
         return;
       }
       await hooks.pageDone(listings, ctx, parsed.cards.length);
-      if (!parsed.hasNextPage || !unseen) return;
+      if (!parsed.hasNextPage || !unseen.length) return;
     }
   }
 }

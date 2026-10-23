@@ -10,6 +10,8 @@ describe('bildirim bağlantıları', () => {
 
   it('gönderim ve yanıtlar başvurunun ayrıntısını, mail dönüşü o maili açar', () => {
     expect(appTarget('/applications?attempt=a1', 'send_accepted')).toBe('/?tab=basvurular&basvuru=a1');
+    expect(appTarget('/applications?attempt=a2', 'applied_company_job')).toBe('/?tab=basvurular&basvuru=a2');
+    expect(appTarget(null, 'applied_company_job')).toBe('/?tab=basvurular');
     expect(appTarget('/inbox?id=m1', 'bounce')).toBe('/?tab=donusler&donus=m1');
   });
 

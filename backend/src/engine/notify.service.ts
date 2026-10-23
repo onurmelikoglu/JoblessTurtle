@@ -4,6 +4,13 @@ import { env } from '../common/env';
 import { PrismaService } from '../common/prisma.service';
 import { hhmmToMinutes, istanbulDay, istanbulNow } from '../common/time';
 
+/** Bildirimler 30 gün tutulur: daha eskiler hiçbir listede gösterilmez ve worker her gün siler. */
+export const NOTIFICATION_RETENTION_DAYS = 30;
+
+export function notificationCutoff(now = new Date()): Date {
+  return new Date(now.getTime() - NOTIFICATION_RETENTION_DAYS * 86_400_000);
+}
+
 export interface NotifyPayload {
   type: string;
   title: string;

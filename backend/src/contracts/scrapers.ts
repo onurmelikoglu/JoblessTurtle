@@ -112,3 +112,50 @@ export interface ScraperRunRequest {
 export interface ScraperRunResponse {
   runs: (ScraperRunView & { already_running: boolean })[];
 }
+
+/** Eklentinin aktardığı sayfanın sonucu. verification: sayfada doğrulama (CAPTCHA) vardı, çalışma açılmadı. */
+export type ScraperImportResult =
+  | {
+      status: 'imported';
+      run_id: string;
+      state: 'succeeded' | 'partial';
+      listings_found: number;
+      listings_new: number;
+      listings_updated: number;
+      /** Kullanıcının arama profillerine yeni eklenen ilan sayısı. */
+      forwarded: number;
+      has_next_page: boolean;
+    }
+  | { status: 'verification'; message: string }
+  | { status: 'failed'; run_id: string; message: string };
+
+export interface ScraperImportRequest {
+  source: ScraperSource;
+  url: string;
+  /** Okuma betiğinin döndürdüğü "JT_PAGE " sonrası JSON. */
+  payload: unknown;
+}
+
+export interface ExtensionSearch {
+  source: ScraperSource;
+  label: string;
+  city: string;
+  keyword: string | null;
+  url: string;
+}
+
+export interface ExtensionSearchesResponse {
+  searches: ExtensionSearch[];
+}
+
+/** Eklenti anahtarının durumu; anahtarın kendisi yalnızca üretildiği yanıtta bir kez döner. */
+export interface ExtensionKeyStatus {
+  exists: boolean;
+  created_at: IsoDate | null;
+  last_used_at: IsoDate | null;
+}
+
+export interface ExtensionKeyCreated {
+  key: string;
+  created_at: IsoDate;
+}

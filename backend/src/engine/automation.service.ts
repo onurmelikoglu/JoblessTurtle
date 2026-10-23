@@ -12,6 +12,7 @@ import { contactVerifiedForSending, SENDABLE_CONTACT_KINDS } from '../domain/con
 import { evaluatePolicy, PolicyDecision, REASON_LABELS, ReasonCode } from '../domain/policy';
 import { IntentType } from '../domain/templates';
 import { istanbulDay } from '../common/time';
+import { AppliedCompaniesService } from './applied-companies.service';
 import { DraftingService, intentForCategory, intentForOpportunity, pickContact } from './drafting.service';
 import { CandidateFactsService } from './candidate-facts.service';
 import { LearnedModelsService } from './learned-models.service';
@@ -68,6 +69,7 @@ export class AutomationService {
     private readonly outbox: OutboxService,
     private readonly candidateFacts: CandidateFactsService,
     private readonly models: LearnedModelsService,
+    private readonly appliedCompanies: AppliedCompaniesService,
   ) {}
 
   private async refreshCandidateFacts(candidateId: string) {
@@ -220,6 +222,8 @@ export class AutomationService {
   async onOpportunity(opportunityId: string) {
     const opp = await this.prisma.opportunity.findUnique({ where: { id: opportunityId } });
     if (!opp || opp.status === 'dismissed' || opp.status === 'applied' || opp.category === 'excluded') return [];
+    // Başvurulan firmanın (başka adla açılmış kaydı dahil) yeni ilanı yalnızca bildirimdir; taslak ve otomatik başvuru yapılmaz.
+    if (await this.appliedCompanies.matchOf(opp.workspaceId, opp.companyId)) return [];
     const policies = await this.prisma.automationPolicy.findMany({ where: { workspaceId: opp.workspaceId, searchProfileId: opp.searchProfileId, active: true } });
     const results = [];
     for (const policy of policies) {
@@ -357,13 +361,14 @@ export class AutomationService {
       },
       orderBy: [{ f: { sort: 'desc', nulls: 'last' } }, { computedAt: 'desc' }],
       take: limit * PREDRAFT_SCAN_MULTIPLIER,
-      select: { id: true, category: true },
+      select: { id: true, category: true, company: { select: { id: true, name: true, canonicalDomain: true, website: true } } },
     });
+    const applied = await this.appliedCompanies.index(policy.workspaceId);
     const drafted = new Set(
       (await this.prisma.applicationDraft.findMany({ where: { opportunityId: { in: opps.map((o) => o.id) }, status: { in: ACTIVE_DRAFT_STATUSES } }, select: { opportunityId: true } })).map((d) => d.opportunityId),
     );
     return opps
-      .filter((o) => !drafted.has(o.id))
+      .filter((o) => !drafted.has(o.id) && !applied.match(o.company))
       .sort((a, b) => PREDRAFT_CATEGORIES.indexOf(a.category) - PREDRAFT_CATEGORIES.indexOf(b.category))
       .slice(0, limit)
       .map((o) => o.id);

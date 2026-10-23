@@ -41,7 +41,12 @@ const ERROR_KIND: Record<ScraperErrorKind, string> = {
   forward: 'çalışma alanına aktarım',
 };
 
+const SOURCE_LABEL: Record<string, string> = { kariyer_net: 'Kariyer.net', indeed: 'Indeed' };
+
 export const healthOf = (health: ScraperHealth) => HEALTH[health];
+
+/** Çalışmanın sitesi; tarayıcı eklentisinden gelen aktarım ayrıca belirtilir (sunucu taraması değildir). */
+export const runSourceLabel = (run: Pick<ScraperRunView, 'source' | 'trigger'>) => `${SOURCE_LABEL[run.source] ?? run.source}${run.trigger === 'extension' ? ' (eklenti)' : ''}`;
 export const stateLabel = (state: ScraperRunState) => STATE_LABEL[state];
 export const stateTone = (state: ScraperRunState) => STATE_TONE[state];
 

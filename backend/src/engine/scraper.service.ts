@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma, ScraperRun } from '@prisma/client';
 import { env } from '../common/env';
-import { ScraperHealth, ScraperRunState, ScraperRunView, ScraperSourceStatus, ScraperStatus } from '../contracts/scrapers';
+import { ExtensionSearch, ScraperHealth, ScraperImportResult, ScraperRunState, ScraperRunView, ScraperSourceStatus, ScraperStatus } from '../contracts/scrapers';
 import { ServerShape } from '../contracts/wire';
 import { AppError, errorMessage } from '../common/errors';
 import { OutboxService } from '../common/outbox.service';
@@ -10,12 +10,14 @@ import { listingExternalId, normalizeListingUrl } from '../domain/job-search';
 import { CardRejection, cityKeysOf, isConfidentialCompany, listingInCities, ScrapedListing } from '../domain/scraped-jobs';
 import {
   applyScraperConfigPatch,
+  EXTENSION_IMPORT_HASH,
   isScraperSource,
   resolveScraperConfig,
   SCRAPER_LABELS,
   SCRAPER_SOURCES,
   ScraperConfig,
   ScraperSource,
+  searchTargetsOf,
   sourceTargets,
   WORKSPACE_SOURCE_KIND,
 } from '../domain/scraper-config';
@@ -25,7 +27,7 @@ import { defaultFetcher, ScraperHttpClient } from './scrapers/http-client';
 import { RateLimiter, realSleep, Sleep } from './scrapers/rate-limiter';
 import { SCRAPERS } from './scrapers/registry';
 import { ScrapedJobRepository, UpsertOutcome } from './scrapers/scraped-job.repository';
-import { PageContext, PageFetcher, RunError, ScrapeError, STOPPING_ERRORS } from './scrapers/types';
+import { PageContext, PageFetcher, ParsedPage, RunError, ScrapeError, STOPPING_ERRORS } from './scrapers/types';
 
 const CONFIG_KEY = 'scraper:config';
 const ACTIVE_STATES = ['queued', 'running'];
@@ -36,7 +38,10 @@ const MAX_REQUEST_KEYWORDS = 20;
 const MAX_REQUEST_PAGES = 10;
 const HOUR_MS = 3600_000;
 
-export type RunTrigger = 'schedule' | 'manual' | 'api';
+export type RunTrigger = 'schedule' | 'manual' | 'api' | 'extension';
+
+/** Eklenti çalışmaları kullanıcının açtığı sayfadan gelir: zamanlamayı, site kilidini ve sitenin sağlık durumunu etkilemez. */
+const EXTENSION_TRIGGER = 'extension';
 
 export interface RunRequest {
   source: ScraperSource;
@@ -74,6 +79,13 @@ export function toPublicRun(run: ScraperRun): ServerShape<ScraperRunView> {
 }
 
 export type PublicRun = ServerShape<ScraperRunView>;
+
+export interface PageImport {
+  userId: string;
+  source: unknown;
+  url: string;
+  payload: unknown;
+}
 
 /** Yöneticiye bildirilen sorun: sitenin engellemesi, hız sınırı ya da sayfa düzeninin değişmesi. */
 function problemOf(run: Pick<ScraperRun, 'state' | 'errors'>): 'blocked' | 'rate_limited' | 'selector' | null {
@@ -156,7 +168,7 @@ export class ScraperService {
     const maxPages = Math.min(Math.max(Math.trunc(req.max_pages ?? config.sources[req.source].max_pages), 1), MAX_REQUEST_PAGES);
     return this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`scraper-run:${req.source}`}))`;
-      const active = await tx.scraperRun.findFirst({ where: { source: req.source, state: { in: ACTIVE_STATES } }, orderBy: { queuedAt: 'desc' } });
+      const active = await tx.scraperRun.findFirst({ where: { source: req.source, state: { in: ACTIVE_STATES }, trigger: { not: EXTENSION_TRIGGER } }, orderBy: { queuedAt: 'desc' } });
       if (active) return { run: active, created: false };
       const run = await tx.scraperRun.create({ data: { source: req.source, trigger: req.trigger ?? 'manual', cities, keywords, maxPages, requestedById: req.requestedById ?? null } });
       return { run, created: true };
@@ -180,6 +192,85 @@ export class ScraperService {
     const { run, created } = await this.createRun({ ...req, trigger: req.trigger ?? 'api' });
     if (!created) return { ...toPublicRun(run), already_running: true };
     return { ...toPublicRun(await this.execute(run.id)), already_running: false };
+  }
+
+  // ───────────── Tarayıcı eklentisi ─────────────
+
+  /**
+   * Kullanıcının kendi tarayıcısında açtığı arama sayfasının ilanları (eklentinin okuduğu kartlar). Sunucu siteye istek
+   * atmaz; adres o sitenin arama sayfası değilse veri kaydedilmez. Sayfa doğrulama (CAPTCHA) sayfasıysa çalışma açılmaz:
+   * kullanıcı doğrulamayı kendisi tamamlayıp yeniden dener. Her aktarım bir sayfalık "extension" çalışmasıdır; kayıt,
+   * tekilleştirme ve çalışma alanına aktarım zamanlanmış taramayla aynı yoldan geçer, aktarım yalnızca kullanıcının
+   * çalışma alanlarına yapılır.
+   */
+  async importPage(req: PageImport): Promise<ServerShape<ScraperImportResult>> {
+    if (!isScraperSource(req.source)) throw new AppError(400, 'SCRAPER_UNKNOWN', `Bilinmeyen site: ${String(req.source)}`);
+    const source = req.source;
+    const scraper = SCRAPERS[source];
+    let page: URL;
+    try {
+      page = new URL(req.url);
+    } catch {
+      throw new AppError(400, 'IMPORT_URL_INVALID', 'Sayfa adresi okunamadı');
+    }
+    const search = scraper.searchOfPage(page);
+    if (!search) throw new AppError(400, 'IMPORT_URL_INVALID', `Adres bir ${scraper.label} arama sonuç sayfası değil`);
+    const url = page.toString();
+
+    const tally = new RunTally();
+    let parsed: ParsedPage | null = null;
+    try {
+      parsed = scraper.fromBrowser(req.payload, url);
+    } catch (e) {
+      const error = e instanceof ScrapeError ? e : new ScrapeError('parse', errorMessage(e), { url });
+      if (error.kind === 'blocked') return { status: 'verification', message: `${scraper.label} sayfasında doğrulama var; tamamlayınca yeniden dene.` };
+      this.pageFailed(tally, error);
+    }
+    const now = new Date();
+    const found = parsed ? scraper.listingsOf(parsed, search.city, { keywordMode: 'query', keywords: [], now }, (reason) => (tally.rejected[reason] = (tally.rejected[reason] ?? 0) + 1)) : null;
+    if (parsed && found && parsed.cards.length && !found.valid) this.pageFailed(tally, scraper.unreadableCards(parsed.cards.length, url));
+
+    const config = await this.config();
+    const run = await this.prisma.scraperRun.create({
+      data: { source, trigger: EXTENSION_TRIGGER, state: 'running', startedAt: now, cities: search.city ? [search.city] : [], keywords: search.keyword ? [search.keyword] : [], maxPages: 1, requestedById: req.userId },
+    });
+    if (found && !tally.pagesFailed) await this.absorbPage(tally, run, found.listings, config);
+    const memberships = await this.prisma.membership.findMany({ where: { userId: req.userId }, select: { workspaceId: true } });
+    const finished = await this.complete(run, source, tally, config, { crashed: false, workspaceIds: memberships.map((m) => m.workspaceId) });
+    this.logger.log(`${scraper.label} eklenti aktarımı (${run.id}): ${finished.state} · ${tally.ids.size} ilan, ${tally.outcomes.new} yeni · ${finished.forwarded} çalışma alanına`);
+    if (finished.state === 'failed') return { status: 'failed', run_id: run.id, message: finished.errorSummary ?? 'Sayfa okunamadı' };
+    return {
+      status: 'imported',
+      run_id: run.id,
+      state: finished.state as 'succeeded' | 'partial',
+      listings_found: finished.listingsFound,
+      listings_new: finished.listingsNew,
+      listings_updated: finished.listingsUpdated,
+      forwarded: finished.forwarded,
+      has_next_page: parsed?.hasNextPage ?? false,
+    };
+  }
+
+  /**
+   * Profilden eklenti için arama adresleri: Kariyer.net'te şehir sayfası (anahtar kelime adreste doğrulanamadı; ilanlar
+   * profile aktarılırken unvan süzgecinden geçer), Indeed'de unvan × şehir, en yeni önce. Sonundaki "#jt-import" eki
+   * eklentiye bu sekmedeki sonuç sayfalarını kendiliğinden aktarmasını söyler.
+   */
+  async extensionSearches(workspaceId: string): Promise<ServerShape<ExtensionSearch>[]> {
+    const profiles = await this.prisma.searchProfile.findMany({ where: { workspaceId, active: true }, include: { candidate: { select: { city: true } } }, orderBy: { createdAt: 'asc' } });
+    const targets = searchTargetsOf(
+      profiles.map((p) => ({ titles: p.exactTitles.length ? p.exactTitles : p.adjacentTitles, city: p.candidate.city ?? p.city })),
+      sourceTargets(await this.config(), 'kariyer_net').cities,
+    );
+    const link = (source: ScraperSource, city: string, keyword: string | null): ServerShape<ExtensionSearch> => ({
+      source,
+      label: SCRAPER_LABELS[source],
+      city,
+      keyword,
+      url: `${SCRAPERS[source].searchUrl({ city, keyword }, 1)}${EXTENSION_IMPORT_HASH}`,
+    });
+    const keywords = targets.titles.length ? targets.titles : [null];
+    return [...targets.cities.map((city) => link('kariyer_net', city, null)), ...keywords.flatMap((keyword) => targets.cities.map((city) => link('indeed', city, keyword)))];
   }
 
   private assertEnabled() {
@@ -219,20 +310,9 @@ export class ScraperService {
         client,
         { cities: run.cities, keywords: run.keywords, keywordMode: own.keyword_mode, maxPages: run.maxPages, concurrency: own.concurrency, now: new Date() },
         {
-          pageDone: async (listings) => {
-            tally.pagesVisited++;
-            for (const listing of listings) {
-              if (tally.ids.has(listing.externalId)) continue;
-              tally.ids.add(listing.externalId);
-              const { outcome } = await this.jobs.upsert(listing, run.id, new Date());
-              tally.outcomes[outcome]++;
-              tally.seen.push(listing);
-              if (outcome === 'new' || (!config.notify_only_new && outcome === 'updated')) tally.toForward.push(listing);
-            }
-          },
+          pageDone: (listings) => this.absorbPage(tally, run, listings, config),
           pageFailed: (error, ctx) => {
-            tally.pagesFailed++;
-            tally.error({ kind: error.kind, message: error.message, status: error.detail.status, url: error.detail.url }, ctx);
+            this.pageFailed(tally, error, ctx);
             this.logger.warn(`${scraper.label} [${error.kind}] ${ctx.target.city}${ctx.target.keyword ? `/${ctx.target.keyword}` : ''} s.${ctx.page}: ${error.message}`);
             if (STOPPING_ERRORS.includes(error.kind)) tally.stop ??= error;
           },
@@ -247,12 +327,45 @@ export class ScraperService {
       tally.error({ kind: 'parse', message: `Beklenmeyen hata: ${errorMessage(e)}` });
       this.logger.error(`${scraper.label} taraması beklenmedik biçimde durdu: ${errorMessage(e)}`);
     }
+    const finished = await this.complete(run, source, tally, config, { crashed: crash !== null, workspaceIds: null });
+    const state = finished.state;
+    this.logger.log(
+      `${scraper.label} taraması bitti (${run.id}): ${state} · ${tally.pagesVisited} sayfa (${tally.pagesFailed} hatalı) · ${tally.ids.size} ilan, ${tally.outcomes.new} yeni, ${tally.outcomes.updated} güncellenen · ${client.requests} istek`,
+    );
+    await this.reportProblem(finished).catch((e) => this.logger.warn(`Tarama bildirimi gönderilemedi: ${errorMessage(e)}`));
+    return finished;
+  }
+
+  /** Sayfanın ilanları ortak kayda tekilleştirilerek yazılır; aynı çalışmada ikinci kez görülen ilan sayılmaz. */
+  private async absorbPage(tally: RunTally, run: ScraperRun, listings: ScrapedListing[], config: ScraperConfig) {
+    tally.pagesVisited++;
+    for (const listing of listings) {
+      if (tally.ids.has(listing.externalId)) continue;
+      tally.ids.add(listing.externalId);
+      const { outcome } = await this.jobs.upsert(listing, run.id, new Date());
+      tally.outcomes[outcome]++;
+      tally.seen.push(listing);
+      if (outcome === 'new' || (!config.notify_only_new && outcome === 'updated')) tally.toForward.push(listing);
+    }
+  }
+
+  private pageFailed(tally: RunTally, error: ScrapeError, ctx?: PageContext) {
+    tally.pagesFailed++;
+    tally.error({ kind: error.kind, message: error.message, status: error.detail.status, url: error.detail.url }, ctx);
+  }
+
+  /**
+   * Çalışmanın sonucu: durum, süresi dolan ilanlar, çalışma alanlarına aktarım ve kayıt. workspaceIds verilirse
+   * (eklenti) aktarım yalnızca o çalışma alanlarının profillerine yapılır ve görülen her ilan aktarılmaya aday olur:
+   * çalışma alanında zaten olan ilan tekilleştirmede elenir, ortak kayıtta "yeni" olmasa da bu kullanıcıya yeni olabilir.
+   */
+  private async complete(run: ScraperRun, source: ScraperSource, tally: RunTally, config: ScraperConfig, opts: { crashed: boolean; workspaceIds: string[] | null }): Promise<ScraperRun> {
     const rejectedCards = Object.entries(tally.rejected);
     if (rejectedCards.length) tally.error({ kind: 'parse', message: `Zorunlu alanı okunamayan kartlar atlandı: ${rejectedCards.map(([reason, n]) => `${reason} ×${n}`).join(', ')}` });
 
     const state = tally.stop
       ? (tally.stop.kind as 'blocked' | 'rate_limited')
-      : crash || (!tally.pagesVisited && tally.pagesFailed)
+      : opts.crashed || (!tally.pagesVisited && tally.pagesFailed)
         ? 'failed'
         : tally.pagesFailed
           ? 'partial'
@@ -262,13 +375,13 @@ export class ScraperService {
     let forwarded = 0;
     if (config.forward_to_workspaces && tally.seen.length) {
       try {
-        forwarded = await this.forward(run, source, tally.toForward, tally.seen, now);
+        forwarded = await this.forward(run, source, opts.workspaceIds ? tally.seen : tally.toForward, tally.seen, now, opts.workspaceIds);
       } catch (e) {
         tally.error({ kind: 'forward', message: `Çalışma alanlarına aktarılamadı: ${errorMessage(e)}` });
-        this.logger.warn(`${scraper.label} ilanları çalışma alanlarına aktarılamadı: ${errorMessage(e)}`);
+        this.logger.warn(`${SCRAPER_LABELS[source]} ilanları çalışma alanlarına aktarılamadı: ${errorMessage(e)}`);
       }
     }
-    const finished = await this.finish(run, {
+    return this.finish(run, {
       state,
       pagesVisited: tally.pagesVisited,
       pagesFailed: tally.pagesFailed,
@@ -280,11 +393,6 @@ export class ScraperService {
       errors: tally.errors as unknown as Prisma.InputJsonValue,
       errorSummary: tally.stop?.message ?? summarizeErrors(tally.errors),
     });
-    this.logger.log(
-      `${scraper.label} taraması bitti (${run.id}): ${state} · ${tally.pagesVisited} sayfa (${tally.pagesFailed} hatalı) · ${tally.ids.size} ilan, ${tally.outcomes.new} yeni, ${tally.outcomes.updated} güncellenen · ${client.requests} istek`,
-    );
-    await this.reportProblem(finished).catch((e) => this.logger.warn(`Tarama bildirimi gönderilemedi: ${errorMessage(e)}`));
-    return finished;
   }
 
   private finish(run: ScraperRun, data: Prisma.ScraperRunUpdateInput & { state: string }) {
@@ -297,19 +405,19 @@ export class ScraperService {
    * tekilleştirme, firma keşfi ve bildirim ilan aramasıyla aynı yoldan (JobSearchService.applyListings) geçer. Adı gizli
    * firmanın ilanı aktarılmaz: çalışma alanında "Gizli Firma" adında bir firma oluşurdu.
    */
-  private async forward(run: ScraperRun, source: ScraperSource, fresh: ScrapedListing[], seen: ScrapedListing[], now: Date): Promise<number> {
+  private async forward(run: ScraperRun, source: ScraperSource, fresh: ScrapedListing[], seen: ScrapedListing[], now: Date, workspaceIds: string[] | null): Promise<number> {
     const kind = WORKSPACE_SOURCE_KIND[source];
     fresh = fresh.filter((l) => !isConfidentialCompany(l.companyName));
     const seenIds = seen.map((l) => normalizeListingUrl(l.jobUrl)).filter((u): u is string => !!u).map(listingExternalId);
     if (seenIds.length) await this.prisma.jobListing.updateMany({ where: { source: { kind }, externalId: { in: seenIds }, status: { in: ['open', 'unknown'] } }, data: { lastSeenAt: now } });
     if (!fresh.length) return 0;
-    const profiles = await this.prisma.searchProfile.findMany({ where: { active: true }, include: { candidate: { select: { city: true } } }, orderBy: { createdAt: 'asc' } });
+    const profiles = await this.prisma.searchProfile.findMany({ where: { active: true, ...(workspaceIds ? { workspaceId: { in: workspaceIds } } : {}) }, include: { candidate: { select: { city: true } } }, orderBy: { createdAt: 'asc' } });
     let added = 0;
     for (const profile of profiles) {
       const cities = cityKeysOf(profile.candidate.city ?? profile.city);
       const listings = fresh.filter((l) => listingInCities(l, cities)).map((l) => toFoundListing(l));
       if (!listings.length) continue;
-      const stats = await this.jobSearch.applyListings(profile, listings, `scrape-${run.id}-${profile.id}`, { sourceKind: kind, announced: true, origin: `${SCRAPER_LABELS[source]} taraması` });
+      const stats = await this.jobSearch.applyListings(profile, listings, `scrape-${run.id}-${profile.id}`, { sourceKind: kind, announced: true, origin: run.trigger === EXTENSION_TRIGGER ? `${SCRAPER_LABELS[source]} (tarayıcı eklentisi)` : `${SCRAPER_LABELS[source]} taraması` });
       added += stats.fresh;
     }
     return added;
@@ -319,7 +427,7 @@ export class ScraperService {
   private async reportProblem(run: ScraperRun) {
     const problem = problemOf(run);
     if (!problem || !isScraperSource(run.source)) return;
-    const previous = await this.prisma.scraperRun.findFirst({ where: { source: run.source, id: { not: run.id }, finishedAt: { not: null }, state: { notIn: ['skipped', ...ACTIVE_STATES] } }, orderBy: { finishedAt: 'desc' } });
+    const previous = await this.prisma.scraperRun.findFirst({ where: { source: run.source, id: { not: run.id }, trigger: { not: EXTENSION_TRIGGER }, finishedAt: { not: null }, state: { notIn: ['skipped', ...ACTIVE_STATES] } }, orderBy: { finishedAt: 'desc' } });
     if (previous && problemOf(previous) === problem) return;
     const admins = await this.prisma.user.findMany({ where: { isAdmin: true }, select: { memberships: { orderBy: { createdAt: 'asc' }, take: 1, select: { workspaceId: true } } } });
     const workspaces = [...new Set(admins.flatMap((a) => a.memberships.map((m) => m.workspaceId)))];
@@ -338,7 +446,7 @@ export class ScraperService {
 
   /** Sitenin sıradaki otomatik tarama zamanı: son çalışmadan aralık kadar sonra; engel ya da hız sınırından sonra bekleme süresi kadar. */
   async nextRunAt(source: ScraperSource, config: ScraperConfig): Promise<Date> {
-    const last = await this.prisma.scraperRun.findFirst({ where: { source, state: { not: 'skipped' } }, orderBy: { queuedAt: 'desc' } });
+    const last = await this.prisma.scraperRun.findFirst({ where: { source, state: { not: 'skipped' }, trigger: { not: EXTENSION_TRIGGER } }, orderBy: { queuedAt: 'desc' } });
     if (!last) return new Date(0);
     const byInterval = last.queuedAt.getTime() + config.sources[source].interval_hours * HOUR_MS;
     const cooldown = STOPPED_STATES.includes(last.state) ? (last.finishedAt ?? last.queuedAt).getTime() + config.block_cooldown_hours * HOUR_MS : 0;
@@ -379,8 +487,8 @@ export class ScraperService {
     for (const source of SCRAPER_SOURCES) {
       const own = config.sources[source];
       const [last, active, activeJobs, newJobs] = await Promise.all([
-        this.prisma.scraperRun.findFirst({ where: { source, finishedAt: { not: null } }, orderBy: { finishedAt: 'desc' } }),
-        this.prisma.scraperRun.findFirst({ where: { source, state: { in: ACTIVE_STATES } }, orderBy: { queuedAt: 'desc' } }),
+        this.prisma.scraperRun.findFirst({ where: { source, finishedAt: { not: null }, trigger: { not: EXTENSION_TRIGGER } }, orderBy: { finishedAt: 'desc' } }),
+        this.prisma.scraperRun.findFirst({ where: { source, state: { in: ACTIVE_STATES }, trigger: { not: EXTENSION_TRIGGER } }, orderBy: { queuedAt: 'desc' } }),
         this.prisma.scrapedJob.count({ where: { source, status: 'active', duplicateOfId: null } }),
         this.prisma.scrapedJob.count({ where: { source, firstSeenAt: { gte: since }, duplicateOfId: null } }),
       ]);

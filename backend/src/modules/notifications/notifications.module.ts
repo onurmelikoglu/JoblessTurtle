@@ -5,6 +5,7 @@ import { Ctx, RequestContext } from '../../common/auth';
 import { randomCode } from '../../common/crypto';
 import { env } from '../../common/env';
 import { PrismaService } from '../../common/prisma.service';
+import { notificationCutoff } from '../../engine/notify.service';
 
 export const EVENTS_CHANNEL = (ws: string) => `events:${ws}`;
 
@@ -50,7 +51,7 @@ export class NotificationsService implements OnModuleDestroy {
 
   list(ctx: RequestContext, unread: boolean) {
     return this.prisma.notification.findMany({
-      where: { workspaceId: ctx.workspaceId, userId: ctx.userId, channel: 'in_app', ...(unread ? { readAt: null } : {}) },
+      where: { workspaceId: ctx.workspaceId, userId: ctx.userId, channel: 'in_app', createdAt: { gte: notificationCutoff() }, ...(unread ? { readAt: null } : {}) },
       orderBy: { createdAt: 'desc' },
       take: 100,
     });

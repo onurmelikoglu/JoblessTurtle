@@ -2,6 +2,23 @@
 
 ## Yayımlanmamış (dev)
 
+### Tarayıcı eklentisi: açtığın Kariyer.net / Indeed sayfasını aktar
+
+- **Neden.** İki site de sunucudan gelen istekleri bot korumasıyla engelliyor (PerimeterX, Cloudflare); iş alarmı kurmadan ilanları hızlıca almak için kullanıcının kendi tarayıcısında baktığı sayfa okunur.
+- **Eklenti.** `browser-extension/` (Chrome, Manifest V3, derleme yok; Geliştirici modu → Paketlenmemiş öğe yükle). Kariyer.net ve Indeed arama sonuç sayfalarında sağ altta "Jobless Turtle'a aktar" düğmesi; sayfada "52 ilan aktarıldı, 3'ü profiline uyuyor" gibi bir bildirim. Yalnızca açık sayfayı okur: siteye istek atmaz, gezinmez, tıklamaz. Doğrulama sayfasında aktarım yapılmaz, kullanıcı doğrulamayı tamamlayıp tekrar dener. Seçenekler: uygulama adresi + anahtar; kaydedince yalnızca o adres için erişim izni istenir.
+- **Uygulamada.** Firmalar sekmesinde "Kariyer.net'te ara" / "Indeed'de ara" (profilin ilk iki unvanı × şehirleri, yeni sekmede); bu sekmede her sonuç sayfası kendiliğinden aktarılır. Profilim › Tarayıcı eklentisi: kurulum adımları, anahtar üret/yenile/iptal (anahtar bir kez gösterilir).
+- **Sunucu.** `POST /api/v1/scrapers/import` (`X-Import-Token`, sabit zamanlı karşılaştırma, yalnız özet saklanır); adres o sitenin arama sayfası olmalı. Okuma betikleri sunucudaki selector'larla aynı dosyadan üretilir (`npm run extension:extractors`), kayıt/tekilleştirme/aktarım zamanlanmış taramayla aynı yoldan geçer; aktarım yalnızca anahtar sahibinin çalışma alanına yapılır. Her aktarım `trigger: extension` tek sayfalık çalışmadır; site kilidini, zamanlamayı ve sitenin sağlık durumunu etkilemez. Ayrıntı: [docs/SCRAPERS.md › Tarayıcı eklentisi](docs/SCRAPERS.md#tarayıcı-eklentisi-kullanıcının-açtığı-sayfa).
+- **Geçiş.** `ExtensionKey` tablosu eklendi (`20261023100000_extension_keys`, yalnız ekleme). API, worker ve web birlikte güncellenir (worker'daki zamanlayıcı eklenti çalışmalarını yok sayar).
+
+### Başvurulan firmalar Firmalar'da görünmez; bildirimler 30 gün
+
+- **Neden.** Aynı firma farklı ad ya da alan adıyla ikinci kez kayda girebiliyordu ("… (İstanbul)" / "… (Türkiye / İstanbul)", firma.com / firma.com.tr). Firmalar listesi başvuruyu yalnızca kayıt kimliğiyle eşlediği için başvurulan firmanın ikinci kaydı listede kalıyordu; otomatik taslak ve otomatik başvuru da bu kaydı yeni firma sayıyordu.
+- **Firma kimliği.** Ad çekirdeği (parantez içindeki diğer ad dahil; şehir, ülke, hukuki ve genel ekler atılır) ya da alan adı kökü (ülke uzantısından bağımsız) aynı olan kayıtlar aynı firma sayılır. Ad bütün olarak karşılaştırılır: "Unda Studio" ile "Unda Sigorta" ayrı kalır; ortak barındırma alanları (github.io, wixsite…) eşleşme sayılmaz.
+- **Başvurularım'daki firma.** İptal edilmemiş her başvuru (gönderilemeyip listeden kaldırılanlar hariç) firmayı ve aynı firmanın diğer kayıtlarını Firmalar listesinden, fırsat listesinden, otomatik taslaktan ve otomatik başvurudan çıkarır.
+- **Yeni ilan yalnızca bildirim.** Başvurulan firma arama kriterlerine uyan güncel bir ilan yayımlarsa (yayın tarihi son 30 gün ya da bilinmiyor) "Başvurduğun firmada yeni ilan" bildirimi gelir; bildirim başvurunun ayrıntısını açar. Toplu "N yeni ilan" bildirimleri bu ilanları saymaz.
+- **Bildirimler 30 gün.** Listelerde son 30 günün bildirimleri gösterilir; daha eskiler worker tarafından her gün silinir (önceden 90 gün).
+- **Geçiş.** Veritabanı değişikliği yok.
+
 ### İlan sitesi taraması: Kariyer.net ve Indeed
 
 - **Ne yapar.** Kariyer.net ve Indeed'in oturum açmadan görülebilen arama sayfaları şehir (ve isteğe bağlı anahtar kelime) bazında 4 saatte bir taranır; **Profilim › İlan siteleri taraması** bölümünden elle de başlatılır. İlanlar sunucu genelinde ortak bir kayıtta tekilleştirilerek tutulur (platform ilan numarası, yoksa adres özeti; firma + unvan benzerliğiyle yeniden yayın tespiti; ilk/son görülme; içerik değişince güncelleme; görülmeyen ilan silinmez, `missing` → `expired`). Profile uyan yeni ilanlar çalışma alanlarına "Kariyer.net taraması" / "Indeed taraması" kaynağıyla eklenir ve bildirim gelir.

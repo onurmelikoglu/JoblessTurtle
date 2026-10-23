@@ -34,6 +34,7 @@ export function NotificationsPage() {
           Tümünü okundu say
         </Button>
       </div>
+      <p className="-mt-2 text-sm text-ink-soft">Son 30 günün bildirimleri; daha eskiler kendiliğinden silinir.</p>
       {list.isPending ? (
         <LoadingBlock />
       ) : items.length === 0 ? (

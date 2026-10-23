@@ -12,6 +12,7 @@ Yavaş ama kararlı: iş aramanı senin yerine sürdüren, kendi sunucunda çal�
 - **Otopilot ile düzeltir.** Adres geçersizse firmanın sıradaki doğrulanmış adresine gönderir, ek sığmadıysa yalnızca CV ile dener, emin olamadığını onayına bırakır.
 - **İş alarmlarını okur.** Kariyer.net, LinkedIn, Indeed gibi sitelerin otomatik taramaya kapalı ilanlarını, bu sitelerde kurduğun iş alarmlarının maillerinden alıp listeye ekler.
 - **İlan sitelerini tarar.** Kariyer.net ve Indeed'in oturumsuz görülebilen arama sayfalarını 4 saatte bir (ya da elle) tarar; site erişimi engellerse durur ve bildirir. Ayrıntılar ve sitelerin güncel erişim durumu: [docs/SCRAPERS.md](docs/SCRAPERS.md).
+- **Açtığın ilan sayfasını aktarır.** Chrome eklentisi (`browser-extension/`) Kariyer.net ve Indeed'de kendi tarayıcında açtığın arama sonuç sayfasındaki ilanları okuyup aktarır; siteye kendi başına istek atmaz, doğrulama sayfasında durur. Kurulum: [browser-extension/README.md](browser-extension/README.md).
 - **Deneyimden öğrenir.** Hangi adreslerin ulaştığını ve hangi başvurulara yanıt geldiğini kaydeder; yeterli veri birikince sıralamaları buna göre iyileştirir.
 - **Birden çok kullanıcı.** Davet koduyla arkadaşlarını ekleyebilirsin; herkesin ayrı çalışma alanı, CV'si, mail hesabı ve geçmişi olur.
 
@@ -143,6 +144,7 @@ backend/   API ve worker (aynı imaj)
   src/contracts/  arayüzle paylaşılan yanıt tipleri
   prisma/         veri modeli ve geçişler
 web/       React arayüzü
+browser-extension/  Kariyer.net / Indeed sayfalarını aktaran Chrome eklentisi (MV3, derlemesiz)
 docs/      mimari, kurulum, yol haritası
 scripts/   yerel çalıştırma, yedekleme, geri yükleme
 ```

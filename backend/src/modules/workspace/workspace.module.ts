@@ -5,6 +5,7 @@ import { Ctx, RequestContext } from '../../common/auth';
 import { OutboxService } from '../../common/outbox.service';
 import { PrismaService } from '../../common/prisma.service';
 import { ZodPipe } from '../../common/zod.pipe';
+import { notificationCutoff } from '../../engine/notify.service';
 import { SendingService } from '../../engine/sending.service';
 
 const pauseSchema = z.object({ reason: z.string().max(300).optional() });
@@ -73,7 +74,7 @@ export class WorkspaceService {
         orderBy: { name: 'asc' },
       }),
       this.prisma.aiTask.count({ where: { workspaceId: ws, status: 'awaiting_user' } }),
-      this.prisma.notification.findMany({ where: { workspaceId: ws, channel: 'in_app' }, orderBy: { createdAt: 'desc' }, take: 10 }),
+      this.prisma.notification.findMany({ where: { workspaceId: ws, channel: 'in_app', createdAt: { gte: notificationCutoff() } }, orderBy: { createdAt: 'desc' }, take: 10 }),
       this.prisma.applicationAttempt.count({ where: { workspaceId: ws, state: 'submission_unknown' } }),
     ]);
     const heartbeat = await this.prisma.keyValue.findUnique({ where: { key: 'worker:heartbeat' } });

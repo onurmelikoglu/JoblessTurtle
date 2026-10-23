@@ -19,6 +19,7 @@ import { BulkReviewDialog } from './BulkReviewDialog';
 import { CompanyCard, type CompanyCardActions } from './CompanyCard';
 import { activeFilterCount, filterCompanies, focusCompanies, groupByClass, isFocused, parseFilters, scopeCounts, sizeCounts, writeFilters, type CompanyFilters, type CompanyFocus } from './company-filters';
 import { CompanyToolbar } from './CompanyToolbar';
+import { JobSiteSearch } from './JobSiteSearch';
 import { CLASS_INFO, hasEmail } from './model';
 
 const PAGE_SIZE = 40;
@@ -270,6 +271,7 @@ export function CompaniesTab({ data, state }: CompaniesTabProps) {
       {!focused && (
         <>
           <CompanyToolbar filters={filters} onChange={setFilters} totals={data.totals} sizes={sizes} scopes={scopes} shown={filtered.length} busy={busy} onFindSizes={findSizes} />
+          <JobSiteSearch />
           {lookupRow}
         </>
       )}

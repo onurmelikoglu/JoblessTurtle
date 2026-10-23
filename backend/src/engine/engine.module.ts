@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { ActivityService } from './activity.service';
 import { AddressBookService } from './address-book.service';
+import { AppliedCompaniesService } from './applied-companies.service';
 import { AiService } from './ai/ai.service';
 import { AutomationService } from './automation.service';
 import { AutopilotService } from './autopilot.service';
@@ -27,6 +28,7 @@ import { TelegramService } from './telegram.service';
 const SERVICES = [
   ActivityService,
   AddressBookService,
+  AppliedCompaniesService,
   AiService,
   AutomationService,
   AutopilotService,

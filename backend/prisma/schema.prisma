@@ -29,6 +29,7 @@ model User {
   sessions      Session[]
   telegramLink  TelegramLink?
   invitesIssued Invite[]      @relation("InviteIssuer")
+  extensionKey  ExtensionKey?
 }
 
 model Session {
@@ -934,6 +935,16 @@ model TelegramLink {
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
+// Tarayıcı eklentisinin anahtarı: kullanıcı başına bir tane; düz metin bir kez gösterilir, yalnızca özeti saklanır.
+model ExtensionKey {
+  id         String    @id @default(cuid())
+  userId     String    @unique
+  secretHash String
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
 model TelegramLinkCode {
   id        String    @id @default(cuid())
   userId    String
@@ -1038,7 +1049,7 @@ model ScrapedJob {
 model ScraperRun {
   id              String    @id @default(cuid())
   source          String
-  trigger         String    @default("schedule") // schedule | manual | api
+  trigger         String    @default("schedule") // schedule | manual | api | extension
   state           String    @default("queued") // queued | running | succeeded | partial | blocked | rate_limited | failed | skipped
   cities          String[]  @default([])
   keywords        String[]  @default([])

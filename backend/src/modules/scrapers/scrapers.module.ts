@@ -1,13 +1,14 @@
-import { Body, Controller, Get, HttpCode, Module, Param, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, HttpCode, Module, Param, Post, Put, Query } from '@nestjs/common';
 import { z, ZodSchema } from 'zod';
 import { AuditService } from '../../common/audit.service';
-import { AdminOnly, Ctx, RequestContext } from '../../common/auth';
+import { AdminOnly, Ctx, Public, RequestContext } from '../../common/auth';
 import { AppError } from '../../common/errors';
 import { ZodPipe } from '../../common/zod.pipe';
 import { toPublicJob } from '../../domain/scraped-jobs';
 import { SCRAPER_SOURCES } from '../../domain/scraper-config';
 import { ScraperService, toPublicRun } from '../../engine/scraper.service';
 import { ScrapedJobRepository } from '../../engine/scrapers/scraped-job.repository';
+import { ExtensionKeyService } from './extension-key.service';
 
 const NEW_WINDOW_HOURS = 24;
 
@@ -16,6 +17,12 @@ const runSchema = z.object({
   cities: z.array(z.string().trim().min(2).max(60)).min(1).max(30).optional(),
   keywords: z.array(z.string().trim().min(2).max(80)).max(20).optional(),
   max_pages: z.number().int().min(1).max(10).optional(),
+});
+
+const importSchema = z.object({
+  source: z.enum(SCRAPER_SOURCES),
+  url: z.string().trim().min(1).max(2000),
+  payload: z.unknown(),
 });
 
 const isoDate = z
@@ -62,6 +69,7 @@ export class ScrapersController {
     private readonly scraper: ScraperService,
     private readonly jobs: ScrapedJobRepository,
     private readonly audit: AuditService,
+    private readonly extensionKeys: ExtensionKeyService,
   ) {}
 
   @Post('run')
@@ -111,6 +119,50 @@ export class ScrapersController {
     return this.saveConfig(ctx, body);
   }
 
+  // ───────────── Tarayıcı eklentisi ─────────────
+
+  @Get('extension/key')
+  extensionKey(@Ctx() ctx: RequestContext) {
+    return this.extensionKeys.status(ctx.userId);
+  }
+
+  @Post('extension/key')
+  async createExtensionKey(@Ctx() ctx: RequestContext) {
+    const created = await this.extensionKeys.create(ctx.userId);
+    await this.audit.log({ workspaceId: ctx.workspaceId, actorId: ctx.userId, action: 'extension.key.create', entityType: 'ExtensionKey', entityId: ctx.userId });
+    return created;
+  }
+
+  @Delete('extension/key')
+  @HttpCode(204)
+  async revokeExtensionKey(@Ctx() ctx: RequestContext) {
+    await this.extensionKeys.revoke(ctx.userId);
+    await this.audit.log({ workspaceId: ctx.workspaceId, actorId: ctx.userId, action: 'extension.key.revoke', entityType: 'ExtensionKey', entityId: ctx.userId });
+  }
+
+  @Get('extension/searches')
+  async extensionSearches(@Ctx() ctx: RequestContext) {
+    return { searches: await this.scraper.extensionSearches(ctx.workspaceId) };
+  }
+
+  /** Eklentinin seçenekler sayfası anahtarı ve adresi böyle dener; başka bir şey yapmaz. */
+  @Public()
+  @Get('import/check')
+  async checkImportKey(@Headers('x-import-token') key: string | undefined) {
+    const userId = await this.extensionKeys.verify(key);
+    return { ok: true, display_name: await this.extensionKeys.displayName(userId) };
+  }
+
+  /** Kullanıcının tarayıcısında açık arama sayfasının ilanları; oturum yerine eklenti anahtarıyla. Gövde anahtardan sonra doğrulanır. */
+  @Public()
+  @Post('import')
+  @HttpCode(200)
+  async importPage(@Headers('x-import-token') key: string | undefined, @Body() raw: unknown) {
+    const userId = await this.extensionKeys.verify(key);
+    const body = new ZodPipe(importSchema).transform(raw);
+    return this.scraper.importPage({ userId, source: body.source, url: body.url, payload: body.payload });
+  }
+
   @Get('jobs')
   listJobs(@Query(jobsPipe()) q: JobsQuery) {
     return this.list(q, q.only_new ? (q.since ?? new Date(Date.now() - NEW_WINDOW_HOURS * 3600_000)) : undefined);
@@ -135,5 +187,5 @@ export class ScrapersController {
   }
 }
 
-@Module({ controllers: [ScrapersController] })
+@Module({ controllers: [ScrapersController], providers: [ExtensionKeyService] })
 export class ScrapersModule {}

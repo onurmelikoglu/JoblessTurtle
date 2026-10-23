@@ -26,6 +26,18 @@ cd backend && npm run scrapers:check -- indeed İstanbul "Flutter Developer"
 
 Docker içinde: `docker compose exec api node dist/src/scraper-check.js kariyer_net İstanbul`.
 
+## Tarayıcı eklentisi (kullanıcının açtığı sayfa)
+
+Sunucudan erişim engelli olduğu için ilanlar kullanıcının **kendi tarayıcısında açtığı** arama sonuç sayfasından da alınabilir: `browser-extension/` klasöründeki Chrome eklentisi (Manifest V3, derleme yok; kurulum: [browser-extension/README.md](../browser-extension/README.md)).
+
+- **Ne yapar, ne yapmaz.** Eklenti yalnızca açık sayfanın DOM'unu okur. Siteye kendi başına istek atmaz, gezinmez, tıklamaz, sayfaya yazmaz; "bot gibi görünmemek" için bekleme ya da gizlenme yoktur. Sayfada doğrulama (PerimeterX, Cloudflare) varsa aktarım yapılmaz, kullanıcıya "sayfada doğrulama var, tamamlayınca tekrar dene" denir. Gözetimsiz tarayıcı ajanı ve CAPTCHA aşma kapsam dışıdır.
+- **Okuma betikleri sunucuda.** `engine/scrapers/parsers/<site>.browser.ts` sayfayı okuyan betiği (`BaseScraper.browserScript()`) ve çıktısını sunucudaki kart biçimine çeviren fonksiyonu (`fromBrowser()`) birlikte tutar; selector'lar ve bot koruması işaretleri sunucudaki ayrıştırıcıyla aynı dosyadan (`selectors/<site>.ts`) gelir. Betik `"JT_PAGE " + JSON.stringify({ v, source, url, marker, root, next, cards })` döndürür; kartlar kısa dizilerdir. Eklentideki `extractors.js` bu betiklerden **üretilir** (`cd backend && npm run extension:extractors`; MV3 içerik betiğinde eval olmadığı için metin değil kod olarak gömülür). Birim testi dosyanın güncel olduğunu denetler: betik değişip dosya yeniden üretilmezse test kırılır.
+- **Akış.** Sağ alttaki "Jobless Turtle'a aktar" düğmesi → içerik betiği okur → arka plan service worker'ı `POST /api/v1/scrapers/import`'a gönderir (`X-Import-Token`) → sunucu adresin o sitenin arama sayfası olduğunu doğrular (Kariyer.net `www.kariyer.net/is-ilanlari/<ek>(-N)`, şehir ekin ilk parçasından; Indeed `tr.indeed.com/jobs`, şehir `l`, anahtar kelime `q` parametresinden) → `fromBrowser` → `listingsOf` → `ScrapedJobRepository.upsert` → çalışma alanına aktarım zamanlanmış taramayla aynı yoldan. Aktarım yalnızca anahtar sahibinin çalışma alanlarına yapılır; görülen her ilan aday olur (ortak kayıtta "yeni" olmasa da kullanıcıya yeni olabilir), çalışma alanında zaten olan ilan tekilleştirmede elenir. Sayfada küçük bir bildirim çıkar: "52 ilan aktarıldı, 3'ü profiline uyuyor".
+- **Otomatik aktarım.** Uygulamadaki "Kariyer.net'te ara" / "Indeed'de ara" bağlantıları (`GET /api/v1/scrapers/extension/searches`: profilin ilk iki unvanı × şehirleri; Kariyer.net'te şehir sayfası, Indeed'de `/jobs?q=&l=&sort=date`) adresin sonuna `#jt-import` ekler. Eklenti bunu görünce o sekmede (sessionStorage) her sonuç sayfasını bir kez kendiliğinden aktarır; sitenin kendi sayfa geçişleri (Nuxt) için adres değişimi izlenir. Sayfa geçişini kullanıcı yapar.
+- **Çalışma kaydı.** Her aktarım `trigger: 'extension'`, tek sayfalık bir `ScraperRun`'dır. Site kilidine takılmaz, zamanlamayı (`nextRunAt`), sitenin sağlık durumunu ve yönetici bildirimini etkilemez; geçmişte "(eklenti)" olarak görünür. Doğrulama sayfasında çalışma açılmaz (`{ status: 'verification' }`); düzeni değişmiş sayfa `failed` + `selector` hatasıyla kaydedilir.
+- **Anahtar.** Kullanıcı başına bir eklenti anahtarı (`ExtensionKey`): `jt_<kimlik>.<gizli>`; yalnızca gizli kısmın SHA-256 özeti saklanır, karşılaştırma sabit zamanlıdır, düz metin üretildiği yanıtta bir kez döner. Yeni anahtar eskisini geçersiz kılar; Profilim › Tarayıcı eklentisi bölümünden üretilir ve iptal edilir. Eklenti uygulama adresine yalnızca kullanıcının seçenekler sayfasında izin verdiği köken için (isteğe bağlı host izni) istek atar.
+- **Doğrulama (23 Ekim 2026).** Betikler yerleşik tarayıcıda normal kullanıcı gibi açılan sayfalarda çalıştırıldı: Kariyer.net İstanbul şehir sayfasında 53 kartın tüm alanları okundu, sonraki sayfa bulundu; hemen ardından açılan 2. sayfa PerimeterX doğrulaması verdi ve betik bunu `marker: "px-captcha"` olarak bildirdi (geçilmeye çalışılmadı). Indeed `/jobs?q=flutter&l=İstanbul` sayfasında gömülü veriden 6 ilan okundu; sayfadaki görünmez boş kart (gömülü veride yok) DOM yedeğinde unvansız olduğu için atlanır. Okunan veri boş bir test veritabanına `POST /import` ile aktarıldı: 6 ilan, 3'ü test profiline uydu.
+
 ## Mimari
 
 ```
@@ -118,7 +130,7 @@ Akış: zamanlayıcı (worker, dakikada bir, tek lider) ya da API → `ScraperRu
 
 ## REST API
 
-Hepsi oturum ister (`Authorization: Bearer …`). Tarama başlatma ve ayar yazma yalnızca sunucu yöneticisine açıktır; taramalar ve taranan ilanlar sunucu genelinde ortaktır. Tarama isteği bloklamaz: çalışma kuyruğa alınır (`202`), kimliğiyle sorgulanır.
+Eklentinin `import` uçları dışında hepsi oturum ister (`Authorization: Bearer …`). Tarama başlatma ve ayar yazma yalnızca sunucu yöneticisine açıktır; taramalar ve taranan ilanlar sunucu genelinde ortaktır. Tarama isteği bloklamaz: çalışma kuyruğa alınır (`202`), kimliğiyle sorgulanır.
 
 | Uç | Açıklama |
 |---|---|
@@ -130,6 +142,10 @@ Hepsi oturum ister (`Authorization: Bearer …`). Tarama başlatma ve ayar yazma
 | `GET /api/v1/scrapers/jobs` | `?source=&city=&company=&title=&status=&from=&to=&only_new=&since=&include_duplicates=&limit=&cursor=` → `{ items, total, next_cursor }` |
 | `GET /api/v1/scrapers/jobs/new` | `since` (varsayılan son 24 saat) sonrasında ilk kez görülen ilanlar; diğer süzgeçler aynı |
 | `GET /api/v1/scrapers/jobs/{id}` | Tek ilan |
+| `GET`/`POST`/`DELETE /api/v1/scrapers/extension/key` | Eklenti anahtarının durumu (`exists`, `created_at`, `last_used_at`) / yeni anahtar (`{ key, created_at }`, bir kez) / iptal (`204`) |
+| `GET /api/v1/scrapers/extension/searches` | Profilden eklenti arama adresleri: `{ searches: [{ source, label, city, keyword, url }] }` |
+| `POST /api/v1/scrapers/import` | Oturum yerine `X-Import-Token`. `{ source, url, payload }` → `{ status: "imported", run_id, state, listings_found, listings_new, listings_updated, forwarded, has_next_page }` · `{ status: "verification", message }` · `{ status: "failed", run_id, message }`. Anahtar yok/yanlış `401`, adres o sitenin arama sayfası değil `400` |
+| `GET /api/v1/scrapers/import/check` | `X-Import-Token` ile anahtarı dener → `{ ok, display_name }` (eklentinin seçenekler sayfası) |
 
 `city` süzgeci şehir ve ilçede arar; `from`/`to` ilk görülme tarihine uygulanır; yinelenen kayıtlar (`duplicate_of`) `include_duplicates=true` olmadıkça listelenmez. Ölçümler: `pages_visited`, `pages_failed`, `listings_found`, `listings_new`, `listings_updated`, `duplicates`, `forwarded`, `started_at`, `finished_at`, `duration_ms`, `error_summary`, `errors[]`.
 
@@ -150,8 +166,11 @@ Bu yol çalışmayı bu süreçte yürütür ve bitince döner; aynı site için
 4. `engine/scrapers/<site>.scraper.ts`: `BaseScraper`'dan türet (`searchUrl`, `parse`, `supportsKeywordQuery`, `blockMarkers`); `registry.ts`'e ekle.
 5. `engine/connectors/manual.ts`: çalışma alanı kaynağını (`scrape_<site>`) kaydet.
 6. `test/unit/fixtures/scrapers/` altına yapısı gerçek, içeriği kurgusal sayfalar; ayrıştırıcı ve engel algılama testleri.
+7. Eklenti: `parsers/<site>.browser.ts` (tarayıcı betiği + `fromBrowser`), sınıfta `browserScript`, `fromBrowser`, `searchOfPage`; `extension-extractors.ts`'teki `SEARCH_PAGES`'e arama sayfası yolu; `browser-extension/manifest.json`'da `content_scripts.matches`; ardından `npm run extension:extractors`.
 
 ## Testler
 
 - Birim (`test/unit/scrapers.spec.ts`): ayrıştırıcılar kayıtlı sayfalarla, engel ve düzen değişikliği algılama, robots.txt, yeniden deneme/üstel bekleme/Retry-After/403/giriş duvarı, hız sınırlayıcı ve havuz, normalizasyon, kimlik, benzerlik, ayar birleştirme.
+- Birim (`test/unit/scraper-extension.spec.ts`): `fromBrowser` (alanlar, doğrulama/selector/parse ayrımı, boyut sınırları), eklentinin gönderdiği adresin doğrulanması, `extractors.js`'in güncelliği ve betiklerin istek/gezinme yapmaması, profilden arama hedefleri.
+- Uçtan uca (`test/e2e/scraper-import.e2e-spec.ts`): anahtar üretme/yenileme/iptal ve yalnız özetin saklanması, anahtar yok/yanlış `401`, yanlış host/yol `400`, doğrulama yanıtı (çalışma açılmaz), düzen değişikliği, tekilleştirme, yalnız anahtar sahibinin profiline aktarım ve bildirim, eklenti çalışmalarının kilit/zamanlama/sağlık durumunu etkilememesi, arama adresleri. Ağ katmanı istek atılırsa testi düşürür.
 - Uçtan uca (`test/e2e/scrapers.e2e-spec.ts`, gerçek PostgreSQL + Redis, sahte ağ katmanı — gerçek siteye istek atılmaz): sayfalama ve ölçümler, yeniden taramada kayıt açılmaması, içerik güncelleme, yeniden yayın, missing/expired/yeniden etkinleşme, çalışma alanına aktarım ve bildirim, engel/hız sınırı/düzen değişikliği/ağ hatası ayrımı, bir sitenin engelinin diğerini etkilememesi, eşzamanlı ikinci çalışmanın açılmaması, çift teslimde tek yürütme, zamanlayıcı ve zaman aşımı, API süzgeçleri ve sayfalama, yetki ve ayar doğrulaması.

@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Jobless Turtle — ilan aktarıcı",
+  "short_name": "Jobless Turtle",
+  "version": "1.0.0",
+  "description": "Kariyer.net ve Indeed'de açtığın arama sonuç sayfasındaki ilanları Jobless Turtle'a aktarır. Siteye kendi başına istek atmaz.",
+  "icons": { "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
+  "action": { "default_title": "Jobless Turtle ayarları", "default_icon": { "32": "icons/icon-32.png" } },
+  "options_ui": { "page": "options.html", "open_in_tab": true },
+  "background": { "service_worker": "background.js" },
+  "permissions": ["storage"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://www.kariyer.net/is-ilanlari/*", "https://tr.indeed.com/jobs*"],
+      "js": ["extractors.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

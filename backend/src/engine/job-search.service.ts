@@ -21,6 +21,7 @@ import {
 import { normalizeCompanyName, normalizeDomain, stripHtml } from '../domain/text';
 import { classifyTitle } from '../domain/titles';
 import { AiService } from './ai/ai.service';
+import { AppliedCompaniesService } from './applied-companies.service';
 import { detectAtsSource } from './connectors/ats-detect';
 import { RELOCATION_BOARDS, REMOTE_BOARDS } from './connectors/boards';
 import { CLOSED_TEXT, parseJobPostingJsonLd } from './connectors/career-page';
@@ -115,6 +116,7 @@ export class JobSearchService {
     private readonly research: ResearchService,
     private readonly outbox: OutboxService,
     private readonly learning: LearningService,
+    private readonly appliedCompanies: AppliedCompaniesService,
   ) {}
 
   async queryLog(searchProfileId: string): Promise<JobQueryLog> {
@@ -307,16 +309,22 @@ export class JobSearchService {
     await this.followOfficialSources(workspaceId, open, companies, new Set([...strangers.values()].flat().map((c) => c.externalId)));
 
     const stats: JobSearchStats = { returned: listings.length, accepted: candidates.size, fresh: open.length, known: knownIds.size, closed: fresh.length - open.length, newCompanies: strangers.size, rejected };
-    if (open.length) {
-      const added = await this.prisma.jobListing.findMany({ where: { sourceId: source.id, externalId: { in: open.map((c) => c.externalId) } }, select: { jobId: true } });
+    // Başvurulan firmaların ilanları bu bildirime girmez; her biri ayrıca "başvurduğun firmada yeni ilan" olarak bildirilir.
+    const applied = open.length ? await this.appliedCompanies.index(workspaceId) : null;
+    const notified = open.filter((c) => {
+      const company = companies.find(c);
+      return !company || !applied?.match(company);
+    });
+    if (notified.length) {
+      const added = await this.prisma.jobListing.findMany({ where: { sourceId: source.id, externalId: { in: notified.map((c) => c.externalId) } }, select: { jobId: true } });
       const jobIds = [...new Set(added.map((l) => l.jobId))].slice(0, MAX_LINKED_JOBS);
-      const sample = open.slice(0, NOTIFIED_TITLES).map((c) => `${c.company} — ${c.title}`).join(' · ');
+      const sample = notified.slice(0, NOTIFIED_TITLES).map((c) => `${c.company} — ${c.title}`).join(' · ');
       await this.outbox.emit({
         workspaceId,
         eventType: 'notify',
         aggregateId: profile.id,
         dedupKey: `jobs-found:${taskId}`,
-        payload: { type: 'new_jobs', title: opts.origin ? `${opts.origin}: ${open.length} yeni ilan eklendi` : opts.announced ? `İş alarmından ${open.length} yeni ilan eklendi` : `${open.length} yeni ilan bulundu`, body: open.length > NOTIFIED_TITLES ? `${sample} ve ${open.length - NOTIFIED_TITLES} ilan daha` : sample, link: jobIds.length ? `/jobs?ids=${jobIds.join(',')}` : '/home' },
+        payload: { type: 'new_jobs', title: opts.origin ? `${opts.origin}: ${notified.length} yeni ilan eklendi` : opts.announced ? `İş alarmından ${notified.length} yeni ilan eklendi` : `${notified.length} yeni ilan bulundu`, body: notified.length > NOTIFIED_TITLES ? `${sample} ve ${notified.length - NOTIFIED_TITLES} ilan daha` : sample, link: jobIds.length ? `/jobs?ids=${jobIds.join(',')}` : '/home' },
       });
     }
     return stats;

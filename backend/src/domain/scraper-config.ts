@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { fold } from './text';
 
 /**
  * İlan sitesi taramasının ayarları. Kod değiştirmeden API'den (POST /v1/scrapers/config) yönetilir ve anahtar-değer
@@ -109,4 +110,24 @@ export function applyScraperConfigPatch(current: ScraperConfig, patch: unknown):
 export function sourceTargets(config: ScraperConfig, source: ScraperSource): { cities: string[]; keywords: string[] } {
   const own = config.sources[source];
   return { cities: own.cities?.length ? own.cities : config.cities, keywords: own.keywords ?? config.keywords };
+}
+
+/** Arama adresinin sonundaki ek: eklenti bu sekmedeki sonuç sayfalarını kendiliğinden aktarır. */
+export const EXTENSION_IMPORT_HASH = '#jt-import';
+const EXTENSION_TITLES = 2;
+const EXTENSION_CITIES = 4;
+
+/**
+ * Eklenti aramalarının unvan ve şehirleri: profillerin ilk iki unvanı, profillerin şehir seçimindeki iller ("İstanbul
+ * (Anadolu Yakası)" → "İstanbul"); hiçbir profilde şehir yoksa tarama ayarındaki şehirler. Tekrarlar harf ve büyük-küçük
+ * farkından bağımsız elenir.
+ */
+export function searchTargetsOf(profiles: { titles: string[]; city: string | null }[], fallbackCities: string[]): { titles: string[]; cities: string[] } {
+  const unique = (values: string[], limit: number) => {
+    const seen = new Map<string, string>();
+    for (const value of values.map((v) => v.replace(/\(.*\)/, '').replace(/\s+/g, ' ').trim()).filter(Boolean)) if (!seen.has(fold(value))) seen.set(fold(value), value);
+    return [...seen.values()].slice(0, limit);
+  };
+  const cities = unique(profiles.flatMap((p) => (p.city ?? '').split(';')), EXTENSION_CITIES);
+  return { titles: unique(profiles.flatMap((p) => p.titles), EXTENSION_TITLES), cities: cities.length ? cities : unique(fallbackCities, EXTENSION_CITIES) };
 }

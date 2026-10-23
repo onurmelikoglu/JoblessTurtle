@@ -27,6 +27,7 @@ import { AI_KIND_LABELS } from '../../engine/ai/schemas';
 import { ActivityService } from '../../engine/activity.service';
 import { careersLinkOfSource, DISCOVERED_SOURCE_KINDS } from '../../engine/connectors/defaults';
 import { AutomationService, predraftBudget } from '../../engine/automation.service';
+import { AppliedCompaniesService } from '../../engine/applied-companies.service';
 import { AutopilotService } from '../../engine/autopilot.service';
 import { addressSearchExhausted, detailsNeeded, pickSegments, ResearchMeta, ResearchService, SIZE_BATCH } from '../../engine/research.service';
 import { DraftingService, intentForOpportunity, pickContact } from '../../engine/drafting.service';
@@ -91,7 +92,6 @@ const DEFAULT_POLICY_NAME = 'Otomatik başvuru';
 const STRONG_FIT_SCORE = 80;
 const MAX_APPLY_BATCH = 500;
 const APPLICATIONS_LIST_LIMIT = 1000;
-const NOT_APPLIED_ATTEMPT_STATES = ['cancelled', 'blocked', 'failed_confirmed'];
 const DEEP_DISCOVERY_LIMIT = 25;
 const OFFICE_REFRESH_LIMIT = 100;
 const DETAILS_REFRESH_LIMIT = 30;
@@ -159,6 +159,7 @@ export class HomeService {
     private readonly sending: SendingService,
     private readonly activity: ActivityService,
     private readonly models: LearnedModelsService,
+    private readonly appliedCompanies: AppliedCompaniesService,
   ) {}
 
   private async primary(workspaceId: string) {
@@ -435,10 +436,11 @@ export class HomeService {
       orderBy: [{ f: { sort: 'desc', nulls: 'last' } }, { computedAt: 'desc' }],
       take: OPPORTUNITY_LIST_LIMIT,
       include: {
-        company: { select: { id: true, name: true, website: true, careersUrl: true, researchReport: true, researchMeta: true, groupName: true, employeeRange: true, origin: true, contacts: { where: { suppressed: false, kind: { in: [...SENDABLE_CONTACT_KINDS, ...SUGGESTED_ONLY_KINDS, ...MANUAL_ONLY_KINDS] } }, select: { id: true, kind: true, email: true, sourceUrl: true, ownershipEvidence: true } } } },
+        company: { select: { id: true, name: true, website: true, canonicalDomain: true, careersUrl: true, researchReport: true, researchMeta: true, groupName: true, employeeRange: true, origin: true, contacts: { where: { suppressed: false, kind: { in: [...SENDABLE_CONTACT_KINDS, ...SUGGESTED_ONLY_KINDS, ...MANUAL_ONLY_KINDS] } }, select: { id: true, kind: true, email: true, sourceUrl: true, ownershipEvidence: true } } } },
         job: { select: { id: true, title: true, locationText: true, workMode: true, firstSeenAt: true, applyUrl: true, applyEmail: true, channel: true, listings: { select: { applyUrl: true, canonicalUrl: true } } } },
       },
     });
+    const applied = await this.appliedCompanies.index(ctx.workspaceId);
     const ids = rows.map((r) => r.id);
     const drafts = await this.prisma.applicationDraft.findMany({ where: { opportunityId: { in: ids }, status: { in: ACTIVE_DRAFT_STATES } }, orderBy: { createdAt: 'desc' } });
     const latestDraft = new Map<string, (typeof drafts)[number]>();
@@ -447,7 +449,7 @@ export class HomeService {
     const revisionByDraft = new Map(revisions.map((r) => [r.draftId, r]));
     const ranker = await this.models.opportunityRanker(ctx.workspaceId);
     const items = rows
-      .filter((o) => !['queued', 'sent'].includes(latestDraft.get(o.id)?.status ?? '') && o.status !== 'applied')
+      .filter((o) => !['queued', 'sent'].includes(latestDraft.get(o.id)?.status ?? '') && o.status !== 'applied' && !applied.match(o.company))
       .sort((a, b) => CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category))
       .map((o) => {
         const d = latestDraft.get(o.id);
@@ -494,12 +496,13 @@ export class HomeService {
   }
 
   /**
-   * "Başvurmadığım firmalar": başvurulan firma hiçbir koşulda listelenmez; kalan her firma tek sınıfa düşer
+   * "Başvurmadığım firmalar": başvurulan firma (aynı firmanın başka adla açılmış kaydı dahil) hiçbir koşulda
+   * listelenmez; yeni ilanı yalnızca bildirim olarak gelir. Kalan her firma tek sınıfa düşer
    * (açık ilan / geçmişte açmış / potansiyel). Görünür fırsatı kalmayan firma (ör. kullanıcı gizledi) listede yer almaz.
    */
   async companies(ctx: RequestContext): Promise<ServerShape<HomeCompanies>> {
     const { searchProfile } = await this.primary(ctx.workspaceId);
-    const [{ items }, companies, appliedRows, researchTasks, dismissedRows] = await Promise.all([
+    const [{ items }, companies, applied, researchTasks, dismissedRows] = await Promise.all([
       this.opportunities(ctx),
       this.prisma.company.findMany({
         where: { workspaceId: ctx.workspaceId, excluded: false },
@@ -507,6 +510,7 @@ export class HomeService {
           id: true,
           name: true,
           website: true,
+          canonicalDomain: true,
           careersUrl: true,
           sectors: true,
           employeeRange: true,
@@ -518,16 +522,15 @@ export class HomeService {
           offices: { select: { id: true, label: true, kind: true, city: true, district: true, address: true }, orderBy: { kind: 'asc' } },
         },
       }),
-      this.prisma.applicationAttempt.findMany({ where: { workspaceId: ctx.workspaceId, state: { notIn: NOT_APPLIED_ATTEMPT_STATES } }, select: { companyId: true }, distinct: ['companyId'] }),
+      this.appliedCompanies.index(ctx.workspaceId),
       this.prisma.aiTask.findMany({ where: { workspaceId: ctx.workspaceId, entityType: 'Company', status: { in: ['pending', 'running'] }, kind: { in: ['company_report', 'company_contacts'] } }, select: { entityId: true } }),
       this.prisma.opportunity.findMany({ where: { workspaceId: ctx.workspaceId, status: 'dismissed' }, select: { companyId: true }, distinct: ['companyId'] }),
     ]);
-    const appliedCompanyIds = new Set(appliedRows.map((a) => a.companyId));
     const dismissedCompanyIds = new Set(dismissedRows.map((o) => o.companyId));
     const activeResearch = new Set(researchTasks.map((t) => t.entityId));
     const opportunitiesByCompany = new Map<string, typeof items>();
     for (const item of items) opportunitiesByCompany.set(item.companyId, [...(opportunitiesByCompany.get(item.companyId) ?? []), item]);
-    const listed = companies.filter((c) => !appliedCompanyIds.has(c.id));
+    const listed = companies.filter((c) => !applied.match(c));
     const result = listed.flatMap((c) => {
       const opportunities = opportunitiesByCompany.get(c.id) ?? [];
       const researching = activeResearch.has(c.id) || (!c.lastResearchedAt && Date.now() - c.createdAt.getTime() < NEW_COMPANY_RESEARCH_WINDOW_MS);
@@ -568,7 +571,7 @@ export class HomeService {
       companies: result,
       totals: {
         companies: result.length,
-        applied: companies.filter((c) => appliedCompanyIds.has(c.id)).length,
+        applied: companies.length - listed.length,
         matchingJobs: result.reduce((n, c) => n + c.matchingJobs, 0),
         byClass,
         sizeUnknown: result.filter((c) => !c.employees).length,

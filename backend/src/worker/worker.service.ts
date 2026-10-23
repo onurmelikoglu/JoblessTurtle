@@ -14,7 +14,9 @@ import { ActivityBucket, ActivityCounts, activityOfQueueJob } from '../domain/ac
 import { AiClass } from '../domain/ai-budget';
 import { applyStaleness } from '../domain/listing-status';
 import { ActivityService, DAILY_DISCOVERY_HOUR, PREDRAFT_EVERY_MS } from '../engine/activity.service';
+import { appliedCompanyJobNotice, isFreshListing } from '../domain/applied-companies';
 import { AddressBookService } from '../engine/address-book.service';
+import { AppliedCompaniesService } from '../engine/applied-companies.service';
 import { withAiClass } from '../engine/ai/ai-context';
 import { AiService, AiSettings, DEFAULT_AI_SETTINGS, WORKER_HEARTBEAT_KEY } from '../engine/ai/ai.service';
 import { UsageService } from '../common/usage.service';
@@ -28,7 +30,7 @@ import { InboxService } from '../engine/inbox.service';
 import { IngestService } from '../engine/ingest.service';
 import { JobSearchService } from '../engine/job-search.service';
 import { LearnedModelsService } from '../engine/learned-models.service';
-import { NotifyService } from '../engine/notify.service';
+import { notificationCutoff, NotifyService } from '../engine/notify.service';
 import { pickSegments, REPORT_REFRESH_DAYS, ResearchService, SIZE_BATCH } from '../engine/research.service';
 import { ScraperService } from '../engine/scraper.service';
 import { CandidateFactsService } from '../engine/candidate-facts.service';
@@ -58,6 +60,7 @@ const PROFILE_CHANGE_JOB_QUERIES = 3;
 const JOB_RECHECK_EVERY_MS = 12 * 3600_000;
 const AUTOPILOT_SWEEP_EVERY_MS = 6 * 3600_000;
 const MODEL_TRAINING_EVERY_MS = 24 * 3600_000;
+const NOTIFICATION_CLEANUP_EVERY_MS = 24 * 3600_000;
 /** İlan sitesi taramasının zamanı her dakika kontrol edilir; sitelere istek yalnızca aralık dolunca atılır. */
 const SCRAPER_CHECK_EVERY_MS = 60_000;
 /** Kurulu sağlayıcı kontrolü komut çalıştırdığı için kalp atışından seyrek yapılır. */
@@ -118,6 +121,7 @@ export class WorkerService implements OnApplicationShutdown {
     private readonly autopilot: AutopilotService,
     private readonly models: LearnedModelsService,
     private readonly scraper: ScraperService,
+    private readonly appliedCompanies: AppliedCompaniesService,
   ) {}
 
   async start(opts: { scheduler?: boolean; telegram?: boolean } = {}) {
@@ -434,7 +438,20 @@ export class WorkerService implements OnApplicationShutdown {
   private async handleAutomation(name: string, d: Record<string, any>) {
     switch (name) {
       case 'opportunity.new': {
-        const opp = await this.prisma.opportunity.findUnique({ where: { id: d.id }, include: { company: true, job: true } });
+        const opp = await this.prisma.opportunity.findUnique({ where: { id: d.id }, include: { company: true, job: { include: { listings: { select: { postedAt: true } } } } } });
+        const applied = opp ? await this.appliedCompanies.matchOf(opp.workspaceId, opp.companyId) : null;
+        if (opp && applied) {
+          // Başvurulan firma Firmalar listesinde yer almaz: kriterlere uyan güncel ilanı yalnızca bilgi olarak bildirilir.
+          if (['target_open', 'adjacent_open'].includes(opp.category) && opp.job && isFreshListing(opp.job.listings.map((l) => l.postedAt), new Date())) {
+            await this.notify.notify(opp.workspaceId, `applied-company-job:${opp.id}`, {
+              type: 'applied_company_job',
+              ...appliedCompanyJobNotice({ jobTitle: opp.job.title, companyName: opp.company.name, appliedName: applied.name, appliedAt: applied.appliedAt }),
+              link: `/applications?attempt=${applied.attemptId}`,
+              score: opp.f,
+            });
+          }
+          return { action: 'skipped', reason: 'company_applied' };
+        }
         if (opp && ['target_open', 'adjacent_open'].includes(opp.category)) {
           await this.notify.notify(opp.workspaceId, `opp-new:${opp.id}`, {
             type: 'new_opportunity',
@@ -509,6 +526,7 @@ export class WorkerService implements OnApplicationShutdown {
     await this.periodic('ai-reaper', AI_REAPER_EVERY_MS, now, () => this.activity.reapStuckAiTasks(now));
     await this.periodic('inbox', INBOX_SYNC_EVERY_MS, now, () => this.scheduleInboxSync(now));
     await this.periodic('retention', 6 * 3600_000, now, () => this.retention(now));
+    await this.periodic('notification-retention', NOTIFICATION_CLEANUP_EVERY_MS, now, () => this.cleanupNotifications(now));
     await this.periodic('address-settle', ADDRESS_SETTLE_EVERY_MS, now, () => this.addressBook.settle(now));
     await this.periodic('job-recheck', JOB_RECHECK_EVERY_MS, now, () => this.jobSearch.expireStale(now));
     await this.periodic('autopilot-sweep', AUTOPILOT_SWEEP_EVERY_MS, now, () => this.autopilot.sweep(undefined, now));
@@ -693,12 +711,18 @@ export class WorkerService implements OnApplicationShutdown {
   }
 
   /** Saklama süreleri: ham gözlem 30 gün, geçici dosya 24 saat, hata/log 90 gün. */
+  /** Bildirimler 30 gün tutulur; daha eskiler her gün silinir (ilk tur deploy'dan hemen sonra çalışır). */
+  async cleanupNotifications(now = new Date()) {
+    const { count } = await this.prisma.notification.deleteMany({ where: { createdAt: { lt: notificationCutoff(now) } } });
+    if (count) this.logger.log(`${count} eski bildirim silindi`);
+    return count;
+  }
+
   private async retention(now: Date) {
     const d = (days: number) => new Date(now.getTime() - days * 86400_000);
     await this.prisma.sourceObservation.deleteMany({ where: { fetchedAt: { lt: d(30) } } });
     await this.prisma.crawlRun.deleteMany({ where: { startedAt: { lt: d(90) } } });
     await this.prisma.outboxEvent.deleteMany({ where: { processingState: 'processed', processedAt: { lt: d(7) } } });
-    await this.prisma.notification.deleteMany({ where: { createdAt: { lt: d(90) } } });
     await this.prisma.aiTask.updateMany({ where: { createdAt: { lt: d(30) } }, data: { rawOutput: null } });
     await this.prisma.webhookEvent.deleteMany({ where: { receivedAt: { lt: d(30) } } });
     const imports = await this.prisma.importJob.findMany({ where: { createdAt: { lt: d(1) } } });

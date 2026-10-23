@@ -14,10 +14,9 @@ import { TagsInput } from '@/ui/TagsInput';
 import { TONE_TEXT } from '@/ui/tones';
 import { adminKeys, useAdminRefresh } from './admin-queries';
 import { Divider, LimitField, Loaded, Section, SubSection } from './parts';
-import { ACTIVE_POLL_MS, errorKinds, healthOf, IDLE_POLL_MS, INTERVAL_OPTIONS, isActive, keywordNote, PAGE_OPTIONS, runSummary, stateLabel, stateTone } from './scrapers-model';
+import { ACTIVE_POLL_MS, errorKinds, healthOf, IDLE_POLL_MS, INTERVAL_OPTIONS, isActive, keywordNote, PAGE_OPTIONS, runSourceLabel, runSummary, stateLabel, stateTone } from './scrapers-model';
 
 const RUN_HEADINGS = ['Zaman', 'Site', 'Durum', 'Sonuç', 'Hata'];
-const LABELS: Record<string, string> = { kariyer_net: 'Kariyer.net', indeed: 'Indeed' };
 
 function useScrapers() {
   const { user } = useMe();
@@ -101,7 +100,7 @@ function RunsTable({ runs }: { runs: ScraperRunView[] }) {
           {runs.map((run) => (
             <tr key={run.id}>
               <td className="py-1.5 pr-3 whitespace-nowrap">{fmtDateTime(run.finished_at ?? run.queued_at)}</td>
-              <td className="py-1.5 pr-3 whitespace-nowrap">{LABELS[run.source] ?? run.source}</td>
+              <td className="py-1.5 pr-3 whitespace-nowrap">{runSourceLabel(run)}</td>
               <td className={cn('py-1.5 pr-3 whitespace-nowrap', TONE_TEXT[stateTone(run.state)])}>{stateLabel(run.state)}</td>
               <td className="py-1.5 pr-3">{run.finished_at ? runSummary(run) : '-'}</td>
               <td className="py-1.5 text-ink-soft">{errorKinds(run) || '-'}</td>

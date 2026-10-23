@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { IsoDate, ScraperRunView } from '@/api/types';
-import { errorKinds, healthOf, isActive, keywordNote, runSummary, stateLabel } from './scrapers-model';
+import { errorKinds, healthOf, isActive, keywordNote, runSourceLabel, runSummary, stateLabel } from './scrapers-model';
 
 const at = '2026-10-20T09:00:00Z' as IsoDate;
 
@@ -40,5 +40,12 @@ describe('ilan sitesi taraması ekranı', () => {
     expect(keywordNote({ keyword_mode: 'local_filter', keywords: [] })).toContain('tüm yeni ilanlar');
     expect(keywordNote({ keyword_mode: 'local_filter', keywords: ['Flutter'] })).toContain('süzülür');
     expect(keywordNote({ keyword_mode: 'query', keywords: ['Flutter'] })).toContain('sitenin aramasında');
+  });
+});
+
+describe('çalışmanın kaynağı', () => {
+  it('eklentiden gelen aktarım sunucu taramasından ayrılır', () => {
+    expect(runSourceLabel(run({}))).toBe('Kariyer.net');
+    expect(runSourceLabel(run({ source: 'indeed', trigger: 'extension' }))).toBe('Indeed (eklenti)');
   });
 });

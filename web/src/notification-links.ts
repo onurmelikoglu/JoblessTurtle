@@ -33,6 +33,7 @@ const TAB_OF_TYPE: Record<string, string> = {
   auto_reply: 'donusler',
   autofix: 'donusler',
   autopilot: 'donusler',
+  applied_company_job: 'basvurular',
   send_accepted: 'basvurular',
   send_blocked: 'basvurular',
   send_failed: 'basvurular',
