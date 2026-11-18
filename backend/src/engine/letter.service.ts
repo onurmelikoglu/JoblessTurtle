@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ORIGINAL_VARIANT } from '../domain/documents';
 import { CandidateProfile, Company, Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma.service';
 import { buildSignature, INTENT_LABELS } from '../domain/templates';
@@ -162,7 +163,7 @@ export class LetterService {
       guide: await this.guideForAi(),
       referenceTemplate: await this.referenceTemplate(candidate, intent),
       candidateExample: await this.candidateExample(candidate.id),
-      hasPortfolio: (await this.prisma.documentVersion.count({ where: { candidateId: candidate.id, type: 'portfolio', archived: false, scanState: 'clean' } })) > 0 || !!candidate.portfolioUrl,
+      hasPortfolio: (await this.prisma.documentVersion.count({ where: { candidateId: candidate.id, type: 'portfolio', archived: false, scanState: 'clean', variant: ORIGINAL_VARIANT } })) > 0 || !!candidate.portfolioUrl,
       candidate: { name: candidate.displayName, headline: candidate.headline, experienceYears: candidate.experienceYears, facts: candidate.verifiedFacts },
     };
     const r = await this.ai.run({

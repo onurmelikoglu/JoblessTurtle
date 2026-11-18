@@ -458,6 +458,9 @@ model Job {
   district       String?
   city           String?
   address        String? // il ve ilçeden ayrıntılı adres (mahalle, cadde); ilanda varsa
+  atsProfile     Json? // ilanın ATS gereksinimleri (yapay zekâ, bir kez)
+  atsProfileAt   DateTime?
+  reopenedAt     DateTime? // kapanan ilanın son yeniden açıldığı an
   workMode       String    @default("unknown") // onsite | hybrid | remote | unknown
   status         String    @default("unknown") // open | closed | unknown | stale
   statusReason   String?
@@ -556,6 +559,8 @@ model Opportunity {
   locationState   String   @default("unknown") // primary | conditional | remote | outside | unknown
   reasons         Json     @default("[]")
   evidenceIds     String[] @default([])
+  autoReasons     Json? // son otomatik başvuru değerlendirmesinin engel kodları
+  autoEvaluatedAt DateTime?
   status          String   @default("new") // new | reviewed | dismissed | drafted | applied
   computedAt      DateTime @default(now())
   createdAt       DateTime @default(now())
@@ -644,11 +649,34 @@ model DocumentVersion {
   scanReason  String?
   revision    Int      @default(1)
   archived    Boolean  @default(false)
+  // original: kullanıcının yüklediği; ats_main: dildeki ana ATS sürümü; ats_job: yalnızca bir ilan için üretilen.
+  variant          String   @default("original")
+  parentId         String? // ATS sürümünün üretildiği orijinal CV
+  targetJobId      String? // ats_job sürümünün ilanı
+  content          Json? // yapısal CV (ad, iletişim, özet, deneyim, eğitim, beceriler…)
+  addedSkills      String[] @default([]) // iyileştirmede CV'de kanıtı olmadan eklenen beceriler
+  pendingPromotion Boolean  @default(false) // ilana özel sürüm ana sürümden iyi; kullanıcı onayı bekliyor
+  layout           Json? // orijinal CV'nin tasarımı: HTML şablonu, fotoğraf ve sayfa sayısı (yalnız orijinal sürümde)
   createdAt   DateTime @default(now())
 
   candidate CandidateProfile @relation(fields: [candidateId], references: [id], onDelete: Cascade)
 
   @@index([candidateId, type])
+  @@index([candidateId, variant])
+}
+
+// Bir CV sürümünün bir ilana ATS uyum oranı; CV ya da ilanın gereksinimleri değişince yeniden hesaplanır.
+model AtsScore {
+  id         String   @id @default(cuid())
+  documentId String
+  jobId      String
+  score      Int
+  breakdown  Json
+  missing    String[] @default([])
+  computedAt DateTime @default(now())
+
+  @@unique([documentId, jobId])
+  @@index([jobId])
 }
 
 // ───────────────────────────── Taslak, politika, gönderim ─────────────────────────────
@@ -728,6 +756,13 @@ model AutomationPolicy {
   sendDays             Int[]     @default([1, 2, 3, 4, 5])
   sendImmediately      Boolean   @default(false)
   autoSend             Boolean   @default(true)
+  filterCities         String[]  @default([]) // boş: profildeki şehirler (konum kararı fırsatta)
+  filterWorkModes      String[]  @default([]) // onsite | hybrid | remote; boş: hepsi
+  filterSizes          String[]  @default([]) // EMPLOYEE_RANGES değerleri; boş: hepsi
+  includeUnknownWorkMode Boolean @default(true)
+  includeUnknownSize   Boolean   @default(true)
+  searchEveryHours     Int       @default(24) // yapay zekâ ilan araması aralığı
+  atsAutoImprove       Boolean   @default(true) // gönderimden önce düşük ATS oranlı CV iyileştirilir
   active               Boolean   @default(false)
   version              Int       @default(1)
   enabledAt            DateTime?
@@ -738,6 +773,27 @@ model AutomationPolicy {
   versions AutomationPolicyVersion[]
 
   @@index([workspaceId, active])
+}
+
+// Benzer adlı kayıtlı bir firmayla aynı olabilecek yeni firmanın bekletilen ilanları. Kullanıcı "bu firmaya ekle" derse
+// ilanlar o firmaya, "farklı firma" derse yeni firmaya eklenir. Aynı ad ve öneri için gelen ilanlar tek kararda birikir.
+model CompanyDecision {
+  id                 String    @id @default(cuid())
+  workspaceId        String
+  name               String
+  normalizedName     String
+  domain             String?
+  suggestedCompanyId String
+  reasons            String[]  @default([])
+  payload            Json // { searchProfileId, sourceKind, origin, announced, listings: FoundListing+externalId[] }
+  listingCount       Int       @default(0)
+  status             String    @default("pending") // pending | merged | separate | expired
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  decidedAt          DateTime?
+
+  @@unique([workspaceId, normalizedName, suggestedCompanyId])
+  @@index([workspaceId, status])
 }
 
 model AutomationPolicyVersion {

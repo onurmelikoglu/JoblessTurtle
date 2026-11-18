@@ -578,6 +578,20 @@ describe('adres araması: hafıza ve basamaklar', () => {
     expect((await h.prisma.company.findUniqueOrThrow({ where: { id: company.id } })).researchMeta).toMatchObject({ contactsDepth: 'base' });
   });
 
+  it('Sonnet adres bulamazsa arama bir kez Opus ile tekrarlanır', async () => {
+    const company = await firm('opuslu', []);
+    jest.spyOn(research as any, 'sourcePage').mockResolvedValue('kariyer@opuslu.example');
+    const ai = jest.spyOn(h.app.get(AiService), 'run').mockImplementation(async (req) => {
+      const opus = req.modelOverride?.cli_claude === 'opus';
+      const output = opus ? { contacts: [{ email: 'kariyer@opuslu.example', roleType: 'hr', origin: 'published', sourceUrl: 'https://opuslu.example/kariyer' }], offices: [] } : { contacts: [], offices: [] };
+      return { status: 'succeeded', output, provider: 'cli_claude', taskId: `fake-${req.kind}`, cached: false };
+    });
+    expect(await research.findDetails(company.id, null)).toMatchObject({ status: 'succeeded', source: 'ai' });
+    expect(ai).toHaveBeenCalledTimes(2);
+    expect(ai.mock.calls[1][0]).toMatchObject({ kind: 'company_contacts', onlyProviders: ['cli_claude'], modelOverride: { cli_claude: 'opus' } });
+    expect(await h.prisma.contactPoint.findFirstOrThrow({ where: { companyId: company.id } })).toMatchObject({ email: 'kariyer@opuslu.example', kind: 'official_hr' });
+  });
+
   it('aynı derinlikteki arama süresi dolmadan tekrarlanmaz; derinleştirme kaldığı basamaktan sürer', async () => {
     const company = await firm('hafizali', []);
     const ai = aiAnswers(() => ({ contacts: [], offices: [] }));

@@ -233,3 +233,44 @@ export function focusCompanies(companies: HomeCompany[], focus: CompanyFocus): H
 export function groupByClass(companies: HomeCompany[]): { companyClass: CompanyClass; companies: HomeCompany[] }[] {
   return COMPANY_CLASS_ORDER.map((companyClass) => ({ companyClass, companies: companies.filter((c) => c.class === companyClass) })).filter((group) => group.companies.length > 0);
 }
+
+export const SCOPE_LABELS: Record<ScopeFilter, { label: string; hint: string }> = {
+  tr: { label: 'Türkiye', hint: "Türkiye'deki ilanlar ve firmaya genel başvurular" },
+  uzaktan: { label: 'Uzaktan', hint: 'Uzaktan çalışılabilen ilanlar' },
+  yurtdisi: { label: 'Yurt dışı', hint: 'Taşınmayı gerektiren yurt dışı ilanları' },
+};
+
+export const WORK_MODE_LABELS: Record<WorkModeFilter, { label: string; hint: string }> = {
+  yerinde: { label: 'Yerinde', hint: 'İş yerinde çalışılan ilanlar (ilanda yazmıyorsa tahmini)' },
+  hibrit: { label: 'Hibrit', hint: 'Hibrit çalışılan ilanlar (ilanda yazmıyorsa tahmini)' },
+  uzaktan: { label: 'Uzaktan', hint: 'Uzaktan çalışılan ilanlar (ilanda yazmıyorsa tahmini)' },
+  belirtilmemis: { label: 'Belirtilmemiş', hint: 'Çalışma şekli bilinmeyen ilanlar ve firmaya genel başvurular' },
+};
+
+export const SIZE_LABELS: Record<SizeBucket, string> = { '1-10': '1-10', '11-50': '11-50', '51-200': '51-200', '201-1000': '201-1.000', '1000+': '1.000+', bilinmiyor: 'Bilinmiyor' };
+
+export const REGION_OTHER_LABEL = 'Diğer / bilinmiyor';
+
+/** Açılır panelde duran filtrelerden seçili olanlar; arama kutusu ve sınıf düğmeleri her zaman göründüğü için burada yoktur. */
+export interface FilterPill {
+  key: string;
+  label: string;
+  without: CompanyFilters;
+}
+
+const without = <T>(list: T[], value: T) => list.filter((item) => item !== value);
+
+export function activeFilterPills(filters: CompanyFilters, regionLabels: string[]): FilterPill[] {
+  const regionLabel = new Map(regionLabels.map((label) => [regionSlug(label), label]));
+  const pills: FilterPill[] = [];
+  for (const region of filters.regions) {
+    const label = region === REGION_ANY ? 'Bölgem' : region === REGION_OTHER ? REGION_OTHER_LABEL : (regionLabel.get(region) ?? region);
+    pills.push({ key: `bolge:${region}`, label: `Bölge: ${label}`, without: { ...filters, regions: without(filters.regions, region) } });
+  }
+  for (const mode of filters.workModes) pills.push({ key: `sekil:${mode}`, label: WORK_MODE_LABELS[mode].label, without: { ...filters, workModes: without(filters.workModes, mode) } });
+  for (const scope of filters.scopes) pills.push({ key: `kapsam:${scope}`, label: SCOPE_LABELS[scope].label, without: { ...filters, scopes: without(filters.scopes, scope) } });
+  for (const size of filters.sizes) pills.push({ key: `boyut:${size}`, label: `${SIZE_LABELS[size]} çalışan`, without: { ...filters, sizes: without(filters.sizes, size) } });
+  if (filters.email !== 'any') pills.push({ key: 'mail', label: filters.email === 'has' ? 'Mail adresi var' : 'Mail adresi yok', without: { ...filters, email: 'any' } });
+  if (filters.ready) pills.push({ key: 'yazi', label: 'Yazısı hazır', without: { ...filters, ready: false } });
+  return pills;
+}

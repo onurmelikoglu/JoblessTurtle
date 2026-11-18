@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { CompanyIdentity, CompanyIdentityIndex } from '../domain/company-identity';
+import { dismissedTwinPairs } from './company-merge.service';
 
 /** Gönderilemeyip kullanıcının listeden kaldırdığı başvurular firmayı "başvurulmuş" yapmaz. */
 const DROPPED_STATES = ['blocked', 'failed_confirmed'];
@@ -34,7 +35,10 @@ export class AppliedCompaniesService {
     const latest = new Map<string, { attemptId: string; appliedAt: Date }>();
     for (const a of attempts) if (!latest.has(a.companyId)) latest.set(a.companyId, { attemptId: a.id, appliedAt: a.createdAt });
     const companies = await this.prisma.company.findMany({ where: { id: { in: [...latest.keys()] } }, select: { id: true, name: true, canonicalDomain: true, website: true } });
-    return new CompanyIdentityIndex(companies.map((c) => ({ ...c, ...latest.get(c.id)! })));
+    return new CompanyIdentityIndex(
+      companies.map((c) => ({ ...c, ...latest.get(c.id)! })),
+      await dismissedTwinPairs(this.prisma, workspaceId),
+    );
   }
 
   async matchOf(workspaceId: string, companyId: string): Promise<AppliedCompany | null> {

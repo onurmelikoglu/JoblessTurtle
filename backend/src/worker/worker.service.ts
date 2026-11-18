@@ -27,12 +27,15 @@ import { CatalogService } from '../engine/catalog.service';
 import { connectorFor } from '../engine/connectors/registry';
 import { DraftingService } from '../engine/drafting.service';
 import { PipelineService } from '../engine/pipeline.service';
+import { AtsService } from '../engine/ats.service';
+import { CompanyDecisionService } from '../engine/company-decision.service';
 import { CompanyMergeService } from '../engine/company-merge.service';
 import { ResearchBatchService } from '../engine/research-batch.service';
 import { EvaluationService } from '../engine/evaluation.service';
 import { InboxService } from '../engine/inbox.service';
 import { IngestService } from '../engine/ingest.service';
 import { JobSearchService } from '../engine/job-search.service';
+import { queriesPerRun } from '../domain/job-search';
 import { LearnedModelsService } from '../engine/learned-models.service';
 import { notificationCutoff, NotifyService } from '../engine/notify.service';
 import { pickSegments, REPORT_REFRESH_DAYS, ResearchService, SIZE_BATCH } from '../engine/research.service';
@@ -68,8 +71,14 @@ const ADDRESS_SETTLE_EVERY_MS = 6 * 3600_000;
 const BACKFILL_CHECK_EVERY_MS = 3600_000;
 /** Gece turunda çalışma alanı başına çalışan sayısı sorulan en fazla firma grubu (her grup tek yapay zekâ çağrısı). */
 const NIGHTLY_SIZE_BATCHES = 10;
-/** Gece turunda arama profili başına çalıştırılan ilan arama sorgusu (her biri tek yapay zekâ çağrısı). */
-const NIGHTLY_JOB_QUERIES = 4;
+/** Yapay zekâ ilan araması zamanı bu aralıkla kontrol edilir; arama yalnızca kullanıcının seçtiği aralık dolunca yapılır. */
+const JOB_SEARCH_CHECK_EVERY_MS = 15 * 60_000;
+const DEFAULT_SEARCH_EVERY_HOURS = 24;
+/** periodic ile bir kez çalışan bakım işleri için (aralık hiç dolmaz). */
+const ONCE_MS = 100 * 365 * 86400_000;
+/** Günlük sınıra takılan otomatik başvurular gönderim penceresi açılınca yeniden denenir. */
+const AUTO_RETRY_HOUR = 9;
+const CONTACT_OPUS_HOUR = 10;
 const PROFILE_CHANGE_JOB_QUERIES = 3;
 const JOB_RECHECK_EVERY_MS = 12 * 3600_000;
 const AUTOPILOT_SWEEP_EVERY_MS = 6 * 3600_000;
@@ -126,6 +135,8 @@ export class WorkerService implements OnApplicationShutdown {
     private readonly researchBatches: ResearchBatchService,
     private readonly pipeline: PipelineService,
     private readonly companyMerge: CompanyMergeService,
+    private readonly companyDecisions: CompanyDecisionService,
+    private readonly ats: AtsService,
     private readonly notify: NotifyService,
     private readonly telegram: TelegramService,
     private readonly ai: AiService,
@@ -283,6 +294,7 @@ export class WorkerService implements OnApplicationShutdown {
       case 'opportunity.new':
       case 'opportunity.updated':
       case 'automation.policy_activated':
+      case 'automation.reevaluate':
         return this.enqueue('automation', e.eventType, { id: e.aggregateId, workspaceId: e.workspaceId }, e.dedupKey);
       case 'home.prepare':
         return this.enqueue('interactive', 'home.prepare', { id: e.aggregateId, workspaceId: e.workspaceId, userId: p.userId ?? null, fresh: p.fresh === true }, e.dedupKey, 0, 1);
@@ -298,13 +310,23 @@ export class WorkerService implements OnApplicationShutdown {
       case 'draft.translate':
         return this.enqueue('interactive', 'draft_translate', { draftId: e.aggregateId, lang: p.lang, userId: p.userId ?? null }, e.dedupKey, 0, 1);
       case 'research.details':
-        return this.enqueue('interactive', 'company_details', { companyId: e.aggregateId, actorId: p.actorId ?? null, deep: true, force: true }, e.dedupKey, 0, 1);
+        return this.enqueue('interactive', 'company_details', { companyId: e.aggregateId, actorId: p.actorId ?? null, deep: true, force: true, opus: p.opus === true }, e.dedupKey, 0, 1);
       case 'research.details.bulk':
-        return this.enqueue('research', 'company_details', { companyId: e.aggregateId, actorId: p.actorId ?? null, deep: true, force: p.force === true, onlyIfMissing: p.onlyIfMissing === true }, e.dedupKey, 0, 1, BULK_USER_PRIORITY);
+        return this.enqueue('research', 'company_details', { companyId: e.aggregateId, actorId: p.actorId ?? null, deep: true, force: p.force === true, onlyIfMissing: p.onlyIfMissing === true, opus: p.opus === true }, e.dedupKey, 0, 1, BULK_USER_PRIORITY);
       case 'research.details.bg':
         return this.enqueue('research', 'company_details', { companyId: e.aggregateId, actorId: p.actorId ?? null }, e.dedupKey, 0, 1, BACKGROUND_PRIORITY);
       case 'home.apply':
         return this.enqueue('automation', 'home.apply', { id: e.aggregateId, workspaceId: e.workspaceId, userId: p.userId ?? null }, e.dedupKey, 0, 1);
+      case 'ats.prepare':
+        return this.enqueue('interactive', 'ats_prepare', { candidateId: p.candidateId, jobId: p.jobId, language: p.language }, e.dedupKey, 0, 1);
+      case 'ats.layout':
+        return this.enqueue('interactive', 'ats_layout', { documentId: e.aggregateId, force: p.force === true }, e.dedupKey, 0, 1);
+      case 'ats.rerender':
+        return this.enqueue('interactive', 'ats_rerender', { workspaceId: e.workspaceId }, e.dedupKey, 0, 1);
+      case 'ats.improve':
+        return this.enqueue('interactive', 'ats_improve', { draftId: e.aggregateId, userId: p.userId ?? null }, e.dedupKey, 0, 1);
+      case 'attempt.accepted':
+        return this.enqueue('automation', 'ats_after_send', { attemptId: e.aggregateId }, e.dedupKey, 0, 1);
       case 'inbox.sync':
         return this.enqueue('inbox', 'sync', { accountId: e.aggregateId }, e.dedupKey, 0, 1);
       case 'autopilot.inbound':
@@ -388,7 +410,7 @@ export class WorkerService implements OnApplicationShutdown {
         if (job.name === 'company') return this.research.researchCompany(d.companyId, d.actorId);
         if (job.name === 'company_details') {
           if (d.onlyIfMissing && (await this.research.hasSendableContact(d.companyId))) return { status: 'skipped', reason: 'contact_found' };
-          return this.research.findDetails(d.companyId, d.actorId, { deep: d.deep === true, force: d.force === true });
+          return this.research.findDetails(d.companyId, d.actorId, { deep: d.deep === true, force: d.force === true, opus: d.opus === true });
         }
         if (job.name === 'letter_template') {
           const candidate = await this.prisma.candidateProfile.findUnique({ where: { id: d.candidateId } });
@@ -399,7 +421,12 @@ export class WorkerService implements OnApplicationShutdown {
           if (r.status === 'updated') await this.queueMissingTemplates(d.candidateId);
           return r;
         }
-        if (job.name === 'predraft') return this.automation.prepareFromHome(d.workspaceId, d.id, null).then((r) => (r ? { draftId: r.draft.id } : { action: 'skipped' }));
+        if (job.name === 'predraft') {
+          const prepared = await this.automation.prepareFromHome(d.workspaceId, d.id, null);
+          if (!prepared) return { action: 'skipped' };
+          await this.enqueue('automation', 'opportunity.updated', { id: d.id, workspaceId: d.workspaceId }, `auto-after-predraft:${prepared.draft.id}`);
+          return { draftId: prepared.draft.id };
+        }
         if (job.name === 'expand_titles') {
           const expanded = await this.research.expandTitles(d.searchProfileId, d.actorId);
           if (expanded.added) await this.catalog.seedWorkspace(d.searchProfileId);
@@ -456,11 +483,19 @@ export class WorkerService implements OnApplicationShutdown {
         return candidate && isLetterIntent(d.intent) ? this.letters.generateTemplate(candidate, d.intent, d.userId) : null;
       }
       case 'company_details':
-        return this.research.findDetails(d.companyId, d.actorId, { deep: d.deep === true, force: d.force === true });
+        return this.research.findDetails(d.companyId, d.actorId, { deep: d.deep === true, force: d.force === true, opus: d.opus === true });
       case 'company_lookup':
         return this.research.lookupCompany(d.workspaceId, d.lookupId, d.query, d.actorId);
       case 'draft_translate':
         return this.drafting.translateDraft(d.draftId, d.lang === 'tr' ? 'tr' : 'en', d.userId);
+      case 'ats_prepare':
+        return this.ats.prepare(d.candidateId, d.jobId, d.language);
+      case 'ats_improve':
+        return this.ats.improve(d.draftId, d.userId);
+      case 'ats_layout':
+        return this.ats.buildLayout(d.documentId, d.force === true);
+      case 'ats_rerender':
+        return this.ats.refreshRenders(d.workspaceId);
       default:
         this.logger.warn(`Bilinmeyen etkileşimli iş: ${name}`);
         return null;
@@ -501,13 +536,11 @@ export class WorkerService implements OnApplicationShutdown {
         return this.automation.prepareFromHome(d.workspaceId, d.id, d.userId, d.fresh === true).then((r) => (r ? { draftId: r.draft.id } : { action: 'skipped' }));
       case 'home.apply':
         return this.automation.applyFromHome(d.workspaceId, d.id, d.userId);
-      case 'automation.policy_activated': {
-        const policy = await this.prisma.automationPolicy.findUnique({ where: { id: d.id } });
-        if (!policy?.active) return;
-        const opps = await this.prisma.opportunity.findMany({ where: { searchProfileId: policy.searchProfileId, status: { in: ['new', 'reviewed'] }, category: { not: 'excluded' } }, select: { id: true }, take: 300 });
-        for (const o of opps) await this.automation.onOpportunity(o.id);
-        return { evaluated: opps.length };
-      }
+      case 'ats_after_send':
+        return this.ats.afterSend(d.attemptId);
+      case 'automation.policy_activated':
+      case 'automation.reevaluate':
+        return this.automation.sweep(d.id);
       case 'job.closed': {
         // Kapalı ilana ilan başvurusu gönderilmez: kuyruk durur, taslaklar incelemeye düşer.
         const attempts = await this.prisma.applicationAttempt.findMany({ where: { jobId: d.id, state: 'queued', intentType: 'job_application' } });
@@ -593,6 +626,42 @@ export class WorkerService implements OnApplicationShutdown {
       for (const w of workspaces) await this.notify.dailyDigest(w.id, now);
     });
     if (t.hour >= DAILY_DISCOVERY_HOUR) await this.daily('discovery', now, () => this.dailyDiscovery(now));
+    await this.periodic('job-search', JOB_SEARCH_CHECK_EVERY_MS, now, () => this.scheduleJobSearches(now));
+    // Bir kez: koşulsuz profillerde rol uyumu (F) artık 100'e kadar çıkabiliyor; eski fırsatlar yeniden puanlanır.
+    await this.periodic('rescore-f-conditions-v1', ONCE_MS, now, () => this.rescoreProfiles('rescore-f-conditions-v1'));
+    await this.daily('company-decisions-expire', now, () => this.companyDecisions.expire(now));
+    await this.daily('ats-cleanup', now, () => this.ats.cleanup(now));
+    if (t.hour >= AUTO_RETRY_HOUR) await this.daily('auto-retry', now, () => this.retryDeferredAutoApply());
+    if (t.hour >= CONTACT_OPUS_HOUR) await this.daily('contact-opus', now, () => this.research.scheduleOpusRetries(now));
+  }
+
+  /** Kullanıcının seçtiği aralıkla (varsayılan 24 saat) yapay zekâ ilan araması; çalışma alanı başına son çalışma saklanır. */
+  private async scheduleJobSearches(now: Date) {
+    const workspaces = await this.prisma.workspace.findMany();
+    for (const w of workspaces) {
+      const ai = { ...DEFAULT_AI_SETTINGS, ...((w.aiSettings ?? {}) as Partial<AiSettings>) };
+      if (ai.dailyDiscovery === false || (await this.research.isPaused(w.id))) continue;
+      const policy = await this.prisma.automationPolicy.findFirst({ where: { workspaceId: w.id }, orderBy: [{ active: 'desc' }, { createdAt: 'desc' }], select: { searchEveryHours: true } });
+      const hours = policy?.searchEveryHours ?? DEFAULT_SEARCH_EVERY_HOURS;
+      const key = `sched:job-search:${w.id}`;
+      const kv = await this.prisma.keyValue.findUnique({ where: { key } });
+      const last = (kv?.value as { at?: string } | null)?.at ? new Date((kv!.value as { at: string }).at).getTime() : 0;
+      if (now.getTime() - last < hours * 3600_000) continue;
+      await this.prisma.keyValue.upsert({ where: { key }, create: { key, value: { at: now.toISOString() } }, update: { value: { at: now.toISOString() } } });
+      await this.jobSearch.plan(w.id, { count: queriesPerRun(hours), restHours: hours });
+    }
+  }
+
+  private async rescoreProfiles(reason: string) {
+    const profiles = await this.prisma.searchProfile.findMany({ where: { active: true }, select: { id: true, workspaceId: true } });
+    for (const p of profiles) await this.outbox.emit({ workspaceId: p.workspaceId, eventType: 'evaluate.profile', aggregateId: p.id, dedupKey: `${reason}:${p.id}` });
+    return { profiles: profiles.length };
+  }
+
+  /** Sabah, önceki gün günlük sınıra takılan ya da hiç değerlendirilmemiş fırsatlar otomatik başvuruya yeniden sunulur. */
+  private async retryDeferredAutoApply() {
+    const policies = await this.prisma.automationPolicy.findMany({ where: { active: true, autoSend: true }, select: { id: true } });
+    for (const p of policies) await this.automation.sweep(p.id, { onlyDeferred: true });
   }
 
   /**
@@ -800,7 +869,6 @@ export class WorkerService implements OnApplicationShutdown {
       // Önce ortak hafıza (yapay zekâsız): başkalarının bulduğu adres ve firmalar alınır, kalan boşluk için arama yapılır.
       await this.enqueue('research', 'catalog_refresh', { workspaceId: w.id, seed: ai.dailyDiscovery !== false }, `catalog-refresh:${w.id}:${istanbulDay(now)}`, 0, 1);
       if (ai.dailyDiscovery !== false) {
-        await this.jobSearch.plan(w.id, { count: NIGHTLY_JOB_QUERIES });
         const sizeTargets = await this.research.sizeCandidates(w.id, SIZE_BATCH * NIGHTLY_SIZE_BATCHES, now.getTime());
         for (let i = 0; i < sizeTargets.length; i += SIZE_BATCH) {
           await this.enqueue('research', 'company_sizes', { workspaceId: w.id, companyIds: sizeTargets.slice(i, i + SIZE_BATCH) }, `sizes:${w.id}:${istanbulDay(now)}:${i}`, 0, 1, BACKGROUND_PRIORITY);

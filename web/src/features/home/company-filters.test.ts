@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { HomeCompany, HomeOpportunity, IsoDate } from '@/api/types';
-import { activeFilterCount, DEFAULT_FILTERS, filterCompanies, focusCompanies, groupByClass, isFocused, parseFilters, regionCounts, scopeCounts, sizeBucketOf, sizeCounts, workModeCounts, writeFilters } from './company-filters';
+import { activeFilterCount, activeFilterPills, DEFAULT_FILTERS, filterCompanies, focusCompanies, groupByClass, isFocused, parseFilters, regionCounts, scopeCounts, sizeBucketOf, sizeCounts, workModeCounts, writeFilters } from './company-filters';
 
 const at = (iso: string) => iso as IsoDate;
 
@@ -60,6 +60,7 @@ function company(patch: Partial<HomeCompany> = {}): HomeCompany {
     opportunities: [opportunity()],
     matchingJobs: 0,
     researching: false,
+    addressSearch: null,
     links: [],
     foundAt: at('2026-10-01T00:00:00Z'),
     ...patch,
@@ -259,5 +260,20 @@ describe('bölge ve çalışma şekli filtreleri', () => {
     const written = writeFilters(new URLSearchParams(), { ...DEFAULT_FILTERS, regions: ['istanbul-avrupa-yakasi'], workModes: ['uzaktan'] });
     expect(written.toString()).toBe('bolge=istanbul-avrupa-yakasi&sekil=uzaktan');
     expect(parseFilters(written)).toMatchObject({ regions: ['istanbul-avrupa-yakasi'], workModes: ['uzaktan'] });
+  });
+});
+
+describe('seçili panel filtreleri etiketleri', () => {
+  it('her seçim kaldırılabilir bir etikettir; arama ve sınıf etiket olmaz', () => {
+    const filters = { ...DEFAULT_FILTERS, query: 'getir', classes: ['open' as const], regions: ['istanbul-avrupa-yakasi', 'diger'], workModes: ['uzaktan' as const], sizes: ['1000+' as const], email: 'has' as const, ready: true };
+    const pills = activeFilterPills(filters, ['İstanbul (Avrupa Yakası)']);
+    expect(pills.map((p) => p.label)).toEqual(['Bölge: İstanbul (Avrupa Yakası)', 'Bölge: Diğer / bilinmiyor', 'Uzaktan', '1.000+ çalışan', 'Mail adresi var', 'Yazısı hazır']);
+    expect(pills[0].without.regions).toEqual(['diger']);
+    expect(pills[0].without.query).toBe('getir');
+    expect(pills[4].without.email).toBe('any');
+  });
+
+  it('filtre yoksa etiket de yoktur', () => {
+    expect(activeFilterPills(DEFAULT_FILTERS, [])).toEqual([]);
   });
 });

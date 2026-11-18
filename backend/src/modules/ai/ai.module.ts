@@ -14,7 +14,7 @@ import { AiConnectService, CONNECT_PROVIDERS } from './ai-connect.service';
 const loginStartSchema = z.object({ mode: z.enum(['session', 'long_lived']).default('session') }).default({ mode: 'session' });
 const claudeTokenSchema = z.object({ token: z.string().trim().min(20).max(500) });
 const settingsSchema = z.object({
-  providerOrder: z.array(z.enum(['cli_claude', 'cli_codex', 'manual', 'ollama', 'anthropic_api', 'openai_api', 'template'])).optional(),
+  providerOrder: z.array(z.enum(['cli_claude', 'cli_codex', 'cli_cursor', 'manual', 'ollama', 'anthropic_api', 'openai_api', 'template'])).optional(),
   dailyTaskLimit: z.number().int().min(0).max(1000).optional(),
   enrichDailyLimit: z.number().int().min(0).max(1000).optional(),
   webResearch: z.boolean().optional(),

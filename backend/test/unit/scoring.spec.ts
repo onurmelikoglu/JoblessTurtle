@@ -65,7 +65,14 @@ describe('F puanı', () => {
 
   it('yakın rol ve koşullu bölge yarım puan', () => {
     const r = computeF({ titleMatch: 'adjacent', scope: 0.5, conditions: [], location: 'conditional' });
-    expect(r.f).toBe(17.5 + 10 + 12.5);
+    expect(r.f).toBe(17.5 + 10 + 20 + 12.5);
+  });
+
+  it('koşul tanımlanmamışsa koşul boyutu tam puandır; tam uyumlu ilan 100 alır', () => {
+    const r = computeF({ titleMatch: 'exact', scope: 1, conditions: [], location: 'primary' });
+    expect(r.f).toBe(100);
+    expect(r.coverage).toBe(1);
+    expect(r.breakdown.conditions.note).toBe('Koşul tanımlı değil');
   });
 });
 

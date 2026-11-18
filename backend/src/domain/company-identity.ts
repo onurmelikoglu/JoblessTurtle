@@ -63,20 +63,28 @@ export function identityKeysOf(company: Omit<CompanyIdentity, 'id'>): string[] {
 /** Bir firma kümesi üzerinde kimlik araması: kayıt kimliği, ad anahtarı ya da alan adı kökü eşleşirse aynı firmadır. */
 export class CompanyIdentityIndex<T extends CompanyIdentity> {
   private readonly byId = new Map<string, T>();
-  private readonly byKey = new Map<string, T>();
+  private readonly byKey = new Map<string, T[]>();
 
-  constructor(companies: T[]) {
+  /** distinctPairs: kullanıcının "farklı firmalar" dediği çiftler ("a|b", küçük kimlik önce); ad benzese de eşleşmez. */
+  constructor(
+    companies: T[],
+    private readonly distinctPairs: ReadonlySet<string> = new Set(),
+  ) {
     for (const company of companies) {
       this.byId.set(company.id, company);
-      for (const key of identityKeysOf(company)) if (!this.byKey.has(key)) this.byKey.set(key, company);
+      for (const key of identityKeysOf(company)) this.byKey.set(key, [...(this.byKey.get(key) ?? []), company]);
     }
+  }
+
+  private distinct(a: string, b: string) {
+    return this.distinctPairs.has(a < b ? `${a}|${b}` : `${b}|${a}`);
   }
 
   match(company: CompanyIdentity): T | null {
     const own = this.byId.get(company.id);
     if (own) return own;
     for (const key of identityKeysOf(company)) {
-      const found = this.byKey.get(key);
+      const found = (this.byKey.get(key) ?? []).find((candidate) => !this.distinct(company.id, candidate.id));
       if (found) return found;
     }
     return null;

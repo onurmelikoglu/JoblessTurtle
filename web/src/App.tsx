@@ -7,6 +7,8 @@ import { useSession } from '@/auth/session-context';
 import { SessionProvider } from '@/auth/SessionProvider';
 import { LogoMark } from '@/brand/Logo';
 import { LoginPage } from '@/features/auth/LoginPage';
+import { CompanyDetailPage } from '@/features/companies/CompanyDetailPage';
+import { DirectoryPage } from '@/features/companies/DirectoryPage';
 import { HomePage } from '@/features/home/HomePage';
 import { NotificationsPage } from '@/features/notifications/NotificationsPage';
 import { ProfilePage } from '@/features/profile/ProfilePage';
@@ -73,6 +75,8 @@ export function App() {
                 <Route path="/login" element={<LoginPage />} />
                 <Route element={<Protected />}>
                   <Route index element={<HomePage />} />
+                  <Route path="/sirketler" element={<DirectoryPage />} />
+                  <Route path="/sirketler/:id" element={<CompanyDetailPage />} />
                   <Route path="/profile" element={<ProfilePage />} />
                   <Route path="/setup" element={<SetupPage />} />
                   <Route path="/notifications" element={<NotificationsPage />} />

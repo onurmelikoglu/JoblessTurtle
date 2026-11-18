@@ -10,6 +10,8 @@ import { PrismaService } from '../../common/prisma.service';
 import { ZodPipe } from '../../common/zod.pipe';
 import {
   HomeApplicationDetail,
+  HomeAtsDocument,
+  HomeCvLayout,
   HomeApplications,
   HomeCompanies,
   HomeInboxWithAutopilot,
@@ -35,10 +37,11 @@ import { activityItems, activityStatus, ROUTINE_CRAWL } from '../../domain/activ
 import { companyLinks, jobApplyLinks, mergeLinks, replyApplyLink } from '../../domain/apply-links';
 import { classOfCompany, classOfOpportunity, COMPANY_CLASSES, CompanyClass } from '../../domain/company-class';
 import { employeeSizeOf } from '../../domain/company-size';
-import { ENGLISH_LANGUAGE, pickDocument, replacementFor } from '../../domain/documents';
+import { ATS_JOB_VARIANT, ATS_MAIN_VARIANT, EDITABLE_DRAFT_STATES, ENGLISH_LANGUAGE, pickDocument, replacementFor, ORIGINAL_VARIANT } from '../../domain/documents';
+import { AtsService } from '../../engine/ats.service';
 import { MANUAL_ONLY_KINDS } from '../../domain/contact-research';
 import { CANDIDATE_HR_KIND, classifyPublishedEmail, isValidEmail, RecipientScoring, recipientScore, SENDABLE_CONTACT_KINDS, SUGGESTED_ONLY_KINDS } from '../../domain/contacts';
-import { CITY_SELECTION_SEPARATOR, detectLocation, evaluateLocation, isInTurkey, regionFilterLabels, regionForSelections, selectionsMatching, workScopeOf } from '../../domain/geo';
+import { citySelectionsOf, CITY_SELECTION_SEPARATOR, detectLocation, evaluateLocation, isInTurkey, regionFilterLabels, regionForSelections, selectionsMatching, workScopeOf } from '../../domain/geo';
 import { normalizeCompanyName, preferTurkishUrl } from '../../domain/text';
 import { estimateWorkMode, WorkMode } from '../../domain/work-mode';
 import { AiService, DEFAULT_AI_SETTINGS } from '../../engine/ai/ai.service';
@@ -64,6 +67,11 @@ import { CompanyMergeService, followMerged } from '../../engine/company-merge.se
 import { INBOUND_GROUP, INBOUND_LABELS, InboundCategory } from '../../domain/inbound';
 import { INTENT_LABELS } from '../../domain/templates';
 import { ApplicationsModule, ApplicationsService } from '../applications/applications.module';
+import { addressSearchOf, RETRY_PLANS, SearchMemory } from '../../domain/contact-search';
+import { AutoApplyController, AutoApplyService } from './auto-apply';
+import { ContactSearchController, ContactSearchService } from './contact-search';
+import { CompanyDecisionsController } from './company-decisions';
+import { DirectoryController, DirectoryService } from './directory';
 import { CandidatesModule, CandidatesService } from '../candidates/candidates.module';
 
 const CATEGORY_ORDER = ['target_open', 'adjacent_open', 'needs_confirmation', 'user_selected', 'past_closed', 'sector_target', 'not_found'];
@@ -71,6 +79,8 @@ const USER_SELECTED_CATEGORY = 'user_selected';
 const CLI_PROVIDERS = ['cli_claude', 'cli_codex'];
 const OPPORTUNITY_LIST_LIMIT = 5000;
 const NEW_COMPANY_RESEARCH_WINDOW_MS = 30 * 60_000;
+/** Aynı taslakta bu süre içindeki ikinci "İyileştir" tıklaması çift tıklama sayılır. */
+const IMPROVE_CLICK_WINDOW_MS = 10_000;
 const ATTEMPT_REASON_LABELS: Record<string, string> = {
   DAILY_LIMIT: 'Mail hesabının günlük gönderim limiti doldu',
   PACING: 'Mailler arasında 30-50 sn bekleniyor',
@@ -112,7 +122,6 @@ function recipientOptionsOf(
     .map((o) => ({ ...o, delivered: delivered.has(o.email), label: RECIPIENT_KIND_LABELS[o.kind] ?? o.kind, manualOnly: MANUAL_ONLY_KINDS.includes(o.kind) }));
 }
 const ACTIVE_DRAFT_STATES = ['draft', 'needs_review', 'queued', 'sent'];
-const EDITABLE_DRAFT_STATES = ['draft', 'needs_review'];
 const FORM_CHANNELS = ['ats_form', 'platform'];
 const DEFAULT_SEARCH_NAME = 'Ana arama';
 const DEFAULT_POLICY_NAME = 'Otomatik başvuru';
@@ -174,6 +183,7 @@ const interviewSchema = z.object({
   notes: z.string().max(2000).nullable().optional(),
 });
 const interviewPatchSchema = interviewSchema.partial().extend({ status: z.enum(INTERVIEW_STATUSES).optional() });
+const researchDetailsSchema = z.object({ opus: z.boolean().optional() });
 const followUpSettingsSchema = z.object({ delayDays: z.number().int().min(MIN_FOLLOW_UP_DAYS).max(MAX_FOLLOW_UP_DAYS), auto: z.boolean() });
 const markAppliedSchema = z.object({ opportunityId: z.string() });
 const letterSchema = z.object({ body: z.string().trim().min(50).max(6000) });
@@ -216,6 +226,7 @@ export class HomeService {
     private readonly researchBatches: ResearchBatchService,
     private readonly pipeline: PipelineService,
     private readonly companyMerge: CompanyMergeService,
+    private readonly ats: AtsService,
   ) {}
 
   private async citySelections(workspaceId: string): Promise<string[]> {
@@ -231,7 +242,7 @@ export class HomeService {
       include: {
         searchProfiles: { orderBy: { createdAt: 'asc' } },
         mailAccounts: { select: { id: true, provider: true, accountEmail: true, health: true, dailyLimit: true }, orderBy: { createdAt: 'asc' } },
-        documents: { where: { archived: false, type: { in: ['cv', 'portfolio'] } }, orderBy: { createdAt: 'desc' } },
+        documents: { where: { archived: false, type: { in: ['cv', 'portfolio'] }, variant: ORIGINAL_VARIANT }, orderBy: { createdAt: 'desc' } },
       },
     });
     const searchProfile = candidate?.searchProfiles.find((p) => p.active) ?? candidate?.searchProfiles[0] ?? null;
@@ -451,13 +462,16 @@ export class HomeService {
         id: true,
         lastResearchedAt: true,
         researchMeta: true,
+        canonicalDomain: true,
+        jobs: { select: { firstSeenAt: true }, orderBy: { firstSeenAt: 'desc' }, take: 1 },
         _count: { select: { contacts: { where: { suppressed: false, kind: { in: ['official_hr', 'job_apply'] } } }, offices: { where: { locationConfidence: { in: ['medium', 'high'] } } }, jobs: { where: { status: 'open' } } } },
       },
     });
+    const contactSettings = await this.research.contactSearchSettings(ctx.workspaceId);
     const recentCutoff = stamp - RESEARCH_REFRESH_HOURS * 3_600_000;
     const neverResearched = companies.filter((c) => !c.lastResearchedAt).slice(0, OFFICE_REFRESH_LIMIT);
     const missingDetails = companies
-      .filter((c) => c.lastResearchedAt && c.lastResearchedAt.getTime() < recentCutoff && detailsNeeded({ researchMeta: c.researchMeta, hrContacts: c._count.contacts, knownOffices: c._count.offices }, stamp))
+      .filter((c) => c.lastResearchedAt && c.lastResearchedAt.getTime() < recentCutoff && detailsNeeded({ researchMeta: c.researchMeta, hrContacts: c._count.contacts, knownOffices: c._count.offices, canonicalDomain: c.canonicalDomain, newestJobAt: c.jobs[0]?.firstSeenAt ?? null }, stamp, contactSettings))
       .sort((a, b) => b._count.jobs - a._count.jobs)
       .slice(0, DETAILS_REFRESH_LIMIT);
     for (const c of neverResearched) {
@@ -594,6 +608,7 @@ export class HomeService {
           createdAt: true,
           lastResearchedAt: true,
           researchReport: true,
+          researchMeta: true,
           sources: { where: { enabled: true, kind: { in: DISCOVERED_SOURCE_KINDS } }, select: { kind: true, config: true } },
           offices: { select: { id: true, label: true, kind: true, city: true, district: true, address: true }, orderBy: { kind: 'asc' } },
         },
@@ -602,6 +617,7 @@ export class HomeService {
       this.prisma.opportunity.findMany({ where: { workspaceId: ctx.workspaceId, status: 'dismissed' }, select: { companyId: true }, distinct: ['companyId'] }),
     ]);
     const dismissedCompanyIds = new Set(dismissedRows.map((o) => o.companyId));
+    const retryDays = RETRY_PLANS[(await this.research.contactSearchSettings(ctx.workspaceId)).retryPlan];
     const activeResearch = new Set(researchTasks.map((t) => t.entityId));
     const opportunitiesByCompany = new Map<string, typeof items>();
     for (const item of items) opportunitiesByCompany.set(item.companyId, [...(opportunitiesByCompany.get(item.companyId) ?? []), item]);
@@ -641,6 +657,7 @@ export class HomeService {
           matchingJobs: opportunities.filter((o) => o.jobId && classOfOpportunity(o) === 'open').length,
           researching,
           links: companyLinks({ careersUrl, website: c.website }),
+          addressSearch: addressSearchOf(c.researchMeta as SearchMemory | null, retryDays),
           foundAt: c.createdAt,
         },
       ];
@@ -743,7 +760,7 @@ export class HomeService {
       ? await this.prisma.documentVersion.findMany({ where: { id: { in: detail.revision.documentIds } }, select: { id: true, label: true, fileName: true, type: true, mime: true, size: true, archived: true, candidateId: true, language: true, createdAt: true } })
       : [];
     const latest = documents.some((d) => d.archived)
-      ? await this.prisma.documentVersion.findMany({ where: { candidateId: documents[0].candidateId, archived: false, scanState: 'clean' }, select: { id: true, label: true, fileName: true, type: true, mime: true, size: true, language: true, createdAt: true } })
+      ? await this.prisma.documentVersion.findMany({ where: { candidateId: documents[0].candidateId, archived: false, scanState: 'clean', variant: ORIGINAL_VARIANT }, select: { id: true, label: true, fileName: true, type: true, mime: true, size: true, language: true, createdAt: true } })
       : [];
     const currentDocuments = documents
       .map(({ archived, candidateId: _candidateId, ...d }) => (archived ? (replacementFor(d, latest) ?? d) : d))
@@ -1048,10 +1065,10 @@ export class HomeService {
     return { ok: true, language };
   }
 
-  async researchDetails(ctx: RequestContext, companyId: string) {
+  async researchDetails(ctx: RequestContext, companyId: string, opus = false) {
     const company = await this.prisma.company.findFirst({ where: { id: companyId, workspaceId: ctx.workspaceId }, select: { id: true } });
     if (!company) throw notFound('Firma');
-    await this.outbox.emit({ workspaceId: ctx.workspaceId, eventType: 'research.details', aggregateId: companyId, dedupKey: `research-details:${companyId}:${Date.now()}`, payload: { actorId: ctx.userId } });
+    await this.outbox.emit({ workspaceId: ctx.workspaceId, eventType: 'research.details', aggregateId: companyId, dedupKey: `research-details:${companyId}:${Date.now()}`, payload: { actorId: ctx.userId, opus } });
     return { queued: true };
   }
 
@@ -1108,11 +1125,14 @@ export class HomeService {
     if (draft && draft.currentRevision > 0 && suggestedTo && EDITABLE_DRAFT_STATES.includes(draft.status)) draft = await this.automation.fillMissingRecipient(draft, suggestedTo, ctx.userId);
     const rev = draft && draft.currentRevision > 0 ? await this.prisma.draftRevision.findUnique({ where: { draftId_revision: { draftId: draft.id, revision: draft.currentRevision } } }) : null;
     if (!draft || !rev) return { ...header, status: 'preparing' as const, draft: null };
-    const documentSelect = { id: true, label: true, fileName: true, type: true, mime: true, size: true, language: true, createdAt: true };
-    const [account, documents, availableDocuments] = await Promise.all([
+    const documentSelect = { id: true, label: true, fileName: true, type: true, mime: true, size: true, language: true, createdAt: true, variant: true };
+    // Seçilebilecek ekler: orijinaller, ana ATS sürümleri ve yalnızca bu ilanın ATS sürümü (başka ilanınki değil).
+    const variants = [{ variant: { in: [ORIGINAL_VARIANT, ATS_MAIN_VARIANT] } }, ...(draft.jobId ? [{ variant: ATS_JOB_VARIANT, targetJobId: draft.jobId }] : [])];
+    const [account, documents, availableDocuments, ats] = await Promise.all([
       draft.mailAccountId ? this.prisma.mailAccount.findUnique({ where: { id: draft.mailAccountId }, select: { accountEmail: true } }) : null,
       rev.documentIds.length ? this.prisma.documentVersion.findMany({ where: { id: { in: rev.documentIds } }, select: documentSelect }) : [],
-      this.prisma.documentVersion.findMany({ where: { candidateId: draft.candidateId, archived: false, scanState: 'clean' }, orderBy: { createdAt: 'desc' }, select: documentSelect }),
+      this.prisma.documentVersion.findMany({ where: { candidateId: draft.candidateId, archived: false, scanState: 'clean', OR: variants }, orderBy: { createdAt: 'desc' }, select: documentSelect }),
+      ['queued', 'sent'].includes(draft.status) ? null : this.ats.overview(draft, rev.documentIds),
     ]);
     return {
       ...header,
@@ -1130,8 +1150,22 @@ export class HomeService {
         availableDocuments,
         problems: draft.blockedReasons,
         language: draft.language === 'en' ? ('en' as const) : ('tr' as const),
+        ats: ats ?? { status: 'no_job' as const, threshold: 0, items: [], best: null, attachedScore: null },
       },
     };
+  }
+
+  /**
+   * "İyileştir": ATS sürümü arka planda hazırlanır ve taslağa eklenir; arayüz revizyon artışını yoklar. Ekli ATS CV'de
+   * yeniden tıklanırsa metin yeniden yazılır ve eskisinin yerine geçer; aynı birkaç saniyedeki çift tıklama tek sayılır.
+   */
+  async improveAts(ctx: RequestContext, draftId: string) {
+    const draft = await this.prisma.applicationDraft.findFirst({ where: { id: draftId, workspaceId: ctx.workspaceId } });
+    if (!draft) throw notFound('Taslak');
+    if (!EDITABLE_DRAFT_STATES.includes(draft.status)) throw new AppError(409, 'DRAFT_LOCKED', 'Gönderilmiş başvurunun CV’si değiştirilemez');
+    if (!draft.jobId) throw new AppError(422, 'ATS_NO_JOB', 'Firmaya genel başvuruda ilan olmadığı için ATS oranı hesaplanamaz');
+    await this.outbox.emit({ workspaceId: ctx.workspaceId, eventType: 'ats.improve', aggregateId: draft.id, dedupKey: `ats-improve:${draft.id}:${draft.currentRevision}:${Math.floor(Date.now() / IMPROVE_CLICK_WINDOW_MS)}`, payload: { userId: ctx.userId } });
+    return { queued: true, revision: draft.currentRevision };
   }
 
   async redraft(ctx: RequestContext, opportunityId: string) {
@@ -1217,10 +1251,6 @@ function interviewItemOf(i: { id: string; attemptId: string; company: string; ti
     status: (INTERVIEW_STATUSES as readonly string[]).includes(i.status) ? (i.status as InterviewItem['status']) : ('scheduled' as const),
     source: i.source === 'inbox' ? ('inbox' as const) : ('manual' as const),
   };
-}
-
-function citySelectionsOf(raw: string | null | undefined): string[] {
-  return (raw ?? '').split(CITY_SELECTION_SEPARATOR).map((s) => s.trim()).filter(Boolean);
 }
 
 function distinctCities(cities: (string | null)[]) {
@@ -1311,6 +1341,7 @@ export class HomeController {
     private readonly svc: HomeService,
     private readonly inbox: InboxService,
     private readonly autopilot: AutopilotService,
+    private readonly ats: AtsService,
   ) {}
 
   @Get('inbox')
@@ -1519,6 +1550,46 @@ export class HomeController {
     return this.svc.lookupStatus(ctx, id);
   }
 
+  @Post('drafts/:id/ats-improve')
+  improveAts(@Ctx() ctx: RequestContext, @Param('id') id: string) {
+    return this.svc.improveAts(ctx, id);
+  }
+
+  @Get('ats/documents')
+  atsDocuments(@Ctx() ctx: RequestContext): Promise<ServerShape<HomeAtsDocument>[]> {
+    return this.ats.documents(ctx.workspaceId);
+  }
+
+  @Get('ats/layouts')
+  cvLayouts(@Ctx() ctx: RequestContext): Promise<ServerShape<HomeCvLayout>[]> {
+    return this.ats.layouts(ctx.workspaceId);
+  }
+
+  @Get('documents/:id/layout-preview')
+  async cvLayoutPreview(@Ctx() ctx: RequestContext, @Param('id') id: string, @Res() res: Response) {
+    const { pdf, fileName } = await this.ats.layoutPreview(ctx.workspaceId, id);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.send(pdf);
+  }
+
+  @Post('documents/:id/layout')
+  rebuildCvLayout(@Ctx() ctx: RequestContext, @Param('id') id: string) {
+    return this.ats.requestLayout(ctx.workspaceId, id);
+  }
+
+  @Post('documents/:id/ats-promote')
+  promoteAts(@Ctx() ctx: RequestContext, @Param('id') id: string) {
+    return this.ats.promote(ctx.workspaceId, id);
+  }
+
+  @Post('documents/:id/ats-discard')
+  discardAts(@Ctx() ctx: RequestContext, @Param('id') id: string) {
+    return this.ats.discard(ctx.workspaceId, id);
+  }
+
   @Post('drafts/:id/translate')
   translateDraft(@Ctx() ctx: RequestContext, @Param('id') id: string, @Body(new ZodPipe(translateSchema)) body: z.infer<typeof translateSchema>) {
     return this.svc.translateDraft(ctx, id, body.lang);
@@ -1545,8 +1616,8 @@ export class HomeController {
   }
 
   @Post('companies/:id/details')
-  researchDetails(@Ctx() ctx: RequestContext, @Param('id') id: string) {
-    return this.svc.researchDetails(ctx, id);
+  researchDetails(@Ctx() ctx: RequestContext, @Param('id') id: string, @Body(new ZodPipe(researchDetailsSchema)) body: z.infer<typeof researchDetailsSchema>) {
+    return this.svc.researchDetails(ctx, id, body.opus === true);
   }
 
   @Post('applications/:id/undo')
@@ -1697,5 +1768,5 @@ export class AdminController {
   }
 }
 
-@Module({ imports: [CandidatesModule, ApplicationsModule], controllers: [HomeController, AdminController], providers: [HomeService] })
+@Module({ imports: [CandidatesModule, ApplicationsModule], controllers: [HomeController, AutoApplyController, ContactSearchController, CompanyDecisionsController, DirectoryController, AdminController], providers: [HomeService, AutoApplyService, ContactSearchService, DirectoryService] })
 export class HomeModule {}

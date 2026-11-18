@@ -13,9 +13,28 @@ FROM node:22-bookworm-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates tini && rm -rf /var/lib/apt/lists/*
-# İsteğe bağlı: worker içinde Claude Code / Codex CLI köprüsü (kişisel abonelikle giriş gerekir; docs/SETUP.md)
+# İyileştirilmiş CV'yi orijinal tasarımla PDF'e çevirmek için Chromium; CV fotoğrafını çıkarmak için poppler
+RUN apt-get update && apt-get install -y --no-install-recommends chromium poppler-utils fonts-dejavu-core && rm -rf /var/lib/apt/lists/* && chromium --version && pdfimages -v
+ENV CHROMIUM_PATH=/usr/bin/chromium
+# İsteğe bağlı: worker içinde Claude Code / Codex / Cursor CLI köprüsü (kişisel abonelikle giriş gerekir; docs/SETUP.md)
 ARG INSTALL_AI_CLI=false
-RUN if [ "$INSTALL_AI_CLI" = "true" ]; then npm i -g @anthropic-ai/claude-code @openai/codex; fi
+RUN if [ "$INSTALL_AI_CLI" = "true" ]; then \
+      npm i -g @anthropic-ai/claude-code @openai/codex && \
+      if ! claude --version >/dev/null 2>&1; then \
+        case "$(uname -m)" in aarch64) plat=linux-arm64 ;; *) plat=linux-x64 ;; esac && \
+        root="$(npm root -g)/@anthropic-ai/claude-code" && \
+        ver="$(node -p "require('$root/package.json').version")" && \
+        npm i -g "@anthropic-ai/claude-code-$plat@$ver" && \
+        node "$root/install.cjs"; \
+      fi && \
+      claude --version && codex --version && \
+      apt-get update && apt-get install -y --no-install-recommends curl && \
+      HOME=/opt/cursor bash -c 'curl -fsS https://cursor.com/install | bash' && \
+      ln -sf "$(readlink -f /opt/cursor/.local/bin/cursor-agent)" /usr/local/bin/cursor-agent && \
+      chmod -R a+rX /opt/cursor && \
+      apt-get purge -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* && \
+      cursor-agent --version; \
+    fi
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma

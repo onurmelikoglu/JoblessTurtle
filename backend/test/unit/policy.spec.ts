@@ -1,5 +1,5 @@
 import { canTransition } from '../../src/domain/attempt-state';
-import { evaluatePolicy, PolicyInput } from '../../src/domain/policy';
+import { AutoApplyFilters, evaluatePolicy, filterReasons, PolicyInput } from '../../src/domain/policy';
 
 const now = new Date('2026-09-30T10:00:00Z');
 const base: PolicyInput = {
@@ -86,5 +86,40 @@ describe('gönderim durum makinesi', () => {
     expect(canTransition('queued', 'sending')).toBe(true);
     expect(canTransition('sending', 'submission_unknown')).toBe(true);
     expect(canTransition('cancelled', 'sending')).toBe(false);
+  });
+});
+
+describe('otomatik başvuru filtreleri', () => {
+  const none: AutoApplyFilters = { filterCities: [], filterWorkModes: [], filterSizes: [], includeUnknownWorkMode: true, includeUnknownSize: true };
+  const subject = { place: 'Kadıköy, İstanbul', workMode: 'hybrid', employeeRange: '51-200' };
+
+  it('filtre seçilmemişse hiçbir ilan elenmez', () => {
+    expect(filterReasons(none, subject, 'job_application')).toEqual([]);
+    expect(evaluatePolicy({ ...base, filters: none, subject })).toEqual({ eligible: true, reasons: [] });
+  });
+
+  it('şehir filtresi: seçili şehir dışındaki ilan elenir, uzaktan ve konumu bilinmeyen elenmez', () => {
+    const filters = { ...none, filterCities: ['Kocaeli'] };
+    expect(filterReasons(filters, subject, 'job_application')).toEqual(['CITY_FILTERED']);
+    expect(filterReasons(filters, { ...subject, place: 'Gebze, Kocaeli' }, 'job_application')).toEqual([]);
+    expect(filterReasons(filters, { ...subject, workMode: 'remote' }, 'job_application')).toEqual([]);
+    expect(filterReasons(filters, { ...subject, place: null }, 'job_application')).toEqual([]);
+    expect(filterReasons({ ...none, filterCities: ['İstanbul (Anadolu Yakası)'] }, subject, 'job_application')).toEqual([]);
+  });
+
+  it('çalışma şekli filtresi: belirtilmemiş ilan seçime göre kalır ya da elenir', () => {
+    const filters = { ...none, filterWorkModes: ['remote', 'hybrid'] };
+    expect(filterReasons(filters, subject, 'job_application')).toEqual([]);
+    expect(filterReasons(filters, { ...subject, workMode: 'onsite' }, 'job_application')).toEqual(['WORK_MODE_FILTERED']);
+    expect(filterReasons(filters, { ...subject, workMode: 'unknown' }, 'job_application')).toEqual([]);
+    expect(filterReasons({ ...filters, includeUnknownWorkMode: false }, { ...subject, workMode: 'unknown' }, 'job_application')).toEqual(['WORK_MODE_FILTERED']);
+  });
+
+  it('çalışan sayısı filtresi niyet başvurusunda da uygulanır', () => {
+    const filters = { ...none, filterSizes: ['201-500', '501-1000'], includeUnknownSize: false };
+    expect(filterReasons(filters, subject, 'job_application')).toEqual(['SIZE_FILTERED']);
+    expect(filterReasons(filters, { ...subject, employeeRange: '201-500' }, 'general_intent')).toEqual([]);
+    expect(filterReasons(filters, { ...subject, employeeRange: null }, 'general_intent')).toEqual(['SIZE_FILTERED']);
+    expect(evaluatePolicy({ ...base, filters, subject }).reasons).toEqual(['SIZE_FILTERED']);
   });
 });

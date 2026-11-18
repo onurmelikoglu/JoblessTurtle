@@ -47,6 +47,7 @@ describe('arayüzden yapay zekâ hesabı bağlama', () => {
     expect(list.map((s: any) => [s.provider, s.installed, s.connected])).toEqual([
       ['cli_claude', true, false],
       ['cli_codex', true, false],
+      ['cli_cursor', true, false],
     ]);
   });
 
@@ -83,8 +84,8 @@ describe('kurulum listesinin yapay zekâ adımı', () => {
   it('gerçek sağlayıcı yokken eksik; davetli bağlantı ve anahtar bilgisini görmez', async () => {
     const own = await setup(admin);
     expect(own).toMatchObject({ ready: false, usable: [], manualAccepted: false, canManage: true });
-    expect(own.connections.map((c: any) => c.provider)).toEqual(['cli_claude', 'cli_codex']);
-    expect(own.apiKeys).toEqual({ anthropic_api: { source: null, last4: null, savedAt: null }, openai_api: { source: null, last4: null, savedAt: null } });
+    expect(own.connections.map((c: any) => c.provider)).toEqual(['cli_claude', 'cli_codex', 'cli_cursor']);
+    expect(own.apiKeys).toEqual({ anthropic_api: { source: null, last4: null, savedAt: null }, openai_api: { source: null, last4: null, savedAt: null }, cli_cursor: { source: null, last4: null, savedAt: null } });
     expect(await setup(invitee)).toMatchObject({ ready: false, canManage: false, connections: null, apiKeys: null });
   });
 
@@ -114,7 +115,7 @@ describe('kurulum listesinin yapay zekâ adımı', () => {
 
     const own = await setup(admin);
     expect(own).toMatchObject({ ready: true, usable: ['anthropic_api'] });
-    expect((await h.app.get(AiService).settings(admin.candidate.workspaceId)).providerOrder).toEqual(['cli_claude', 'cli_codex', 'anthropic_api', 'manual', 'template']);
+    expect((await h.app.get(AiService).settings(admin.candidate.workspaceId)).providerOrder).toEqual(['cli_claude', 'cli_codex', 'cli_cursor', 'anthropic_api', 'manual', 'template']);
     // Davetli, yönetici CLI paylaşımını açmadıkça sunucunun anahtarını kullanmaz.
     expect((await setup(invitee)).ready).toBe(false);
   });

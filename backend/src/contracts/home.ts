@@ -1,3 +1,4 @@
+import type { HomeAddressSearch } from './contact-search';
 /**
  * Sade arayüzün kullandığı /v1/home uçlarının yanıt sözleşmesi. Sunucu bu tipleri ServerShape ile uygular,
  * web arayüzü aynı dosyayı yalnızca tip olarak içe aktarır; bu yüzden burada çalışma zamanı kodu ve
@@ -204,6 +205,8 @@ export interface HomeCompany {
   matchingJobs: number;
   researching: boolean;
   links: ApplyLink[];
+  /** Son adres araması; hiç aranmadıysa null. */
+  addressSearch: HomeAddressSearch | null;
   foundAt: IsoDate;
 }
 
@@ -384,6 +387,8 @@ export interface HomeDocument {
   size: number;
   /** tr | en */
   language: string;
+  /** original | ats_main | ats_job (yalnızca CV'lerde anlamlı). */
+  variant?: string;
 }
 
 export interface HomeApplicationDetail {
@@ -436,6 +441,31 @@ export interface HomePreviewDraft {
   availableDocuments: (HomeDocument & { createdAt: IsoDate })[];
   problems: string[];
   language: 'tr' | 'en';
+  ats: HomeAtsOverview;
+}
+
+export type HomeAtsStatus = 'ready' | 'preparing' | 'no_job' | 'no_description' | 'no_cv' | 'unavailable';
+
+/** Taslağın dilindeki CV sürümlerinin ilana ATS uyumu. */
+export interface HomeAtsOverview {
+  status: HomeAtsStatus;
+  /** Bu oranın altındaki CV düşük sayılır (yüzde). */
+  threshold: number;
+  items: HomeAtsItem[];
+  best: { documentId: string; score: number } | null;
+  attachedScore: number | null;
+}
+
+export interface HomeAtsItem {
+  documentId: string;
+  variant: string;
+  label: string;
+  score: number;
+  /** İlanda istenip CV'de bulunmayan terimler. */
+  missing: string[];
+  /** İyileştirmede CV'de kanıtı olmadan eklenen beceriler. */
+  addedSkills: string[];
+  attached: boolean;
 }
 
 export interface HomePreview {
@@ -574,4 +604,49 @@ export interface InboxDetail {
   body: string;
   receivedAt: IsoDate;
   reason: string | null;
+}
+
+/** Kayıtlı bir firmaya benzeyen yeni firmanın kullanıcı kararına bekletilen ilanları. */
+export interface CompanyDecisionView {
+  id: string;
+  /** İlan sitesinde görünen yeni ad. */
+  name: string;
+  domain: string | null;
+  reasons: string[];
+  listingCount: number;
+  titles: string[];
+  createdAt: IsoDate;
+  suggested: { id: string; name: string; website: string | null; openJobs: number; applications: number };
+}
+
+export interface SimilarCompanyView {
+  match: { id: string; name: string; level: 'certain' | 'likely'; reasons: string[] } | null;
+}
+
+export type CvLayoutState = 'ready' | 'preparing' | 'failed' | 'none' | 'unsupported';
+
+/** Orijinal CV'nin tasarım şablonu: iyileştirilen CV bu görünümle PDF'e çevrilir. */
+export interface HomeCvLayout {
+  documentId: string;
+  fileName: string;
+  language: string;
+  state: CvLayoutState;
+  usesPhoto: boolean;
+  reason: string | null;
+  createdAt: IsoDate | null;
+}
+
+/** Profilde listelenen ATS CV sürümü. */
+export interface HomeAtsDocument {
+  id: string;
+  label: string;
+  fileName: string;
+  language: string;
+  variant: 'ats_main' | 'ats_job' | string;
+  /** İlana özel sürümün ilanı ("Firma — Unvan"). */
+  job: string | null;
+  pendingPromotion: boolean;
+  addedSkills: string[];
+  size: number;
+  createdAt: IsoDate;
 }

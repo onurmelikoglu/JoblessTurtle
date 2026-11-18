@@ -4,21 +4,25 @@ import { useEffect, useRef, useState } from 'react';
 import { errorText } from '@/api/client';
 import { homeApi } from '@/api/home';
 import type { HomePreview, HomePreviewDraft } from '@/api/types';
+import { DocumentPreviewDialog } from '@/features/shared/DocumentPreviewDialog';
 import { documentLabel } from '@/features/shared/documents';
 import { cn } from '@/lib/cn';
-import { openBlob } from '@/lib/download';
 import { fmtBytes, hostOf } from '@/lib/format';
 import { Button } from '@/ui/Button';
 import { useConfirm } from '@/ui/confirm-context';
 import { Dialog } from '@/ui/Dialog';
 import { InlineBusy, KeyValue, LoadingBlock } from '@/ui/feedback';
 import { Checkbox, Field, Input, Textarea } from '@/ui/fields';
+import { Badge } from '@/ui/Badge';
 import { toast } from '@/ui/toast';
+import { AtsPanel } from './AtsPanel';
+import { atsTone, improvementText, scoreOf, variantLabel } from './ats-model';
 
 const PREVIEW_POLL_MS = 3000;
 const RESEARCH_POLL_MS = 5000;
 const PREVIEW_TIMEOUT_MS = 4 * 60_000;
 const TRANSLATE_TIMEOUT_MS = 3 * 60_000;
+const ATS_IMPROVE_TIMEOUT_MS = 4 * 60_000;
 const RECIPIENT_PROBLEM_PREFIX = 'Alıcı adresi';
 
 const LANGUAGE_NAME: Record<HomePreview['language'], string> = { tr: 'Türkçe', en: 'İngilizce' };
@@ -45,6 +49,8 @@ export function ApplyPreviewDialog({ opportunityId, onClose }: ApplyPreviewDialo
   const [busy, setBusy] = useState(false);
   const [translating, setTranslating] = useState(false);
   const [researching, setResearching] = useState(false);
+  const [improving, setImproving] = useState(false);
+  const [previewDocId, setPreviewDocId] = useState<string | null>(null);
 
   useEffect(() => {
     alive.current = true;
@@ -68,7 +74,7 @@ export function ApplyPreviewDialog({ opportunityId, onClose }: ApplyPreviewDialo
       }
       return homeApi.preview(opportunityId);
     },
-    refetchInterval: (query) => (query.state.data?.status === 'preparing' ? PREVIEW_POLL_MS : false),
+    refetchInterval: (query) => (query.state.data?.status === 'preparing' || query.state.data?.draft?.ats?.status === 'preparing' ? PREVIEW_POLL_MS : false),
     refetchOnWindowFocus: false,
     staleTime: Infinity,
     gcTime: 0,
@@ -174,7 +180,41 @@ export function ApplyPreviewDialog({ opportunityId, onClose }: ApplyPreviewDialo
       } else toast.info('Firmanın yayımlanmış bir başvuru adresi bulunamadı. Adresi biliyorsan elle yazabilirsin.');
     });
 
-  const openDocument = (id: string) => guarded(async () => openBlob(await homeApi.downloadDocument(id)));
+  /** İyileştirme arka planda çalışır; taslağın yeni revizyonu gelince oran güncellenir. */
+  const improve = () =>
+    guarded(async () => {
+      if (!draft) return;
+      await save();
+      const current = await homeApi.preview(opportunityId);
+      const before = current.draft?.revision ?? draft.revision;
+      const beforeScore = current.draft?.ats?.attachedScore ?? null;
+      await homeApi.improveAts(draft.id);
+      setImproving(true);
+      try {
+        const deadline = Date.now() + ATS_IMPROVE_TIMEOUT_MS;
+        while (alive.current && Date.now() < deadline) {
+          await wait(PREVIEW_POLL_MS);
+          const next = await homeApi.preview(opportunityId);
+          if ((next.draft?.revision ?? 0) > before) {
+            await preview.refetch();
+            toast.success(improvementText(beforeScore, next.draft?.ats?.attachedScore ?? null));
+            return;
+          }
+        }
+        if (alive.current) toast.info('Oran değişmedi ya da iyileştirme hâlâ sürüyor; yapay zekâ kullanılamıyorsa biraz sonra yeniden dene.');
+      } finally {
+        if (alive.current) setImproving(false);
+      }
+    });
+
+  /** Seçilen CV sürümü, aynı dildeki diğer CV'nin yerine ekler listesine girer (Kaydet/Gönder ile kalıcı olur). */
+  const attachCv = (documentId: string) => {
+    const cvIds = new Set(documents.filter((d) => d.type === 'cv').map((d) => d.id));
+    setSelectedDocs((current) => [documentId, ...current.filter((id) => !cvIds.has(id))]);
+  };
+
+  const previewDoc = previewDocId ? documents.find((d) => d.id === previewDocId) : undefined;
+  const previewAts = previewDoc && draft ? draft.ats.items.find((item) => item.documentId === previewDoc.id) : undefined;
   const toggleDoc = (id: string) => setSelectedDocs((current) => (current.includes(id) ? current.filter((x) => x !== id) : [...current, id]));
   const title = data ? `${data.company}${data.title ? ` · ${data.title}` : ''}` : 'Başvuru';
 
@@ -315,6 +355,7 @@ export function ApplyPreviewDialog({ opportunityId, onClose }: ApplyPreviewDialo
             ))}
           <Field label="Konu">{(props) => <Input {...props} value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} />}</Field>
           <Field label="Firmaya gidecek yazı">{(props) => <Textarea {...props} rows={14} value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} />}</Field>
+          <AtsPanel ats={draft.ats} busy={busy} improving={improving} onImprove={improve} onAttach={attachCv} />
           <section aria-label="Ekler">
             <h3 className="text-sm font-semibold">Ekler</h3>
             <p className="text-xs text-ink-soft">Gönderilecek dosyaları işaretle. Yeni dosyayı Profilim › CV ve portföy bölümünden yükleyebilirsin.</p>
@@ -329,13 +370,15 @@ export function ApplyPreviewDialog({ opportunityId, onClose }: ApplyPreviewDialo
                     label={
                       <span className="min-w-0">
                         <span className="block truncate">{doc.fileName}</span>
-                        <span className="block text-xs text-ink-soft">
-                          {documentLabel(doc.type)}{doc.language === 'en' ? ' · İngilizce' : ''} · {fmtBytes(doc.size)}
+                        <span className="flex flex-wrap items-center gap-1.5 text-xs text-ink-soft">
+                          {doc.type === 'cv' && doc.variant && doc.variant !== 'original' ? variantLabel(doc.variant) : documentLabel(doc.type)}
+                          {doc.language === 'en' ? ' · İngilizce' : ''} · {fmtBytes(doc.size)}
+                          {scoreOf(draft.ats, doc.id) !== null && <Badge tone={atsTone(scoreOf(draft.ats, doc.id)!, draft.ats.threshold)}>ATS %{scoreOf(draft.ats, doc.id)}</Badge>}
                         </span>
                       </span>
                     }
                   />
-                  <Button variant="ghost" size="sm" onClick={() => openDocument(doc.id)}>
+                  <Button variant="ghost" size="sm" onClick={() => setPreviewDocId(doc.id)}>
                     Önizle
                   </Button>
                 </li>
@@ -349,6 +392,7 @@ export function ApplyPreviewDialog({ opportunityId, onClose }: ApplyPreviewDialo
           </section>
         </div>
       )}
+      {previewDoc && <DocumentPreviewDialog doc={previewDoc} ats={previewAts && draft ? { item: previewAts, threshold: draft.ats.threshold } : null} onClose={() => setPreviewDocId(null)} />}
     </Dialog>
   );
 }

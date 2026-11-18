@@ -13,13 +13,19 @@ import { Notice } from '@/ui/Notice';
 import { CONNECT_LABELS, connectionSummary, loginInProgress } from './setup-model';
 import { useRefreshAiSetup } from './setup-queries';
 
-const CONNECT_ACTIONS: Record<ConnectStatus['provider'], string> = { cli_claude: "Claude'u bağla", cli_codex: "ChatGPT'yi bağla" };
+const CONNECT_ACTIONS: Record<ConnectStatus['provider'], string> = { cli_claude: "Claude'u bağla", cli_codex: "ChatGPT'yi bağla", cli_cursor: "Cursor'u bağla" };
+const CONNECT_TITLES: Record<ConnectStatus['provider'], string> = { cli_claude: 'Claude (Pro / Max aboneliği)', cli_codex: 'ChatGPT (Plus / Pro aboneliği)', cli_cursor: 'Cursor (Pro / Ultra aboneliği)' };
+const LOGIN_PAGE_LABELS: Record<ConnectStatus['provider'], string> = { cli_claude: 'Claude giriş sayfasını aç', cli_codex: 'ChatGPT giriş sayfasını aç', cli_cursor: 'Cursor giriş sayfasını aç' };
+/** Kullandıkça ücretlenen anahtarlar; Cursor anahtarı aboneliği kullandığı için Cursor kartında durur. */
+const PAID_API_KEYS: ApiKeyProviderName[] = ['anthropic_api', 'openai_api'];
+const CURSOR_KEY_PLAN = 'API anahtarıyla';
 
 const CLI_MISSING_HINT = 'install.sh ile kurulumda gelir. Elle kurulumda .env içinde INSTALL_AI_CLI=true yapıp imajı yeniden derle.';
 
 const API_KEY_LABELS: Record<ApiKeyProviderName, { title: string; placeholder: string; console: string }> = {
   anthropic_api: { title: 'Claude API anahtarı', placeholder: 'sk-ant-…', console: 'https://console.anthropic.com/settings/keys' },
   openai_api: { title: 'OpenAI API anahtarı', placeholder: 'sk-…', console: 'https://platform.openai.com/api-keys' },
+  cli_cursor: { title: 'Cursor kullanıcı API anahtarı', placeholder: 'key_…', console: 'https://cursor.com/dashboard?tab=integrations' },
 };
 
 function StatusIcon({ connection }: { connection: ConnectStatus }) {
@@ -51,7 +57,7 @@ function ClaudeCodeForm({ busy, onSubmit }: { busy: boolean; onSubmit: (code: st
 
 function LoginSteps({ connection, busy, onCode, onCancel }: { connection: ConnectStatus; busy: boolean; onCode: (code: string) => void; onCancel: () => void }) {
   const login = connection.login!;
-  const openLabel = connection.provider === 'cli_claude' ? 'Claude giriş sayfasını aç' : 'ChatGPT giriş sayfasını aç';
+  const openLabel = LOGIN_PAGE_LABELS[connection.provider];
   return (
     <div className="flex flex-col gap-3 rounded-lg bg-sunken p-3">
       {login.phase === 'starting' && <p className="text-sm text-ink-soft">Giriş başlatılıyor…</p>}
@@ -72,6 +78,8 @@ function LoginSteps({ connection, busy, onCode, onCancel }: { connection: Connec
                 <ClaudeCodeForm busy={busy || login.phase === 'verifying'} onSubmit={onCode} />
               </div>
             </li>
+          ) : !login.userCode ? (
+            <li>Açılan sayfada girişi onayla. Onayladıktan sonra bu ekran kendiliğinden güncellenir.</li>
           ) : (
             <li>
               <span className="flex flex-wrap items-center gap-2">
@@ -131,7 +139,7 @@ function ClaudeTokenForm({ busy, onSave }: { busy: boolean; onSave: (token: stri
   );
 }
 
-function ConnectionCard({ connection }: { connection: ConnectStatus }) {
+function ConnectionCard({ connection, cursorKey }: { connection: ConnectStatus; cursorKey?: ApiKeyStatus }) {
   const { busy, run } = useAction();
   const refresh = useRefreshAiSetup();
   const confirm = useConfirm();
@@ -142,6 +150,7 @@ function ConnectionCard({ connection }: { connection: ConnectStatus }) {
     await refresh();
   };
   const isClaude = connection.provider === 'cli_claude';
+  const viaKey = connection.provider === 'cli_cursor' && connection.plan === CURSOR_KEY_PLAN;
   const startLongLived = () => act(() => aiSetupApi.startLogin('cli_claude', 'long_lived'));
   const removeToken = async () => {
     if (!(await confirm({ title: 'Kalıcı Claude belirteci kaldırılsın mı?', message: 'Tarayıcı girişi varsa o kullanılır; yoksa Claude işleri durur.', confirmLabel: 'Kaldır', danger: true }))) return;
@@ -158,7 +167,7 @@ function ConnectionCard({ connection }: { connection: ConnectStatus }) {
         <StatusIcon connection={connection} />
         <div className="min-w-0 flex-1 basis-44">
           <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
-            {connection.provider === 'cli_claude' ? 'Claude (Pro / Max aboneliği)' : 'ChatGPT (Plus / Pro aboneliği)'}
+            {CONNECT_TITLES[connection.provider]}
             {connection.connected && <Badge tone="good">Bağlı</Badge>}
           </p>
           <p className="text-sm break-words text-ink-soft">{connectionSummary(connection)}</p>
@@ -175,7 +184,7 @@ function ConnectionCard({ connection }: { connection: ConnectStatus }) {
                 Belirteci kaldır
               </Button>
             )}
-            {connection.connected && !connection.longLived ? (
+            {connection.connected && !connection.longLived && !viaKey ? (
               <Button size="sm" variant="ghost" disabled={busy} icon={<LogOut className="size-4" aria-hidden />} onClick={() => void disconnect()}>
                 Bağlantıyı kes
               </Button>
@@ -195,6 +204,15 @@ function ConnectionCard({ connection }: { connection: ConnectStatus }) {
           <p className="text-xs text-ink-soft">Tarayıcıyla bağlantı birkaç haftada bir düşer. "Kalıcı bağla" aboneliğinle bir yıl geçerli bir belirteç oluşturur; Claude işleri kesintisiz sürer. Bitişine üç gün kala uyarı gelir.</p>
           <ClaudeTokenForm busy={busy} onSave={(token) => void act(() => aiSetupApi.saveClaudeToken(token), () => 'Kalıcı Claude belirteci kaydedildi')} />
         </>
+      )}
+      {connection.provider === 'cli_cursor' && connection.installed && cursorKey && !loginInProgress(login) && (
+        <details className="rounded-lg border border-line p-3" open={viaKey}>
+          <summary className="cursor-pointer text-sm font-medium">Tarayıcı yerine Cursor anahtarıyla bağla</summary>
+          <div className="mt-3 flex flex-col gap-2">
+            <p className="text-xs text-ink-soft">Cursor panelinde Integrations › User API Keys bölümünden bir anahtar oluştur. Anahtar senin Cursor hesabını temsil eder; işler bu hesabın kullanımına yazılır (Cursor panelindeki Usage bölümünden izleyebilirsin). Tarayıcı girişi düşse de çalışmaya devam eder.</p>
+            <ApiKeyRow provider="cli_cursor" status={cursorKey} />
+          </div>
+        </details>
       )}
       {login && loginInProgress(login) && (
         <LoginSteps
@@ -315,7 +333,7 @@ export function AiConnectPanel({ status }: { status: AiSetupStatus }) {
     <div className="flex flex-col gap-4">
       <ul className="flex flex-col gap-2">
         {(status.connections ?? []).map((connection) => (
-          <ConnectionCard key={connection.provider} connection={connection} />
+          <ConnectionCard key={connection.provider} connection={connection} cursorKey={status.apiKeys?.cli_cursor} />
         ))}
       </ul>
       {status.apiKeys && (
@@ -323,7 +341,7 @@ export function AiConnectPanel({ status }: { status: AiSetupStatus }) {
           <summary className="cursor-pointer text-sm font-medium">Abonelik yerine API anahtarı kullan</summary>
           <div className="mt-3 flex flex-col gap-4">
             <p className="text-xs text-ink-soft">Kullandıkça ücretlendirilir. Anahtar şifreli saklanır ve bir daha gösterilmez; aboneliğin limiti dolduğunda da sıradaki sağlayıcı olarak kullanılır.</p>
-            {(Object.keys(API_KEY_LABELS) as ApiKeyProviderName[]).map((provider) => (
+            {PAID_API_KEYS.map((provider) => (
               <ApiKeyRow key={provider} provider={provider} status={status.apiKeys![provider]} />
             ))}
           </div>

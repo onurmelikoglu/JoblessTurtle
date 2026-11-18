@@ -20,9 +20,10 @@ import {
   WEB_SEARCH_SOURCE,
 } from '../domain/job-search';
 import { normalizeCompanyName, normalizeDomain, stripHtml } from '../domain/text';
-import { classifyTitle } from '../domain/titles';
+import { classifyTitle, normalizeTitle } from '../domain/titles';
 import { AiService } from './ai/ai.service';
 import { AppliedCompaniesService } from './applied-companies.service';
+import { CompanyMergeService } from './company-merge.service';
 import { detectAtsSource } from './connectors/ats-detect';
 import { RELOCATION_BOARDS, REMOTE_BOARDS } from './connectors/boards';
 import { CLOSED_TEXT, parseJobPostingJsonLd } from './connectors/career-page';
@@ -56,6 +57,17 @@ export interface ApplyOptions {
   announced?: boolean;
   /** Bildirim başlığında ilanların nereden geldiği ("Kariyer.net taraması"). */
   origin?: string;
+  /** Kullanıcı "farklı firma" dedi: benzer adlı kayıt olsa da yeni firma açılır. */
+  trustNewCompanies?: boolean;
+}
+
+/** Benzer firma kararında bekletilen ilanlar ve onları yeniden işlemek için gereken bağlam. */
+export interface DeferredListings {
+  searchProfileId: string;
+  sourceKind: string | null;
+  origin: string | null;
+  announced: boolean;
+  listings: (FoundListing & { externalId: string })[];
 }
 
 export interface FoundListing {
@@ -77,7 +89,7 @@ export interface FoundListing {
 }
 type Candidate = FoundListing & { externalId: string };
 type PageCheck = { state: 'open' | 'closed' | 'unverified'; posting?: RawListing };
-type CompanyRef = { id: string; name: string; canonicalDomain: string | null };
+type CompanyRef = { id: string; name: string; canonicalDomain: string | null; matchName?: string; matchDomain?: string | null };
 
 export interface JobSearchStats {
   returned: number;
@@ -86,6 +98,8 @@ export interface JobSearchStats {
   known: number;
   closed: number;
   newCompanies: number;
+  /** Benzer adlı kayıtlı firma yüzünden kullanıcı kararına bekletilen ilan. */
+  deferred?: number;
   rejected: Record<string, number>;
 }
 
@@ -123,6 +137,7 @@ export class JobSearchService {
     private readonly outbox: OutboxService,
     private readonly learning: LearningService,
     private readonly appliedCompanies: AppliedCompaniesService,
+    private readonly companyMerge: CompanyMergeService,
   ) {}
 
   async queryLog(searchProfileId: string): Promise<JobQueryLog> {
@@ -143,12 +158,12 @@ export class JobSearchService {
    * Sıradaki sorguları kuyruğa alır; her sorgu ayrı bir iş olur. Verimsiz sorgular kendiliğinden seyrekleşir
    * (domain/job-search.ts). force: kullanıcı başlattı, dinlenme süresi beklenmez.
    */
-  async plan(workspaceId: string, opts: { count: number; searchProfileId?: string; force?: boolean; actorId?: string | null }) {
+  async plan(workspaceId: string, opts: { count: number; searchProfileId?: string; force?: boolean; actorId?: string | null; restHours?: number }) {
     await this.syncBoards(workspaceId);
     const stamp = Date.now();
     let queued = 0;
     for (const profile of await this.activeProfiles(workspaceId, opts.searchProfileId)) {
-      const queries = pickJobQueries(buildJobQueries(profile), await this.queryLog(profile.id), { count: opts.count, force: opts.force });
+      const queries = pickJobQueries(buildJobQueries(profile), await this.queryLog(profile.id), { count: opts.count, force: opts.force, restHours: opts.restHours });
       for (const query of queries) {
         await this.outbox.emit({
           workspaceId,
@@ -274,6 +289,7 @@ export class JobSearchService {
     let companies = await this.companyIndex(workspaceId);
     const strangers = new Map<string, Candidate[]>();
     for (const c of open) if (!companies.find(c)) strangers.set(normalizeCompanyName(c.company), [...(strangers.get(normalizeCompanyName(c.company)) ?? []), c]);
+    const { assigned, deferred } = opts.trustNewCompanies ? { assigned: new Map<string, CompanyRef>(), deferred: new Set<string>() } : await this.gateStrangers(profile, strangers, companies, opts);
     if (strangers.size) {
       await this.research.applyDiscovery(
         workspaceId,
@@ -297,7 +313,7 @@ export class JobSearchService {
 
     const raws: RawListing[] = [];
     for (const c of [...open, ...[...candidates.values()].filter((x) => knownIds.has(x.externalId))]) {
-      const company = companies.find(c);
+      const company = assigned.get(c.externalId) ?? companies.find(c);
       if (!company) continue;
       const posting = checks.get(c.externalId)?.posting;
       const email = c.applyEmail?.trim().toLowerCase();
@@ -321,11 +337,13 @@ export class JobSearchService {
     if (raws.length) await this.ingest.recordFound(source, raws);
     await this.followOfficialSources(workspaceId, open, companies, new Set([...strangers.values()].flat().map((c) => c.externalId)));
 
-    const stats: JobSearchStats = { returned: listings.length, accepted: candidates.size, fresh: open.length, known: knownIds.size, closed: fresh.length - open.length, newCompanies: strangers.size, rejected };
+    const stats: JobSearchStats = { returned: listings.length, accepted: candidates.size, fresh: open.length, known: knownIds.size, closed: fresh.length - open.length, newCompanies: strangers.size, deferred: deferred.size, rejected };
     // Başvurulan firmaların ilanları bu bildirime girmez; her biri ayrıca "başvurduğun firmada yeni ilan" olarak bildirilir.
+    // Firma kararı bekleyen ilanlar da girmez; onlar için ayrı "karar bekliyor" bildirimi gider.
     const applied = open.length ? await this.appliedCompanies.index(workspaceId) : null;
     const notified = open.filter((c) => {
-      const company = companies.find(c);
+      if (deferred.has(c.externalId)) return false;
+      const company = assigned.get(c.externalId) ?? companies.find(c);
       return !company || !applied?.match(company);
     });
     if (notified.length) {
@@ -341,6 +359,69 @@ export class JobSearchService {
       });
     }
     return stats;
+  }
+
+  /**
+   * Kayıtlı bir firmaya benzeyen yeni firma adları. Kesin aynıysa (aynı site ya da güçlü ad + ortak kanıt) ilanlar
+   * doğrudan o firmaya bağlanır; yalnızca olasıysa yeni firma açılmaz, ilanlar kullanıcının kararına bekletilir.
+   * strangers içinden bu ikisi çıkarılır; geri kalanlar yeni firma olarak keşfe gider.
+   */
+  private async gateStrangers(profile: SearchProfile, strangers: Map<string, Candidate[]>, companies: Awaited<ReturnType<JobSearchService['companyIndex']>>, opts: ApplyOptions) {
+    const assigned = new Map<string, CompanyRef>();
+    const deferred = new Set<string>();
+    if (!strangers.size) return { assigned, deferred };
+    const profiles = await this.companyMerge.profiles(profile.workspaceId);
+    for (const [normalizedName, group] of [...strangers]) {
+      const domain = group.map(companyDomainOf).find(Boolean) ?? null;
+      const twin = await this.companyMerge.similarTo(
+        profile.workspaceId,
+        {
+          name: group[0].company,
+          domains: [domain],
+          jobs: group.map((c) => ({ title: normalizeTitle(c.title), place: c.location ?? null })),
+          emailDomains: group.map((c) => c.applyEmail?.split('@')[1] ?? '').filter(Boolean),
+          officePlaces: [],
+        },
+        profiles,
+      );
+      if (!twin) continue;
+      strangers.delete(normalizedName);
+      if (twin.verdict.level === 'certain') {
+        const ref = companies.byId(twin.profile.id);
+        if (ref) for (const c of group) assigned.set(c.externalId, ref);
+        continue;
+      }
+      for (const c of group) deferred.add(c.externalId);
+      await this.deferListings(profile, { name: group[0].company, normalizedName, domain, suggestedCompanyId: twin.profile.id, suggestedName: twin.profile.name, reasons: twin.verdict.reasons, listings: group }, opts);
+    }
+    return { assigned, deferred };
+  }
+
+  private async deferListings(
+    profile: SearchProfile,
+    d: { name: string; normalizedName: string; domain: string | null; suggestedCompanyId: string; suggestedName: string; reasons: string[]; listings: Candidate[] },
+    opts: ApplyOptions,
+  ) {
+    const key = { workspaceId_normalizedName_suggestedCompanyId: { workspaceId: profile.workspaceId, normalizedName: d.normalizedName, suggestedCompanyId: d.suggestedCompanyId } };
+    const existing = await this.prisma.companyDecision.findUnique({ where: key });
+    const previous = (existing?.status === 'pending' ? (existing.payload as unknown as DeferredListings).listings : []) ?? [];
+    const merged = [...new Map([...previous, ...d.listings].map((l) => [l.externalId, l])).values()];
+    const payload: DeferredListings = { searchProfileId: profile.id, sourceKind: opts.sourceKind ?? null, origin: opts.origin ?? null, announced: opts.announced === true, listings: merged };
+    const data = { name: d.name, domain: d.domain, reasons: d.reasons, payload: payload as unknown as Prisma.InputJsonValue, listingCount: merged.length, status: 'pending', decidedAt: null };
+    const decision = await this.prisma.companyDecision.upsert({ where: key, create: { workspaceId: profile.workspaceId, normalizedName: d.normalizedName, suggestedCompanyId: d.suggestedCompanyId, ...data }, update: data });
+    if (existing?.status === 'pending') return;
+    await this.outbox.emit({
+      workspaceId: profile.workspaceId,
+      eventType: 'notify',
+      aggregateId: decision.id,
+      dedupKey: `company-decision:${decision.id}:${decision.updatedAt.getTime()}`,
+      payload: {
+        type: 'company_decision',
+        title: `"${d.name}" kayıtlı bir firmaya benziyor`,
+        body: `${d.listings.map((c) => c.title).slice(0, 3).join(', ')} ilanı "${d.suggestedName}" firmasına mı eklensin, yeni firma mı açılsın? Karar verene kadar ilan bekletiliyor.`,
+        link: '/?karar=1',
+      },
+    });
   }
 
   /** Bilinen firmanın ilanında resmî kariyer sayfası ya da başvuru panosu görüldüyse takip edilen kaynak olur. */
@@ -363,12 +444,24 @@ export class JobSearchService {
   }
 
   private async companyIndex(workspaceId: string) {
-    const rows: CompanyRef[] = await this.prisma.company.findMany({ where: { workspaceId }, select: { id: true, name: true, canonicalDomain: true } });
-    const byDomain = new Map(rows.filter((c) => c.canonicalDomain).map((c) => [c.canonicalDomain!, c]));
-    const byName = new Map(rows.map((c) => [normalizeCompanyName(c.name), c]));
+    const all = await this.prisma.company.findMany({ where: { workspaceId }, select: { id: true, name: true, canonicalDomain: true, mergedIntoId: true } });
+    const own = new Map(all.map((c) => [c.id, c]));
+    // Birleştirilmiş (yönlendiren) kaydın adı ya da alan adı eşleşirse ilan kalan kayda bağlanır.
+    const rows: CompanyRef[] = all.map((c) => {
+      const target = c.mergedIntoId ? own.get(c.mergedIntoId) : undefined;
+      const kept = target && !target.mergedIntoId ? target : c;
+      return { id: kept.id, name: kept.name, canonicalDomain: kept.canonicalDomain, matchName: c.name, matchDomain: c.canonicalDomain };
+    });
+    const byDomain = new Map(rows.filter((c) => c.matchDomain).map((c) => [c.matchDomain!, c]));
+    const byName = new Map(rows.map((c) => [normalizeCompanyName(c.matchName ?? c.name), c]));
     const byKey = new Map<string, CompanyRef[]>();
-    for (const c of rows) byKey.set(companyNameKey(c.name), [...(byKey.get(companyNameKey(c.name)) ?? []), c]);
+    for (const c of rows) {
+      const key = companyNameKey(c.matchName ?? c.name);
+      if (!(byKey.get(key) ?? []).some((x) => x.id === c.id)) byKey.set(key, [...(byKey.get(key) ?? []), c]);
+    }
+    const byId = new Map(rows.map((c) => [c.id, c]));
     return {
+      byId: (id: string) => byId.get(id),
       /**
        * Önce alan adı, sonra ad. Adın çekirdeğiyle ("… Group") eşleşme yalnızca tek bir aday varsa ve alan adları
        * çelişmiyorsa kabul edilir; aynı grubun farklı şirketleri birbirine karışmasın.

@@ -1,4 +1,5 @@
-import { CirclePause, Hourglass, Radar, RefreshCw, ServerOff, TriangleAlert } from 'lucide-react';
+import { CirclePause, Hourglass, Radar, RefreshCw, ServerOff, Settings2, TriangleAlert } from 'lucide-react';
+import { useState } from 'react';
 import { homeApi } from '@/api/home';
 import { useAction } from '@/api/queries';
 import type { ActivityStatus, HomeActivity, HomeState } from '@/api/types';
@@ -10,6 +11,7 @@ import { Switch } from '@/ui/fields';
 import { Panel } from '@/ui/Panel';
 import { Spinner } from '@/ui/Spinner';
 import { Tip } from '@/ui/Tip';
+import { AutoApplySettingsDialog } from './AutoApplySettingsDialog';
 import { aiNotice } from './model';
 
 const STATUS_TITLE: Record<ActivityStatus, string> = { working: 'Çalışıyor', idle: 'Beklemede', paused: 'Arama durduruldu', waiting_ai: 'AI hakkı bekleniyor' };
@@ -78,6 +80,7 @@ export function StatusPanel({ state, stats }: StatusPanelProps) {
   const { busy, run } = useAction();
   const confirm = useConfirm();
   const mailMissing = setup.missing.includes('mail');
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const notice = aiNotice(ai);
   const backlog = backlogLine(activity);
   const activeCount = activity.items.reduce((n, item) => n + item.running, 0);
@@ -144,6 +147,10 @@ export function StatusPanel({ state, stats }: StatusPanelProps) {
               />
             </span>
           </Tip>
+          <Button variant="ghost" size="sm" icon={<Settings2 className="size-4" aria-hidden />} onClick={() => setSettingsOpen(true)} title="Günlük başvuru sayısı, arama sıklığı, şehir, çalışma şekli, çalışan sayısı ve CV iyileştirme">
+            Ayarlar
+          </Button>
+          {settingsOpen && <AutoApplySettingsDialog onClose={() => setSettingsOpen(false)} />}
           <div className="flex gap-2">
             {activity.status !== 'paused' && (
               <Button variant="outline" size="sm" icon={<CirclePause className="size-4" aria-hidden />} disabled={busy} onClick={stop}>

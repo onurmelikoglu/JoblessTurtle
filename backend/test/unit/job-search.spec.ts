@@ -1,6 +1,6 @@
 import { recentOpenJobsFor } from '../../src/domain/catalog';
 import { isInTurkey, workScopeOf } from '../../src/domain/geo';
-import { buildJobQueries, companyNameKey, JobQueryLog, JobSearchProfile, listingExternalId, listingRejection, normalizeListingUrl, noteJobQuery, pickJobQueries, remoteOpenToTurkey, searchLocationOf } from '../../src/domain/job-search';
+import { buildJobQueries, companyNameKey, JobQueryLog, JobSearchProfile, listingExternalId, listingRejection, normalizeListingUrl, noteJobQuery, pickJobQueries, queriesPerRun, remoteOpenToTurkey, searchLocationOf } from '../../src/domain/job-search';
 import { reportedStatus } from '../../src/domain/listing-status';
 import { classifyTitle, normalizeTitle } from '../../src/domain/titles';
 import { parseArbeitnow, parseHimalayas, parseRemoteOk, parseRemotive } from '../../src/engine/connectors/boards';
@@ -143,6 +143,15 @@ describe('sorgu planlayıcı', () => {
     const picked = pickJobQueries(queries, older, { count: 20, now, force: true }).map((q) => q.key);
     expect(picked).not.toContain(queries[0].key);
     expect(picked).toContain(queries[1].key);
+  });
+
+  it('kullanıcının arama aralığı temel dinlenmedir; sorgu sayısı aralıkla ölçeklenir', () => {
+    const queries = buildJobQueries(profile);
+    const now = Date.parse('2026-10-14T12:00:00Z');
+    const log = noteJobQuery({}, queries[0].key, { returned: 5, fresh: 3 }, new Date(now - 5 * HOUR));
+    expect(pickJobQueries(queries, log, { count: 20, now }).map((q) => q.key)).not.toContain(queries[0].key);
+    expect(pickJobQueries(queries, log, { count: 20, now, restHours: 4 }).map((q) => q.key)).toContain(queries[0].key);
+    expect([2, 4, 8, 12, 24].map(queriesPerRun)).toEqual([1, 1, 2, 2, 4]);
   });
 
   it('verim kaydı: yeni ilan gelince kuraklık sıfırlanır', () => {

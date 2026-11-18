@@ -7,6 +7,8 @@ import { AutomationService } from './automation.service';
 import { AutopilotService } from './autopilot.service';
 import { CandidateFactsService } from './candidate-facts.service';
 import { CatalogService } from './catalog.service';
+import { AtsService } from './ats.service';
+import { CompanyDecisionService } from './company-decision.service';
 import { CompanyMergeService } from './company-merge.service';
 import { CompanyScoringService } from './company-scoring.service';
 import { DraftingService } from './drafting.service';
@@ -33,10 +35,12 @@ const SERVICES = [
   AddressBookService,
   AppliedCompaniesService,
   AiService,
+  AtsService,
   AutomationService,
   AutopilotService,
   CandidateFactsService,
   CatalogService,
+  CompanyDecisionService,
   CompanyMergeService,
   CompanyScoringService,
   DraftingService,

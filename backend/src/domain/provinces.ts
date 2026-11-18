@@ -38,3 +38,8 @@ export function plateOf(city: string): number | null {
   const index = PROVINCES.findIndex((name) => fold(name) === fold(city));
   return index < 0 ? null : index + 1;
 }
+
+/** 81 il, Türkçe alfabe sırasıyla (seçim listeleri için). */
+export function provinceNames(): string[] {
+  return [...PROVINCES].sort((a, b) => a.localeCompare(b, 'tr'));
+}

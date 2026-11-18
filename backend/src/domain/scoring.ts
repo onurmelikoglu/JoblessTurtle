@@ -156,7 +156,8 @@ export function computeF(input: FInput): FResult {
   const mandatoryFailed = required.some((c) => c.met === false);
   const mandatoryUnknown = required.some((c) => c.met === null || c.met === undefined);
   let condScore: DimScore;
-  if (input.conditions.length === 0) condScore = null;
+  // Koşul tanımlanmamışsa aday için engel yoktur; puan dışı bırakmak F'yi 80'de keserdi (eşik 85).
+  if (input.conditions.length === 0) condScore = 1;
   else if (mandatoryFailed) condScore = 0;
   else if (mandatoryUnknown) condScore = null;
   else {
@@ -178,7 +179,7 @@ export function computeF(input: FInput): FResult {
     conditions: {
       score: condScore,
       weight: F_WEIGHTS.conditions,
-      note: mandatoryFailed ? 'Zorunlu koşul karşılanmıyor' : mandatoryUnknown ? 'Zorunlu koşul bilinmiyor' : 'Aday koşulları',
+      note: mandatoryFailed ? 'Zorunlu koşul karşılanmıyor' : mandatoryUnknown ? 'Zorunlu koşul bilinmiyor' : input.conditions.length === 0 ? 'Koşul tanımlı değil' : 'Aday koşulları',
     },
     geo: { score: geoScore, weight: F_WEIGHTS.geo, note: `Konum: ${input.location}` },
   };

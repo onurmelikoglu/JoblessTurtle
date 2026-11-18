@@ -3,6 +3,7 @@ import { Company, Prisma, SourceConnector } from '@prisma/client';
 import * as cheerio from 'cheerio';
 import { promises as dns } from 'dns';
 import { env } from '../common/env';
+import { istanbulNow } from '../common/time';
 import { OutboxService } from '../common/outbox.service';
 import { PrismaService } from '../common/prisma.service';
 import { parseEmployees } from '../domain/company-size';
@@ -24,14 +25,15 @@ import {
   sourceIsReadable,
   websiteDomainFor,
 } from '../domain/contact-research';
-import { contactSearchPlan, rememberedDepth, SEARCH_RETRY_DAYS, SEARCH_VERSION, SearchDepth, SearchRequest } from '../domain/contact-search';
+import { ContactSearchSettings, contactSearchPlan, contactSearchSettingsOf, rememberedDepth, RETRY_PLANS, SEARCH_RETRY_DAYS, SEARCH_VERSION, SearchDepth, SearchMemory, SearchRequest, SearchSkip } from '../domain/contact-search';
 import { CANDIDATE_HR_KIND, classifyPublishedEmail, cleanEmail, domainMatches, GROUP_HR_KIND, isUnverifiableSource, isValidEmail, SENDABLE_CONTACT_KINDS } from '../domain/contacts';
 import { detectLocation } from '../domain/geo';
 import { isTurkishUrl, normalizeCompanyName, normalizeDomain, stripHtml, truncate } from '../domain/text';
 import { AddressBookService } from './address-book.service';
-import { AiService } from './ai/ai.service';
+import { AiRunRequest, AiService } from './ai/ai.service';
 import { ProviderName } from './ai/providers';
-import { followMerged } from './company-merge.service';
+import { CompanyMergeService, followMerged } from './company-merge.service';
+import type { TwinProfile } from '../domain/company-twins';
 import { visibleCompanyName } from '../domain/hidden-company';
 import { CatalogService } from './catalog.service';
 import { CompanyScoringService } from './company-scoring.service';
@@ -157,7 +159,13 @@ function probeHelo() {
   return host && host !== 'localhost' ? host : undefined;
 }
 
-export interface DetailsOptions extends Partial<SearchRequest> {
+export type ContactSearchOutcome =
+  | { status: 'missing' }
+  | { status: 'succeeded'; source: 'catalog' | 'ai' }
+  | { status: 'skipped'; reason: SearchSkip }
+  | { status: 'awaiting_user' | 'unavailable'; reason: 'no_web_tools' };
+
+export interface DetailsOptions extends Partial<Omit<SearchRequest, 'newInfoAt'>> {
   /** Geri dönmüş ya da kullanıcının istemediği adresler: modele "bunların dışındakileri ara" diye verilir. */
   avoidEmails?: string[];
   /** Firma sitesi az önce tarandıysa (firma raporu) yeniden taranmaz. */
@@ -192,7 +200,7 @@ function contactKindFor(email: string, purpose?: string | null) {
 
 type GroupInfo = { name: string; website?: string | null; hrEmail?: string | null; sourceUrl?: string | null };
 
-export type ResearchMeta = { siteLanguage?: string | null; reportAt?: string; contactsSearchedAt?: string; contactsDepth?: SearchDepth; contactsEscalated?: boolean; contactsVersion?: number; contactsFound?: boolean; officesSearchedAt?: string; officesFound?: boolean; sizeSearchedAt?: string };
+export type ResearchMeta = SearchMemory & { siteLanguage?: string | null; reportAt?: string; officesSearchedAt?: string; officesFound?: boolean; sizeSearchedAt?: string };
 
 /** Derin arama yapıldı ve gönderilebilir adres çıkmadı: yeniden deneme süresi dolana kadar yalnızca diğer başvuru kanalları gösterilir. */
 export function addressSearchExhausted(meta: unknown, now = Date.now()) {
@@ -202,10 +210,26 @@ export function addressSearchExhausted(meta: unknown, now = Date.now()) {
 
 type SizeAnswer = { ref: string; employees?: string | null; linkedinUrl?: string | null };
 
-export function detailsNeeded(c: { researchMeta: unknown; hrContacts: number; knownOffices: number }, now = Date.now()) {
+/**
+ * Arka plan araştırması gereken firma: İK adresi yoksa adres araması bekleme süresi dolmuş (ya da yeni bilgi gelmiş)
+ * olmalı; ofisi yoksa ofis araması süresi dolmuş olmalı.
+ */
+export function detailsNeeded(
+  c: { researchMeta: unknown; hrContacts: number; knownOffices: number; canonicalDomain?: string | null; newestJobAt?: Date | null },
+  now = Date.now(),
+  settings: ContactSearchSettings = contactSearchSettingsOf(null),
+) {
   const meta = (c.researchMeta ?? {}) as ResearchMeta;
   const due = (at?: string) => !at || now - new Date(at).getTime() > DETAILS_RETRY_DAYS * DAY_MS;
-  return (c.hrContacts === 0 && due(meta.contactsSearchedAt)) || (c.knownOffices === 0 && due(meta.officesSearchedAt));
+  const contactsDue = !meta.contactsSearchedAt || contactSearchPlan(meta, { deep: false, newInfoAt: newInfoAt(meta, c, settings, now) }, now, RETRY_PLANS[settings.retryPlan]).skip === null;
+  return (c.hrContacts === 0 && contactsDue) || (c.knownOffices === 0 && due(meta.officesSearchedAt));
+}
+
+/** Son adres aramasından sonra öğrenilen bilgi: yeni ilan ya da aramada bilinmeyen alan adı. Ayar kapalıysa null. */
+export function newInfoAt(meta: ResearchMeta, c: { canonicalDomain?: string | null; newestJobAt?: Date | null }, settings: ContactSearchSettings, now = Date.now()): Date | null {
+  if (!settings.retryOnNewInfo) return null;
+  if (meta.searchedWithDomain === false && c.canonicalDomain) return new Date(now);
+  return c.newestJobAt ?? null;
 }
 const INTERESTING = /(about|hakk|biz-kim|kimiz|work|works|isler|işler|projeler|projects|portfolio|clients|musteri|müşteri|referans|awards|odul|ödül|team|ekip|kariyer|career|jobs|join|iletisim|iletişim|contact|kvkk|aydinlatma|aydınlatma|gizlilik|privacy|impressum|legal|kunye|künye)/i;
 /** Türk firma sitelerinde başvuru ve iletişim adresinin en sık geçtiği sayfalar; ana sayfadan bağlantı olmasa da denenir. */
@@ -216,6 +240,9 @@ const MAX_SITEMAP_LINKS = 8;
 const SOURCE_CHECK_CONCURRENCY = 5;
 const PHONE_DIGITS = /^\+?[\d\s().-]{7,24}$/;
 const WEB_CAPABLE_PROVIDERS: ProviderName[] = ['cli_claude', 'cli_codex'];
+const CONTACT_ESCALATION_MODEL = 'opus';
+const OPEN_OPPORTUNITY_STATES = ['new', 'reviewed', 'drafted'];
+const istanbulDayStart = (now: Date) => istanbulNow(now).startOf('day').toJSDate();
 const CAREERS = /(kariyer|career|careers|jobs|join-us|bize-katil|acik-pozisyon)/i;
 
 @Injectable()
@@ -232,6 +259,7 @@ export class ResearchService {
     private readonly addressBook: AddressBookService,
     private readonly learning: LearningService,
     private readonly models: LearnedModelsService,
+    private readonly companyMerge: CompanyMergeService,
   ) {}
 
   /** Resmî siteden izinli sayfaları okur; kariyer/ATS bağlantılarını kaynak olarak ekler; kaynaklı rapor üretir. */
@@ -454,7 +482,7 @@ export class ResearchService {
    * adayları değerlendirir. Tür, rol ve güven skoru domain/contact-research kurallarıyla belirlenir; ölü, geri dönmüş ve
    * kullanıcının istemediği adresler hiç eklenmez.
    */
-  async findDetails(companyId: string, actorId: string | null, opts: DetailsOptions = {}) {
+  async findDetails(companyId: string, actorId: string | null, opts: DetailsOptions = {}): Promise<ContactSearchOutcome> {
     let company = await this.prisma.company.findUnique({ where: { id: companyId } });
     if (!company) return { status: 'missing' as const };
     const deep = opts.deep === true;
@@ -467,7 +495,12 @@ export class ResearchService {
       await this.learning.record({ workspaceId: company.workspaceId, kind: 'contact_search', companyId: company.id, features: { ...searchFeatures, source: 'catalog' }, outcome: { added: sendableFromCatalog } });
       return { status: 'succeeded' as const, source: 'catalog' as const };
     }
-    const plan = contactSearchPlan(company.researchMeta as ResearchMeta, { deep, force: opts.force, since: opts.since });
+    const meta = (company.researchMeta ?? {}) as ResearchMeta;
+    const settings = await this.contactSearchSettings(company.workspaceId);
+    const newestJobAt = settings.retryOnNewInfo ? ((await this.prisma.job.findFirst({ where: { companyId: company.id }, orderBy: { firstSeenAt: 'desc' }, select: { firstSeenAt: true } }))?.firstSeenAt ?? null) : null;
+    const opus = opts.opus === true && settings.opusRetry;
+    const request = { deep, force: opts.force, since: opts.since, opus, newInfoAt: newInfoAt(meta, { canonicalDomain: company.canonicalDomain, newestJobAt }, settings) };
+    const plan = opus && opts.force ? { rungs: [], skip: null } : contactSearchPlan(meta, request, Date.now(), RETRY_PLANS[settings.retryPlan]);
     if (plan.skip) return { status: 'skipped' as const, reason: plan.skip };
     const manualBefore = await this.manualCount(company.id);
     const avoidEmails = [...new Set([...(opts.avoidEmails ?? []), ...(await this.addressBook.avoidedForCompany(company.id))].map((e) => e.toLowerCase()))];
@@ -480,7 +513,7 @@ export class ResearchService {
     const knownEmails = stored.filter((c) => !c.suppressed && [...SENDABLE_CONTACT_KINDS, ...MANUAL_ONLY_KINDS].includes(c.kind)).map((c) => c.email);
     const knownOfficeCount = await this.prisma.office.count({ where: { companyId: company.id, locationConfidence: { in: ['medium', 'high'] } } });
     const knownFacts = this.knownFacts(company, knownOfficeCount);
-    const harvest = await this.ai.run({
+    const harvestRequest: AiRunRequest = {
       workspaceId: company.workspaceId,
       kind: 'company_contacts',
       input: {
@@ -498,8 +531,19 @@ export class ResearchService {
       allowTemplate: false,
       useCache: false,
       onlyProviders: WEB_CAPABLE_PROVIDERS,
-    });
-    if (harvest.status !== 'succeeded') return { status: harvest.status, reason: 'no_web_tools' };
+    };
+    const withOpus = (r: AiRunRequest): AiRunRequest => ({ ...r, onlyProviders: ['cli_claude'], modelOverride: { cli_claude: CONTACT_ESCALATION_MODEL } });
+    const firstHarvest = await this.ai.run(opus ? withOpus(harvestRequest) : harvestRequest);
+    if (firstHarvest.status !== 'succeeded') return { status: firstHarvest.status, reason: 'no_web_tools' };
+    let usedOpus = opus;
+    let harvest = firstHarvest;
+    const siteFoundNothing = !sitePages.some((p) => p.emails.length);
+    const emptyHarvest = !(firstHarvest.output as HarvestOutput).contacts.length;
+    if (!opus && !opts.force && emptyHarvest && sendableBefore === 0 && siteFoundNothing && firstHarvest.provider === 'cli_claude' && (await this.opusAllowed(company.workspaceId, settings))) {
+      usedOpus = true;
+      const retry = await this.ai.run(withOpus(harvestRequest));
+      if (retry.status === 'succeeded' && (retry.output as HarvestOutput).contacts.length) harvest = retry;
+    }
     const found = harvest.output as HarvestOutput;
     const adopted = await this.adoptWebsite(company, found);
     const adoptedPages = adopted.canonicalDomain !== company.canonicalDomain && !opts.skipCrawl ? await this.crawlSite(adopted, adopted.website ?? `https://${adopted.canonicalDomain}`, { detectOffice: false }) : [];
@@ -547,7 +591,17 @@ export class ResearchService {
     await this.prisma.company.update({ where: { id: company.id }, data: { lastResearchedAt: new Date() } });
     const reached: SearchDepth = deep && (reviews || !toReview.length) ? 'max' : 'base';
     const at = new Date().toISOString();
-    await this.recordSearch(company.id, { contactsSearchedAt: at, officesSearchedAt: at, contactsDepth: reached, ...(reached === 'max' ? { contactsVersion: SEARCH_VERSION } : {}), ...(siteLanguage ? { siteLanguage } : {}) });
+    const sendableAfter = await this.sendableCount(company.id);
+    await this.recordSearch(company.id, {
+      contactsSearchedAt: at,
+      officesSearchedAt: at,
+      contactsDepth: reached,
+      emptyStreak: sendableAfter > 0 ? 0 : (meta.emptyStreak ?? (meta.contactsFound === false ? 1 : 0)) + 1,
+      searchedWithDomain: !!company.canonicalDomain,
+      ...(usedOpus ? { opusSearchedAt: at } : {}),
+      ...(reached === 'max' ? { contactsVersion: SEARCH_VERSION } : {}),
+      ...(siteLanguage ? { siteLanguage } : {}),
+    });
     await this.catalog.publish(company.id);
     await this.learning.record({
       workspaceId: company.workspaceId,
@@ -563,6 +617,9 @@ export class ResearchService {
         group: !!found.group?.hrEmail,
       },
     });
+    if (opts.force && !usedOpus && settings.opusRetry && sendableAfter === 0 && harvest.provider === 'cli_claude') {
+      return this.findDetails(companyId, actorId, { ...opts, opus: true, avoidEmails });
+    }
     return { status: 'succeeded' as const, source: 'ai' as const };
   }
 
@@ -833,6 +890,63 @@ export class ResearchService {
     await this.prisma.keyValue.upsert({ where: { key }, create: { key, value: log }, update: { value: log } });
   }
 
+  async contactSearchSettings(workspaceId: string): Promise<ContactSearchSettings> {
+    return contactSearchSettingsOf((await this.ai.settings(workspaceId)).contactSearch);
+  }
+
+  /** Bugün (İstanbul günü) Opus ile yapılmış adres araması sayısı. */
+  async opusUsedToday(workspaceId: string, now = new Date()) {
+    return this.prisma.aiTask.count({ where: { workspaceId, kind: 'company_contacts', provider: 'cli_claude', model: { contains: CONTACT_ESCALATION_MODEL }, createdAt: { gte: istanbulDayStart(now) } } });
+  }
+
+  private async opusAllowed(workspaceId: string, settings: ContactSearchSettings) {
+    return settings.opusRetry && (await this.opusUsedToday(workspaceId)) < settings.opusDailyLimit;
+  }
+
+  /** Açık fırsatı olup gönderilebilir adresi bulunmayan ve en az bir kez adres araması yapılmış firmalar (en yüksek F önce). */
+  async addresslessCompanies(workspaceId: string) {
+    const companies = await this.prisma.company.findMany({
+      where: {
+        workspaceId,
+        excluded: false,
+        mergedIntoId: null,
+        contacts: { none: { suppressed: false, kind: { in: SENDABLE_CONTACT_KINDS } } },
+        opportunities: { some: { status: { in: OPEN_OPPORTUNITY_STATES } } },
+      },
+      select: { id: true, researchMeta: true, opportunities: { where: { status: { in: OPEN_OPPORTUNITY_STATES } }, select: { f: true }, orderBy: { f: { sort: 'desc', nulls: 'last' } }, take: 1 } },
+    });
+    return companies
+      .map((c) => ({ id: c.id, meta: (c.researchMeta ?? {}) as ResearchMeta, f: c.opportunities[0]?.f ?? 0 }))
+      .filter((c) => !!c.meta.contactsSearchedAt)
+      .sort((a, b) => b.f - a.f);
+  }
+
+  /** Günlük Opus taramasının sırası: aranmış ama hiç Opus ile aranmamış adressiz firmalar. */
+  async opusCandidates(workspaceId: string, limit?: number) {
+    return (await this.addresslessCompanies(workspaceId))
+      .filter((c) => !c.meta.opusSearchedAt)
+      .slice(0, limit)
+      .map((c) => c.id);
+  }
+
+  /** Günlük Opus taraması: kalan günlük Opus hakkı kadar firma derin aramaya (Opus ile) alınır. */
+  async scheduleOpusRetries(now = new Date()) {
+    const workspaces = await this.prisma.workspace.findMany({ select: { id: true } });
+    let queued = 0;
+    for (const w of workspaces) {
+      const settings = await this.contactSearchSettings(w.id);
+      if (!settings.opusRetry || (await this.isPaused(w.id))) continue;
+      const room = settings.opusDailyLimit - (await this.opusUsedToday(w.id, now));
+      if (room <= 0) continue;
+      const day = istanbulDayStart(now).toISOString().slice(0, 10);
+      for (const companyId of await this.opusCandidates(w.id, room)) {
+        await this.outbox.emit({ workspaceId: w.id, eventType: 'research.details.bulk', aggregateId: companyId, dedupKey: `research-details:${companyId}:opus:${day}`, payload: { opus: true, onlyIfMissing: true } });
+        queued++;
+      }
+    }
+    return { queued };
+  }
+
   async recordSearch(companyId: string, patch: ResearchMeta) {
     const [company, hrContacts, knownOffices] = await Promise.all([
       this.prisma.company.findUnique({ where: { id: companyId }, select: { researchMeta: true } }),
@@ -1087,6 +1201,7 @@ export class ResearchService {
    */
   async applyDiscovery(workspaceId: string, output: { companies?: any[] }, taskId: string, opts: { userTriggered?: boolean; titles?: string[]; roleLinksAreListings?: boolean } = {}) {
     let created = 0;
+    let twinProfiles: TwinProfile[] | undefined;
     for (const found of output.companies ?? []) {
       const visibleName = visibleCompanyName(found.name);
       if (!visibleName) continue;
@@ -1100,6 +1215,11 @@ export class ResearchService {
       ].join('\n');
       let company = await followMerged(this.prisma, await this.prisma.company.findFirst({ where: { workspaceId, OR: [...(domain ? [{ canonicalDomain: domain }] : []), { normalizedName }] } }));
       const isNew = !company;
+      // İlanı olmayan keşif, kayıtlı bir firmaya benziyorsa eklenmez: aynı firmanın ikinci kaydını açmanın kazancı yok.
+      if (!company && !opts.userTriggered && !roles.length) {
+        twinProfiles ??= await this.companyMerge.profiles(workspaceId);
+        if (await this.companyMerge.similarTo(workspaceId, { name: c.name, domains: [domain], jobs: [], emailDomains: [], officePlaces: [] }, twinProfiles)) continue;
+      }
       if (!company) {
         company = await this.prisma.company.create({
           data: {

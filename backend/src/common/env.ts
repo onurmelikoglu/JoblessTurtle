@@ -32,7 +32,11 @@ const schema = z.object({
   CLAUDE_CLI_PATH: z.string().default('claude'),
   CLAUDE_CLI_MODEL: z.string().default('sonnet'),
   CODEX_CLI_PATH: z.string().default('codex'),
+  CURSOR_CLI_PATH: z.string().default('cursor-agent'),
+  CURSOR_CLI_MODEL: z.string().optional(),
   AI_CLI_TIMEOUT_SECONDS: z.coerce.number().default(900),
+  // İyileştirilmiş CV'yi orijinal tasarımla PDF'e çeviren Chromium (boşsa sistemdeki varsayılan yol denenir).
+  CHROMIUM_PATH: z.string().optional(),
   // Codex CLI argümanları (istem stdin'den verilir). Sürüme göre değişebilir.
   CODEX_CLI_ARGS: z.string().default('exec --skip-git-repo-check -'),
   // Firma raporu için CLI'nin web araştırması (WebSearch/WebFetch) yapmasına izin ver.
@@ -42,6 +46,7 @@ const schema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   ANTHROPIC_MODEL: z.string().default('claude-sonnet-5-5'),
   OPENAI_API_KEY: z.string().optional(),
+  CURSOR_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().default('gpt-5-mini'),
   // Webhook imza sırrı (mailbox/bildirim sağlayıcı köprüleri için)
   WEBHOOK_SECRET: z.string().default('dev-webhook-secret'),

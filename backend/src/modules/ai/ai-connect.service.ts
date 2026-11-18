@@ -8,9 +8,9 @@ import type { ServerShape } from '../../contracts/wire';
 type LoginSession = ServerShape<LoginSessionWire>;
 type ConnectStatus = ServerShape<ConnectStatusWire>;
 import { AiService } from '../../engine/ai/ai.service';
-import { resetProviderCache } from '../../engine/ai/providers';
+import { apiKeyFor, cliCursorProvider, resetProviderCache } from '../../engine/ai/providers';
 
-export const CONNECT_PROVIDERS: ConnectProvider[] = ['cli_claude', 'cli_codex'];
+export const CONNECT_PROVIDERS: ConnectProvider[] = ['cli_claude', 'cli_codex', 'cli_cursor'];
 
 export type Spawner = (command: string, args: string[]) => ChildProcessWithoutNullStreams;
 
@@ -32,6 +32,10 @@ const LOGIN_TTL_MS = 15 * 60_000;
 const VERIFY_WAIT_MS = 60_000;
 const COMMAND_TIMEOUT_MS = 20_000;
 const STATUS_CACHE_MS = 10_000;
+/** Cursor tarayıcı girişi yerine kullanıcı API anahtarıyla bağlıysa kartta görünen plan metni. */
+export const CURSOR_KEY_PLAN = 'API anahtarıyla';
+/** Claude giriş sayfasının verdiği kodu bekler; ChatGPT cihaz kodu gösterir; Cursor tarayıcıda onaylanınca kendiliğinden biter. */
+const LOGIN_ARGS: Record<ConnectProvider, string[]> = { cli_claude: ['auth', 'login', '--claudeai'], cli_codex: ['login', '--device-auth'], cli_cursor: ['login'] };
 
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 export const stripAnsi = (text: string) => text.replace(ANSI, '');
@@ -41,6 +45,7 @@ export function parseLoginPrompt(provider: ConnectProvider, raw: string): { url:
   const text = stripAnsi(raw);
   const urls = text.match(/https:\/\/[^\s"'<>]+/g) ?? [];
   if (provider === 'cli_claude') return { url: urls.find((u) => u.includes('/oauth/authorize')) ?? null, userCode: null };
+  if (provider === 'cli_cursor') return { url: urls.find((u) => /^https:\/\/cursor\.com\/login/.test(u)) ?? null, userCode: null };
   return { url: urls.find((u) => u.includes('auth.openai.com')) ?? null, userCode: text.match(/\b([A-Z0-9]{4}-[A-Z0-9]{4,6})\b/)?.[1] ?? null };
 }
 
@@ -68,6 +73,17 @@ export function parseCodexStatus(code: number | null, raw: string): { connected:
   return { connected, account: null, plan: connected ? method : null };
 }
 
+/** `cursor-agent status --format json`: { isAuthenticated, email?, … }. */
+export function parseCursorStatus(raw: string): { connected: boolean; account: string | null; plan: string | null } {
+  try {
+    const text = stripAnsi(raw);
+    const data = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)) as { isAuthenticated?: boolean; email?: string; userEmail?: string; user?: { email?: string }; membershipType?: string; plan?: string };
+    return { connected: data.isAuthenticated === true, account: data.email ?? data.userEmail ?? data.user?.email ?? null, plan: data.membershipType ?? data.plan ?? null };
+  } catch {
+    return { connected: false, account: null, plan: null };
+  }
+}
+
 /** Söz verilen sonucu en çok `ms` kadar bekler; zamanlayıcı süreci açık tutmasın diye temizlenir. */
 async function waitAtMost(promise: Promise<unknown>, ms: number): Promise<void> {
   let timer: NodeJS.Timeout | undefined;
@@ -93,7 +109,7 @@ export function lastLines(raw: string, count = 3): string {
 }
 
 /**
- * Claude Code ve Codex CLI'ye arayüzden giriş. Komutlar API sürecinde çalışır; giriş bilgileri worker ile ortak ev
+ * Claude Code, Codex ve Cursor CLI'ye arayüzden giriş. Komutlar API sürecinde çalışır; giriş bilgileri worker ile ortak ev
  * klasörüne (ai-cli-home) yazılır, worker aynı hesabı kullanır. Sunucuda aynı anda tek giriş oturumu tutulur; hiçbir
  * kod ya da token veritabanına ya da loga yazılmaz. Bağlantı değişince worker'ın kurulu sağlayıcı listesi tazelenir.
  */
@@ -102,7 +118,7 @@ export class AiConnectService implements OnApplicationShutdown {
   constructor(private readonly ai: AiService) {}
 
   /** Testlerde gerçek CLI yerine sahte süreç verilir. */
-  spawner: Spawner = (command, args) => spawn(command, args, { env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
+  spawner: Spawner = (command, args) => spawn(command, args, { env: { ...process.env, NO_OPEN_BROWSER: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
 
   private readonly logins = new Map<ConnectProvider, ActiveLogin>();
   private readonly statusCache = new Map<ConnectProvider, { at: number; value: Omit<ConnectStatus, 'login' | 'longLived'> }>();
@@ -112,7 +128,7 @@ export class AiConnectService implements OnApplicationShutdown {
   }
 
   private command(provider: ConnectProvider): string {
-    return provider === 'cli_claude' ? env().CLAUDE_CLI_PATH : env().CODEX_CLI_PATH;
+    return { cli_claude: env().CLAUDE_CLI_PATH, cli_codex: env().CODEX_CLI_PATH, cli_cursor: env().CURSOR_CLI_PATH }[provider];
   }
 
   private run(provider: ConnectProvider, args: string[]): Promise<{ code: number | null; output: string }> {
@@ -151,6 +167,9 @@ export class AiConnectService implements OnApplicationShutdown {
     } else if (provider === 'cli_claude') {
       const status = await this.run(provider, ['auth', 'status', '--json']);
       value = { provider, installed: true, ...parseClaudeStatus(status.output) };
+    } else if (provider === 'cli_cursor') {
+      const status = await this.run(provider, ['status', '--format', 'json']);
+      value = { provider, installed: true, ...parseCursorStatus(status.output), sessionExpiresAt: null };
     } else {
       const status = await this.run(provider, ['login', 'status']);
       value = { provider, installed: true, ...parseCodexStatus(status.code, status.output), sessionExpiresAt: null };
@@ -162,7 +181,9 @@ export class AiConnectService implements OnApplicationShutdown {
   async status(provider: ConnectProvider, fresh = false): Promise<ConnectStatus> {
     const probed = await this.probe(provider, fresh);
     const longLived = provider === 'cli_claude' ? await this.ai.claudeTokenStatus() : null;
-    return { ...probed, connected: probed.connected || !!longLived, longLived, login: this.logins.get(provider)?.session ?? null };
+    if (provider === 'cli_cursor') await this.ai.syncApiKeys();
+    const viaKey = provider === 'cli_cursor' && !probed.connected && !!apiKeyFor('cli_cursor') && (await cliCursorProvider.available()).ok;
+    return { ...probed, connected: probed.connected || !!longLived || viaKey, plan: viaKey ? CURSOR_KEY_PLAN : probed.plan, longLived, login: this.logins.get(provider)?.session ?? null };
   }
 
   /** Kendi bilgisayarında `claude setup-token` ile üretilen belirteç yapıştırılır. */
@@ -188,7 +209,7 @@ export class AiConnectService implements OnApplicationShutdown {
     if (!(await this.probe(provider, true)).installed) throw new AppError(409, 'AI_CLI_MISSING', 'Bu kurulumda yapay zekâ aracı yok. install.sh ile kurulumda gelir; elle kurulumda .env içinde INSTALL_AI_CLI=true yapıp imajı yeniden derle.');
     for (const other of CONNECT_PROVIDERS) this.cancel(other);
 
-    const args = mode === 'long_lived' ? ['setup-token'] : provider === 'cli_claude' ? ['auth', 'login', '--claudeai'] : ['login', '--device-auth'];
+    const args = mode === 'long_lived' ? ['setup-token'] : LOGIN_ARGS[provider];
     const child = this.spawner(this.command(provider), args);
     const session: LoginSession = { phase: 'starting', url: null, userCode: null, needsCode: provider === 'cli_claude', message: null, expiresAt: new Date(Date.now() + LOGIN_TTL_MS), mode };
     let ready: () => void = () => undefined;
@@ -218,7 +239,7 @@ export class AiConnectService implements OnApplicationShutdown {
       const parsed = parseLoginPrompt(provider, login.output);
       session.url ??= parsed.url;
       session.userCode ??= parsed.userCode;
-      if (session.url && (provider === 'cli_claude' || session.userCode)) {
+      if (session.url && (provider !== 'cli_codex' || session.userCode)) {
         if (session.phase === 'starting') session.phase = 'waiting';
         ready();
       }

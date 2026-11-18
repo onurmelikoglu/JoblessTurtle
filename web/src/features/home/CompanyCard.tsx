@@ -1,5 +1,5 @@
 import { Briefcase, Check, ChevronDown, ChevronUp, CircleHelp, EllipsisVertical, ExternalLink, Languages, Lightbulb, MapPin, Phone, Users } from 'lucide-react';
-import type { ApplyLink, HomeAnalysis, HomeCompany, HomeOpportunity } from '@/api/types';
+import type { ApplyLink, HomeAddressSearch, HomeAnalysis, HomeCompany, HomeOpportunity } from '@/api/types';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/ui/Badge';
 import { Button, IconButton, LinkButton } from '@/ui/Button';
@@ -7,6 +7,7 @@ import { InlineBusy, Skeleton } from '@/ui/feedback';
 import { Checkbox } from '@/ui/fields';
 import { Menu, type MenuEntry } from '@/ui/Menu';
 import { Panel } from '@/ui/Panel';
+import { addressSearchNote, canAskOpus } from './contact-search-model';
 import { CATEGORY_INFO, CLASS_INFO, employeesHint, employeesLabel, hasEmail, workModeBadge } from './model';
 
 const WORK_POLICY_TEXT: Record<NonNullable<HomeCompany['workPolicy']>, string> = { remote: 'Firma geneli uzaktan', hybrid: 'Firma geneli hibrit', onsite: 'Firma geneli ofisten' };
@@ -57,7 +58,8 @@ export interface CompanyCardActions {
   onApply: (opportunity: HomeOpportunity) => void;
   onMarkApplied: (opportunity: HomeOpportunity) => void;
   onDismiss: (opportunity: HomeOpportunity) => void;
-  onResearch: (companyId: string) => void;
+  onResearch: (companyId: string, opus?: boolean) => void;
+  onContactSearchSettings: () => void;
   onSetLanguage: (companyId: string, language: HomeCompany['languageChoice']) => void;
   onMergeWith: (companyId: string) => void;
   onToggleAnalysis: (companyId: string) => void;
@@ -148,7 +150,7 @@ function ResearchPlaceholder() {
   );
 }
 
-function statusText(o: HomeOpportunity, flags: { sending: boolean; emailSearching: boolean; hasChannel: boolean }): { text: string; problem: boolean } {
+function statusText(o: HomeOpportunity, flags: { sending: boolean; emailSearching: boolean; hasChannel: boolean; searchNote: string | null }): { text: string; problem: boolean } {
   const noEmail = !hasEmail(o);
   const plain = (text: string) => ({ text, problem: false });
   if (flags.sending) return plain('Başvuru sıraya alındı…');
@@ -156,8 +158,11 @@ function statusText(o: HomeOpportunity, flags: { sending: boolean; emailSearchin
   if (noEmail && o.manualRecipients > 0)
     return plain(`Firmanın İK ya da genel adresi bulunamadı; çalışan veya yönetimden ${o.manualRecipients} kişinin herkese açık iş adresi bulundu. Kullanmak için "Başvur"a bas ve önizlemede adresi kendin seç.`);
   if (noEmail && o.groupSuggestion) return plain(`Firmanın güncel mail adresi yok. Öneri: ${o.groupSuggestion.email} (${o.groupSuggestion.label}). ${o.groupSuggestion.note} Kullanmak için "Başvur"a bas ve önizlemede onayla.`);
-  if (noEmail && flags.hasChannel) return plain('Mail adresi bulunamadı. Aşağıdaki kanaldan başvurup "Başvurdum" de; adresi biliyorsan "Başvur"da elle girebilirsin.');
-  if (noEmail && o.emailSearchExhausted) return plain('Web araştırması ve doğrulamayla arandı; firma başvuru için e-posta yayımlamıyor. Firmanın sitesinden başvur ya da adresi biliyorsan "Başvur"da elle gir.');
+  const notFound = flags.searchNote ? `Mail adresi bulunamadı (${flags.searchNote}).` : 'Mail adresi bulunamadı.';
+  if (noEmail && flags.hasChannel) return plain(`${notFound} Aşağıdaki kanaldan başvurup "Başvurdum" de; adresi biliyorsan "Başvur"da elle girebilirsin.`);
+  if (noEmail && o.emailSearchExhausted)
+    return plain(`Web araştırması ve doğrulamayla arandı; firma başvuru için e-posta yayımlamıyor${flags.searchNote ? ` (${flags.searchNote})` : ''}. Firmanın sitesinden başvur ya da adresi biliyorsan "Başvur"da elle gir.`);
+  if (noEmail && flags.searchNote) return plain(`${notFound} Adresi biliyorsan "Başvur"da elle girebilirsin.`);
   if (noEmail) return plain('Mail adresi bulunamadı. Menüden "Mail adresini ara"yı dene ya da adresi biliyorsan "Başvur"da elle gir.');
   if (!o.draft) return plain(o.title ? 'Başvur dediğinde yazın hazırlanıp önizlemeye gelir.' : 'Başvur dediğinde firmaya özel bir tanışma yazısı hazırlanıp önizlemeye gelir.');
   if (o.draft.problems.length) return { text: 'Yazı hazır; göndermeden önce kontrol etmen gereken bir nokta var.', problem: true };
@@ -170,15 +175,16 @@ interface OpportunityRowProps {
   selected: boolean;
   sending: boolean;
   emailSearching: boolean;
+  addressSearch: HomeAddressSearch | null;
   busy: boolean;
   languageChoice: HomeCompany['languageChoice'];
   actions: CompanyCardActions;
 }
 
-function OpportunityRow({ opportunity: o, fallbackLinks, selected, sending, emailSearching, busy, languageChoice, actions }: OpportunityRowProps) {
+function OpportunityRow({ opportunity: o, fallbackLinks, selected, sending, emailSearching, addressSearch, busy, languageChoice, actions }: OpportunityRowProps) {
   const noEmail = !hasEmail(o);
   const channels = o.links.length ? o.links : noEmail ? fallbackLinks.filter((l) => l.kind === 'careers') : [];
-  const status = statusText(o, { sending, emailSearching, hasChannel: channels.length > 0 });
+  const status = statusText(o, { sending, emailSearching, hasChannel: channels.length > 0, searchNote: addressSearchNote(addressSearch) });
   const category = CATEGORY_INFO[o.category];
   const name = o.title ?? 'Firmaya genel başvuru';
   const workMode = workModeBadge(o);
@@ -235,6 +241,8 @@ function OpportunityRow({ opportunity: o, fallbackLinks, selected, sending, emai
           }
           items={[
             noEmail && !emailSearching && { label: 'Mail adresini ara', onSelect: () => actions.onResearch(o.companyId) },
+            noEmail && !emailSearching && canAskOpus(addressSearch) && { label: 'Opus ile daha dikkatli ara', onSelect: () => actions.onResearch(o.companyId, true) },
+            noEmail && { label: 'Adres araması ayarları…', onSelect: actions.onContactSearchSettings },
             !noEmail && channels.length === 0 && { label: 'Kendim başvurdum, işaretle', onSelect: () => actions.onMarkApplied(o) },
             { label: 'İlgilenmiyorum, gizle', onSelect: () => actions.onDismiss(o), danger: true },
             ...languageMenu(o.companyId, languageChoice, actions.onSetLanguage),
@@ -290,6 +298,7 @@ export function CompanyCard({ company, showClass, selected, applying, researchin
           selected={selected.has(opportunity.id)}
           sending={applying.has(opportunity.id)}
           emailSearching={researching && !hasEmail(opportunity)}
+          addressSearch={company.addressSearch}
           busy={busy}
           languageChoice={company.languageChoice}
           actions={actions}

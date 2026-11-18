@@ -1,19 +1,24 @@
-import { CircleCheck, Send } from 'lucide-react';
+import { CircleCheck, Send, Wand2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { errorText } from '@/api/client';
 import { homeApi } from '@/api/home';
 import type { HomeOpportunity, HomePreview } from '@/api/types';
+import { Badge } from '@/ui/Badge';
 import { Button } from '@/ui/Button';
 import { Dialog } from '@/ui/Dialog';
 import { Checkbox } from '@/ui/fields';
 import { Spinner } from '@/ui/Spinner';
 import { toast } from '@/ui/toast';
 import { ApplyPreviewDialog } from './ApplyPreviewDialog';
+import { atsTone, needsImprovement } from './ats-model';
 
 const REVIEW_POLL_MS = 4000;
 const PREVIEW_BATCH = 6;
 
-const isSettled = (preview: HomePreview | undefined) => preview?.status === 'ready' || preview?.status === 'sent';
+const IMPROVE_TIMEOUT_MS = 5 * 60_000;
+
+/** Yazı hazır ve ATS oranı hesaplandıysa (ya da hesaplanamıyorsa) yoklama durur. */
+const isSettled = (preview: HomePreview | undefined) => preview?.status === 'sent' || (preview?.status === 'ready' && preview.draft?.ats?.status !== 'preparing');
 
 function problemsOf(preview: HomePreview | undefined): string[] | null {
   if (preview?.status !== 'ready' || !preview.draft) return null;
@@ -33,6 +38,7 @@ export function BulkReviewDialog({ items, onClose }: BulkReviewDialogProps) {
   const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set());
   const [openId, setOpenId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [improving, setImproving] = useState<Record<string, { revision: number }>>({});
   const touched = useRef(new Set<string>());
   const latest = useRef(previews);
   useEffect(() => {
@@ -76,6 +82,40 @@ export function BulkReviewDialog({ items, onClose }: BulkReviewDialogProps) {
     };
   }, [items, refresh]);
 
+  const isImproving = (id: string) => !!improving[id] && (previews[id]?.draft?.revision ?? 0) <= improving[id].revision;
+
+  const lowAts = items.filter((item) => {
+    const preview = previews[item.id];
+    return preview?.status === 'ready' && needsImprovement(preview.draft?.ats) && !isImproving(item.id);
+  });
+
+  /** Düşük oranlı CV'ler sırayla iyileştirilir; her biri bittikçe satırdaki oran güncellenir. */
+  const improveLow = async () => {
+    setBusy(true);
+    try {
+      const started: Record<string, { revision: number }> = {};
+      for (const item of lowAts) {
+        const draft = previews[item.id]?.draft;
+        if (!draft) continue;
+        await homeApi.improveAts(draft.id);
+        started[item.id] = { revision: draft.revision };
+      }
+      setImproving((current) => ({ ...current, ...started }));
+      toast.info(`${Object.keys(started).length} CV ilana göre iyileştiriliyor; oranlar hazır oldukça güncellenecek.`);
+      const poll = async (ids: string[], until: number) => {
+        await refresh(ids);
+        const waiting = ids.filter((id) => (latest.current[id]?.draft?.revision ?? 0) <= started[id].revision);
+        if (waiting.length && Date.now() < until) window.setTimeout(() => void poll(waiting, until), REVIEW_POLL_MS);
+        else if (waiting.length) setImproving((current) => Object.fromEntries(Object.entries(current).filter(([id]) => !waiting.includes(id))));
+      };
+      void poll(Object.keys(started), Date.now() + IMPROVE_TIMEOUT_MS);
+    } catch (error) {
+      toast.error(errorText(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const toggle = (id: string, checked: boolean) => {
     touched.current.add(id);
     setChosen((current) => {
@@ -117,6 +157,11 @@ export function BulkReviewDialog({ items, onClose }: BulkReviewDialogProps) {
         description={preparing > 0 ? `Yazılar hazırlanıyor (${preparing} kaldı). Hazır olanları açıp okuyabilir, düzenleyebilirsin.` : 'Yazılar hazır. Göndermek istediklerini işaretle; ayrıntı için "Önizle"ye bas.'}
         footer={
           <>
+            {lowAts.length > 0 && (
+              <Button variant="outline" disabled={busy} icon={<Wand2 className="size-4" aria-hidden />} onClick={improveLow} className="mr-auto">
+                Düşük ATS'li CV'leri iyileştir ({lowAts.length})
+              </Button>
+            )}
             <Button variant="ghost" disabled={busy} onClick={() => onClose(false)}>
               Kapat
             </Button>
@@ -138,7 +183,14 @@ export function BulkReviewDialog({ items, onClose }: BulkReviewDialogProps) {
                   {ready ? <Checkbox checked={chosen.has(item.id)} onChange={(checked) => toggle(item.id, checked)} aria-label={`${name} gönder`} /> : preview?.status === 'sent' ? <CircleCheck className="size-5 text-good" aria-hidden /> : <Spinner className="text-ink-faint" />}
                 </span>
                 <div className="min-w-0 flex-1 text-sm">
-                  <p className="font-medium break-words">{name}</p>
+                  <p className="flex flex-wrap items-center gap-2 font-medium break-words">
+                    {name}
+                    {ready && preview.draft?.ats?.status === 'ready' && preview.draft.ats.attachedScore !== null && (
+                      <Badge tone={atsTone(preview.draft.ats.attachedScore, preview.draft.ats.threshold)}>ATS %{preview.draft.ats.attachedScore}</Badge>
+                    )}
+                    {ready && preview.draft?.ats?.status === 'preparing' && <span className="text-xs font-normal text-ink-soft">ATS hesaplanıyor…</span>}
+                    {isImproving(item.id) && <span className="text-xs font-normal text-ink-soft">CV iyileştiriliyor…</span>}
+                  </p>
                   {preview?.status === 'sent' ? (
                     <p className="text-ink-soft">Zaten gönderildi</p>
                   ) : !ready ? (

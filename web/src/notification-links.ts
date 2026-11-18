@@ -16,7 +16,7 @@ export const LINK_PARAMS = {
   aiTask: 'gorev',
 } as const;
 
-const SCREENS: Record<string, string> = { '/': '/', '/home': '/', '/profile': '/profile', '/accounts': '/profile', '/notifications': '/notifications', '/login': '/login' };
+const SCREENS: Record<string, string> = { '/': '/', '/home': '/', '/sirketler': '/sirketler', '/profile': '/profile', '/accounts': '/profile', '/notifications': '/notifications', '/login': '/login' };
 
 /** Bağlantısı ayrıntı taşımayan (eski) bildirimler türlerine göre ilgili sekmeye ya da sıralamaya gider. */
 const FALLBACK_OF_TYPE: Record<string, Record<string, string>> = {

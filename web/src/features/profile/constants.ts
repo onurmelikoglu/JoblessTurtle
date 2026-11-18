@@ -10,7 +10,7 @@ export const MODEL_PROVIDERS = [
   { name: 'cli_codex', label: 'ChatGPT' },
 ] as const;
 
-export const MODEL_KINDS = ['job_search', 'company_discovery', 'company_report', 'company_contacts', 'company_sizes', 'letter_template', 'letter_company_line', 'cv_facts', 'title_expansion', 'mail_draft'] as const;
+export const MODEL_KINDS = ['job_search', 'company_discovery', 'company_report', 'company_contacts', 'company_sizes', 'letter_template', 'letter_company_line', 'cv_facts', 'cv_structure', 'job_ats_profile', 'cv_ats_rewrite', 'cv_layout', 'title_expansion', 'mail_draft'] as const;
 
 export const LETTER_SOURCE_LABELS: Record<string, string> = { ai: 'Claude oluşturdu', user: 'Senin düzenlemen', default: 'Varsayılan şablon' };
 

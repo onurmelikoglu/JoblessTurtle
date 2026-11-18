@@ -455,6 +455,7 @@ export class IngestService {
         statusReason: best?.statusReason ?? null,
         conflict: merged.conflict ? { message: merged.conflict, at: new Date().toISOString() } : Prisma.DbNull,
         openCycle: reopened ? job.openCycle + 1 : job.openCycle,
+        ...(reopened ? { reopenedAt: new Date() } : {}),
         closedAt: closedNow ? new Date() : merged.status === 'open' ? null : job.closedAt,
         lastSeenAt: best?.lastSeenAt ?? job.lastSeenAt,
         lastVerifiedAt,

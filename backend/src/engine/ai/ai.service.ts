@@ -1,3 +1,4 @@
+import type { ContactSearchSettings } from '../../domain/contact-search';
 import { Injectable, Logger } from '@nestjs/common';
 import { AiTask, Prisma } from '@prisma/client';
 import { promises as fs } from 'fs';
@@ -68,6 +69,16 @@ export interface AiSettings {
   kindProviders?: KindProviders;
   /** Kurulumda gerçek sağlayıcı yerine kopyala-yapıştır köprüsüyle devam etmek seçildi. */
   manualAccepted?: boolean;
+  /** Bu ATS oranının altındaki CV düşük sayılır (yüzde). */
+  atsThreshold?: number;
+  /** İyileştirmede ilanda istenip CV'de olmayan beceriler eklenir mi (fill_gaps) yoksa yalnız kanıtlılar mı. */
+  atsRewriteMode?: 'fill_gaps' | 'evidence_only';
+  /** İyileştirilmiş CV'nin görünümü: orijinal CV'nin tasarımı ya da sade ATS şablonu. */
+  atsCvLayout?: 'original' | 'plain';
+  /** İyileştirilmiş CV en fazla kaç sayfa olabilir. */
+  atsMaxPages?: 1 | 2;
+  /** Adres araması: sonuçsuz firmaların yeniden arama takvimi, Opus ile tekrar ve yeni bilgiyle yeniden arama. */
+  contactSearch?: Partial<ContactSearchSettings>;
 }
 
 export type ModelProvider = 'cli_claude' | 'cli_codex';
@@ -100,10 +111,10 @@ export const CLAUDE_MODEL_OPTIONS: ModelOption[] = [
   { value: 'opus', label: 'Opus', description: 'En güçlü; yavaş ve kotayı çabuk tüketir' },
 ];
 
-const LIGHT_KINDS: AiKind[] = ['cv_facts', 'title_expansion', 'title_analysis', 'company_sizes', 'reply_classification', 'inbound_review', 'job_alert', 'interview_extract'];
+const LIGHT_KINDS: AiKind[] = ['cv_facts', 'cv_structure', 'job_ats_profile', 'title_expansion', 'title_analysis', 'company_sizes', 'reply_classification', 'inbound_review', 'job_alert', 'interview_extract'];
 
 export const DEFAULT_MODELS: Record<ModelProvider, Partial<Record<AiKind | 'default', string>>> = {
-  cli_claude: { default: 'sonnet', ...Object.fromEntries(LIGHT_KINDS.map((k) => [k, 'haiku'])), company_contacts: 'sonnet', contact_review: 'opus' },
+  cli_claude: { default: 'sonnet', ...Object.fromEntries(LIGHT_KINDS.map((k) => [k, 'haiku'])), company_contacts: 'sonnet', contact_review: 'opus', cv_layout: 'opus' },
   cli_codex: { company_contacts: 'gpt-6.1-sol' },
 };
 
@@ -133,6 +144,12 @@ const ESCALATION_MODEL: Record<ModelProvider, Record<string, string>> = { cli_cl
 export function escalationModelFor(provider: string, model: string | undefined): string | undefined {
   if (provider !== 'cli_claude' && provider !== 'cli_codex') return undefined;
   return model ? ESCALATION_MODEL[provider][model] : undefined;
+}
+
+/** Cursor, Claude ve ChatGPT CLI'larından sonra yedek olarak sıradadır; bağlı değilse görevlerde kendiliğinden atlanır. */
+export function withCursor(order: ProviderName[]): ProviderName[] {
+  const after = Math.max(order.indexOf('cli_claude'), order.indexOf('cli_codex'));
+  return [...order.slice(0, after + 1), 'cli_cursor', ...order.slice(after + 1)];
 }
 
 const AI_USAGE_KEY = 'ai:tasks';
@@ -271,6 +288,7 @@ export class AiService {
     // girer. .env'deki anahtar eskisi gibi yalnızca elle sıraya eklenince kullanılır (habersiz ücretli kullanım olmasın).
     const storedKeyProviders = API_KEY_PROVIDERS.filter((p) => apiKeySource(p) === 'stored');
     if (usesDefaultOrder && cliAllowed) s.providerOrder = ['cli_claude', 'cli_codex', ...storedKeyProviders, ...DEFAULT_AI_SETTINGS.providerOrder];
+    if (cliAllowed && !s.providerOrder.includes('cli_cursor')) s.providerOrder = withCursor(s.providerOrder);
     if (!s.providerOrder.includes('template')) s.providerOrder = [...s.providerOrder, 'template'];
     return { ...s, ownerIsAdmin, cliAllowed, maxDailyTaskLimit: server?.inviteeDailyLimit ?? null };
   }
@@ -486,7 +504,7 @@ export class AiService {
       const source = apiKeySource(provider);
       return { source, last4: source === 'stored' ? (stored[provider]?.last4 ?? null) : null, savedAt: source === 'stored' && stored[provider] ? new Date(stored[provider].savedAt) : null };
     };
-    return { anthropic_api: status('anthropic_api'), openai_api: status('openai_api') };
+    return { anthropic_api: status('anthropic_api'), openai_api: status('openai_api'), cli_cursor: status('cli_cursor') };
   }
 
   async saveApiKey(provider: ApiKeyProvider, key: string | null) {
@@ -576,7 +594,13 @@ export class AiService {
       if (TEXT_PROVIDERS[name]?.ownerOnly && !current.cliAllowed)
         throw new AppError(403, 'PROVIDER_NOT_ALLOWED', `${PROVIDER_LABELS[name]} yalnızca sunucu sahibinin çalışma alanında kullanılabilir`);
     }
+    const stored = ((await this.prisma.workspace.findUniqueOrThrow({ where: { id: workspaceId }, select: { aiSettings: true } })).aiSettings ?? {}) as Partial<AiSettings>;
     const next = {
+      ...(stored.atsThreshold !== undefined ? { atsThreshold: stored.atsThreshold } : {}),
+      ...(stored.atsRewriteMode !== undefined ? { atsRewriteMode: stored.atsRewriteMode } : {}),
+      ...(stored.atsCvLayout !== undefined ? { atsCvLayout: stored.atsCvLayout } : {}),
+      ...(stored.atsMaxPages !== undefined ? { atsMaxPages: stored.atsMaxPages } : {}),
+      ...((patch.contactSearch ?? stored.contactSearch) ? { contactSearch: { ...(stored.contactSearch ?? {}), ...(patch.contactSearch ?? {}) } } : {}),
       providerOrder: order,
       dailyTaskLimit: patch.dailyTaskLimit ?? current.dailyTaskLimit,
       enrichDailyLimit: patch.enrichDailyLimit ?? current.enrichDailyLimit,
@@ -701,6 +725,7 @@ export class AiService {
       const provider = TEXT_PROVIDERS[name];
       if (!provider) continue;
       if (req.files?.length && name !== 'cli_claude' && name !== 'cli_codex') continue;
+      if (name === 'cli_cursor' && WEB_RESEARCH_KINDS.includes(req.kind)) continue;
       if (provider.ownerOnly && !settings.cliAllowed) continue;
       if (await this.inCooldown(name)) continue;
       if (!utilizationAllows(aiClass, await this.limitWindows(name))) continue;

@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
 import { AiService } from '../../src/engine/ai/ai.service';
-import { AiConnectService, lastLines, parseClaudeStatus, parseSetupToken, parseCodexStatus, parseLoginPrompt, redactSecrets, stripAnsi } from '../../src/modules/ai/ai-connect.service';
+import { AiConnectService, lastLines, parseClaudeStatus, parseCursorStatus, parseSetupToken, parseCodexStatus, parseLoginPrompt, redactSecrets, stripAnsi } from '../../src/modules/ai/ai-connect.service';
 
 interface FakeChild extends EventEmitter {
   stdout: PassThrough;
@@ -45,6 +45,7 @@ function newService() {
     changes: 0,
     token: null as string | null,
     markProvidersChanged: async () => void ai.changes++,
+    syncApiKeys: async () => undefined,
     claudeTokenStatus: async () => (ai.token ? { last4: ai.token.slice(-4), savedAt: new Date(), expiresAt: new Date(Date.now() + 365 * 86_400_000) } : null),
     saveClaudeToken: async (token: string | null) => {
       ai.token = token;
@@ -238,5 +239,37 @@ describe('yapay zekâ hesabı bağlama: giriş akışı', () => {
     expect(after).toMatchObject({ connected: true, longLived: { last4: '0123' }, login: null });
     expect(done.login === null || done.connected).toBe(true);
     await expect(svc.start('cli_codex', 'long_lived')).rejects.toMatchObject({ code: 'LONG_LIVED_UNSUPPORTED' });
+  });
+});
+
+const CURSOR_URL = 'https://cursor.com/loginDeepControl?challenge=abc&uuid=def&mode=login&redirectTarget=cli';
+
+describe('yapay zekâ hesabı bağlama: Cursor', () => {
+  it('giriş bağlantısı ve durum çıktısı çözümlenir', () => {
+    expect(parseLoginPrompt('cli_cursor', `Waiting for browser authentication...\nOpen a browser and navigate to this link: ${CURSOR_URL}\n`)).toEqual({ url: CURSOR_URL, userCode: null });
+    expect(parseCursorStatus('{"status":"authenticated","isAuthenticated":true,"email":"ben@ornek.com"}')).toEqual({ connected: true, account: 'ben@ornek.com', plan: null });
+    expect(parseCursorStatus('\u001b[33m⚠ Warning: The provided API key is invalid.\u001b[0m')).toMatchObject({ connected: false });
+  });
+
+  it('kod istemez: bağlantı gösterilir, tarayıcıda onaylanınca süreç biter ve bağlı görünür', async () => {
+    let loggedIn = false;
+    let loginChild: FakeChild | null = null;
+    const fake = fakeSpawner((args, child) => {
+      if (args[0] === '--version') return finish(child, '2026.11.05-86047df');
+      if (args.join(' ') === 'status --format json') return finish(child, JSON.stringify({ isAuthenticated: loggedIn, email: loggedIn ? 'ben@ornek.com' : undefined }));
+      if (args.join(' ') === 'login') {
+        loginChild = child;
+        child.stdout.write(`Starting login process...\nOpen a browser and navigate to this link: ${CURSOR_URL}\n`);
+      }
+    });
+    const svc = newService();
+    svc.spawner = fake.spawner;
+    const started = await svc.start('cli_cursor');
+    expect(started.login).toMatchObject({ phase: 'waiting', url: CURSOR_URL, needsCode: false, userCode: null });
+    loggedIn = true;
+    finish(loginChild!, 'Login successful!\n');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(await svc.status('cli_cursor', true)).toMatchObject({ connected: true, account: 'ben@ornek.com', login: null });
+    expect(svc.aiStub.changes).toBe(1);
   });
 });

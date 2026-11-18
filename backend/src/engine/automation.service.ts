@@ -7,12 +7,13 @@ import { PrismaService } from '../common/prisma.service';
 import { nextSendSlot } from '../common/time';
 import { UsageService } from '../common/usage.service';
 import { activeKeyFor } from '../domain/attempt-state';
-import { ATTACHED_TYPES, attachmentsFor } from '../domain/documents';
+import { ATTACHED_TYPES, attachmentsFor, ORIGINAL_VARIANT } from '../domain/documents';
 import { contactVerifiedForSending, SENDABLE_CONTACT_KINDS } from '../domain/contacts';
 import { evaluatePolicy, PolicyDecision, REASON_LABELS, ReasonCode } from '../domain/policy';
 import { IntentType } from '../domain/templates';
 import { istanbulDay } from '../common/time';
 import { AppliedCompaniesService } from './applied-companies.service';
+import { AtsService } from './ats.service';
 import { DraftingService, intentForCategory, intentForOpportunity, pickContact } from './drafting.service';
 import { CandidateFactsService } from './candidate-facts.service';
 import { LearnedModelsService } from './learned-models.service';
@@ -33,6 +34,10 @@ export function predraftBudget(dailyLimit: number, usedToday: number) {
   const reserve = Math.max(AI_INTERACTIVE_RESERVE_MIN, Math.ceil(dailyLimit * AI_INTERACTIVE_RESERVE_RATIO));
   return Math.max(0, Math.min(PREDRAFT_BATCH, dailyLimit - usedToday - reserve));
 }
+
+const SWEEP_LIMIT = 300;
+
+export type AutoResult = { policyId: string; action: 'skipped' | 'review' | 'ready' | 'queued'; draftId?: string; attemptId?: string; reasons?: string[] };
 
 const REVIEW_REASONS: ReasonCode[] = ['CONTACT_MISSING', 'CONTACT_UNVERIFIED', 'RECIPIENT_KIND_NOT_ALLOWED', 'CHANNEL_MANUAL_ONLY', 'LOCATION_UNKNOWN', 'MANDATORY_UNKNOWN', 'DOCUMENT_NOT_READY', 'FRESHNESS_STALE'];
 
@@ -72,6 +77,7 @@ export class AutomationService {
     private readonly candidateFacts: CandidateFactsService,
     private readonly models: LearnedModelsService,
     private readonly appliedCompanies: AppliedCompaniesService,
+    private readonly ats: AtsService,
   ) {}
 
   private async refreshCandidateFacts(candidateId: string) {
@@ -178,6 +184,12 @@ export class AutomationService {
       dailyLimitReached: used >= limit,
       suppressed: !!suppressed,
       accountHealthy: !!account && account.health === 'ok' && account.candidateId === policy.candidateId,
+      filters: policy,
+      subject: {
+        place: opp.job ? (opp.job.locationText ?? opp.job.district ?? opp.job.city ?? null) : null,
+        workMode: opp.job?.workMode ?? 'unknown',
+        employeeRange: opp.company.employeeRange,
+      },
       now,
       checkFreshness: false,
     });
@@ -227,14 +239,21 @@ export class AutomationService {
     // Başvurulan firmanın (başka adla açılmış kaydı dahil) yeni ilanı yalnızca bildirimdir; taslak ve otomatik başvuru yapılmaz.
     if (await this.appliedCompanies.matchOf(opp.workspaceId, opp.companyId)) return [];
     const policies = await this.prisma.automationPolicy.findMany({ where: { workspaceId: opp.workspaceId, searchProfileId: opp.searchProfileId, active: true } });
-    const results = [];
+    const results: AutoResult[] = [];
     for (const policy of policies) {
       const r = await this.evaluateOpportunity(policy, opportunityId);
       if (!r) continue;
       const modeOn = r.intent === 'job_application' ? policy.modeJobApplication : policy.modeGeneralIntent;
       if (!modeOn) continue;
+      await this.prisma.opportunity.update({ where: { id: opportunityId }, data: { autoReasons: r.decision.reasons, autoEvaluatedAt: new Date() } });
       const existingDraft = await this.prisma.applicationDraft.findFirst({ where: { opportunityId, candidateId: policy.candidateId, status: { in: ['draft', 'needs_review', 'queued', 'sent'] } } });
-      if (existingDraft) continue;
+      if (existingDraft) {
+        // Arka planda hazırlanmış (kullanıcının dokunmadığı) yazı, uygunsa otomatik gönderilir.
+        if (existingDraft.status === 'draft' && policy.autoSend && r.decision.eligible && (await this.untouchedByUser(existingDraft.id))) {
+          results.push(await this.queueAuto(policy, existingDraft.id, opportunityId, r.sendAt));
+        }
+        continue;
+      }
       const soft = r.decision.reasons.every((c) => REVIEW_REASONS.includes(c));
       if (!r.decision.eligible && !soft) {
         results.push({ policyId: policy.id, action: 'skipped', reasons: r.decision.reasons });
@@ -270,25 +289,54 @@ export class AutomationService {
         results.push({ policyId: policy.id, action: 'ready', draftId: draft.id });
         continue;
       }
-      try {
-        const { attempt } = await this.sending.queueSend({
-          workspaceId: policy.workspaceId,
-          userId: null,
-          draftId: draft.id,
-          idempotencyKey: `auto:${hashObject({ p: policy.id, v: policy.version, o: opportunityId }).slice(0, 32)}`,
-          sendMode: 'auto',
-          policyVersionId: await this.currentVersionId(policy),
-          mailAccountId: policy.mailAccountId,
-          scheduledAt: r.sendAt,
-        });
-        results.push({ policyId: policy.id, action: 'queued', attemptId: attempt.id });
-      } catch (e) {
-        const code = e instanceof AppError ? e.code : 'ERROR';
-        await this.prisma.applicationDraft.update({ where: { id: draft.id }, data: { status: 'needs_review', blockedReasons: { push: code } } });
-        results.push({ policyId: policy.id, action: 'review', draftId: draft.id, reasons: [code] });
-      }
+      results.push(await this.queueAuto(policy, draft.id, opportunityId, r.sendAt));
     }
     return results;
+  }
+
+  private async untouchedByUser(draftId: string) {
+    const edited = await this.prisma.draftRevision.count({ where: { draftId, createdById: { not: null } } });
+    return edited === 0;
+  }
+
+  private async queueAuto(policy: AutomationPolicy, draftId: string, opportunityId: string, sendAt: Date): Promise<AutoResult> {
+    if (policy.atsAutoImprove) await this.ats.autoImprove(draftId).catch((e) => this.logger.warn(`ATS iyileştirmesi yapılamadı (${draftId}): ${errorMessage(e)}`));
+    try {
+      const { attempt } = await this.sending.queueSend({
+        workspaceId: policy.workspaceId,
+        userId: null,
+        draftId,
+        idempotencyKey: `auto:${hashObject({ p: policy.id, v: policy.version, o: opportunityId }).slice(0, 32)}`,
+        sendMode: 'auto',
+        policyVersionId: await this.currentVersionId(policy),
+        mailAccountId: policy.mailAccountId,
+        scheduledAt: sendAt,
+        companyCooldownDays: policy.companyCooldownDays,
+      });
+      return { policyId: policy.id, action: 'queued', attemptId: attempt.id };
+    } catch (e) {
+      const code = e instanceof AppError ? e.code : 'ERROR';
+      await this.prisma.applicationDraft.update({ where: { id: draftId }, data: { status: 'needs_review', blockedReasons: { push: code } } });
+      return { policyId: policy.id, action: 'review', draftId, reasons: [code] };
+    }
+  }
+
+  /**
+   * Politikanın fırsatlarını yeniden değerlendirir: etkinleştirmede, ayar değişince ve her sabah günlük sınıra takılanlar
+   * için. Yalnızca sırada bekleyenler (onlyDeferred) seçilirse önceki gün sınıra takılan ya da hiç değerlendirilmemiş fırsatlar.
+   */
+  async sweep(policyId: string, opts: { onlyDeferred?: boolean; limit?: number } = {}) {
+    const policy = await this.prisma.automationPolicy.findUnique({ where: { id: policyId } });
+    if (!policy?.active) return { evaluated: 0 };
+    const deferred: Prisma.OpportunityWhereInput = { OR: [{ autoEvaluatedAt: null }, { autoReasons: { array_contains: ['DAILY_LIMIT'] } }] };
+    const opps = await this.prisma.opportunity.findMany({
+      where: { searchProfileId: policy.searchProfileId, status: { in: ['new', 'reviewed', 'drafted'] }, category: { not: 'excluded' }, ...(opts.onlyDeferred ? deferred : {}) },
+      orderBy: [{ f: { sort: 'desc', nulls: 'last' } }, { computedAt: 'desc' }],
+      select: { id: true },
+      take: opts.limit ?? SWEEP_LIMIT,
+    });
+    for (const o of opps) await this.onOpportunity(o.id);
+    return { evaluated: opps.length };
   }
 
   async prepareFromHome(workspaceId: string, opportunityId: string, userId: string | null, fresh = false) {
@@ -382,7 +430,7 @@ export class AutomationService {
   }
 
   async defaultDocumentIds(candidateId: string) {
-    const docs = await this.prisma.documentVersion.findMany({ where: { candidateId, archived: false, scanState: 'clean', type: { in: [...ATTACHED_TYPES] } } });
+    const docs = await this.prisma.documentVersion.findMany({ where: { candidateId, archived: false, scanState: 'clean', type: { in: [...ATTACHED_TYPES] }, variant: ORIGINAL_VARIANT } });
     return attachmentsFor(docs);
   }
 

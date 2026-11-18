@@ -36,6 +36,12 @@ export function templateOutput(kind: AiKind, input: any): unknown {
       };
     case 'cv_facts':
       return { experiences: [], skills: [], languages: [] };
+    case 'cv_structure':
+    case 'cv_ats_rewrite':
+    case 'cv_layout':
+      return null;
+    case 'job_ats_profile':
+      return { hardSkills: [], tools: [], softSkills: [], certifications: [], languages: [], minYears: null, education: null, titleKeywords: input.title ? [input.title] : [] };
     case 'title_expansion':
       return { adjacentTitles: [] };
     case 'company_report':

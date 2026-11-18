@@ -6,11 +6,12 @@ import * as path from 'path';
 import { env } from '../../common/env';
 import { AiKind } from './schemas';
 
-export type ProviderName = 'cli_claude' | 'cli_codex' | 'manual' | 'ollama' | 'anthropic_api' | 'openai_api' | 'template';
+export type ProviderName = 'cli_claude' | 'cli_codex' | 'cli_cursor' | 'manual' | 'ollama' | 'anthropic_api' | 'openai_api' | 'template';
 
 export const PROVIDER_LABELS: Record<ProviderName, string> = {
   cli_claude: 'Claude Code CLI (kendi aboneliğin)',
   cli_codex: 'Codex CLI (ChatGPT hesabın)',
+  cli_cursor: 'Cursor CLI (Cursor hesabın)',
   manual: 'Manuel köprü (sohbete kopyala-yapıştır)',
   ollama: 'Yerel model (Ollama)',
   anthropic_api: 'Claude API (anahtar)',
@@ -88,12 +89,19 @@ export interface TextProvider {
   complete(prompt: string, opts: ProviderRunOptions): Promise<ProviderResult>;
 }
 
-export function runProcess(cmd: string, args: string[], stdin: string, timeoutMs: number, files: ProviderFile[] = []): Promise<{ code: number | null; stdout: string; stderr: string }> {
+export function runProcess(
+  cmd: string,
+  args: string[],
+  stdin: string,
+  timeoutMs: number,
+  files: ProviderFile[] = [],
+  extraEnv: Record<string, string> = {},
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     // Boş geçici dizinde çalıştırılır; CLI'nin proje dosyalarına erişimi olmaz.
     const cwd = mkdtempSync(path.join(tmpdir(), 'ai-cli-'));
     for (const f of files) writeFileSync(path.join(cwd, path.basename(f.name)), f.data);
-    const child = spawn(cmd, args, { cwd, env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(cmd, args, { cwd, env: { ...process.env, ...extraEnv }, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
@@ -299,6 +307,71 @@ export const cliCodexProvider: TextProvider = {
   },
 };
 
+/** `cursor-agent status --format json`: anahtar geçersizse JSON yerine uyarı yazar. */
+export function cursorAuthState(stdout: string): 'ok' | 'invalid_key' | 'signed_out' {
+  if (/api key is invalid/i.test(stdout)) return 'invalid_key';
+  try {
+    const json = stdout.slice(stdout.indexOf('{'), stdout.lastIndexOf('}') + 1);
+    return (JSON.parse(json) as { isAuthenticated?: unknown }).isAuthenticated === true ? 'ok' : 'signed_out';
+  } catch {
+    return 'signed_out';
+  }
+}
+
+/** `--output-format json` tek bir sonuç nesnesi yazar: { type: 'result', is_error, result, duration_ms, … }. */
+export function parseCursorResult(stdout: string): { text: string; error: string | null; model: string | null } {
+  const line = stdout
+    .split('\n')
+    .map((l) => l.trim())
+    .reverse()
+    .find((l) => l.startsWith('{'));
+  if (!line) return { text: '', error: stdout.trim().slice(0, 400) || 'cursor-agent çıktı vermedi', model: null };
+  try {
+    const parsed = JSON.parse(line) as { is_error?: boolean; result?: unknown; subtype?: string; model?: string };
+    const text = String(parsed.result ?? '');
+    return { text, error: parsed.is_error || parsed.subtype === 'error' ? text || 'cursor-agent hatası' : null, model: parsed.model ?? null };
+  } catch {
+    return { text: '', error: line.slice(0, 400), model: null };
+  }
+}
+
+const cursorEnv = (): Record<string, string> => {
+  const key = apiKeyFor('cli_cursor');
+  return key ? { CURSOR_API_KEY: key } : {};
+};
+
+/**
+ * Cursor CLI (`cursor-agent -p`): Cursor aboneliğiyle başsız çalışır; hesap tarayıcı girişiyle (`cursor-agent login`,
+ * worker ile ortak ev klasörüne yazılır) ya da Cursor panelinden üretilen kullanıcı API anahtarıyla bağlanır. Soru-cevap kipinde (`--mode ask`)
+ * dosya düzenlemez ve komut çalıştırmaz; boş geçici dizinde başlatılır. Web araması gereken görevlerde kullanılmaz.
+ */
+export const cliCursorProvider: TextProvider = {
+  name: 'cli_cursor',
+  ownerOnly: true,
+  available: () =>
+    cached('cli_cursor', async () => {
+      const version = await runProcess(env().CURSOR_CLI_PATH, ['--version'], '', 15000);
+      if (version.code !== 0) return { ok: false, installed: false, detail: version.stderr.trim() || 'cursor-agent bulunamadı' };
+      const status = await runProcess(env().CURSOR_CLI_PATH, ['status', '--format', 'json'], '', 20000, [], cursorEnv());
+      const state = cursorAuthState(status.stdout + status.stderr);
+      if (state === 'invalid_key') return { ok: false, installed: true, detail: 'Cursor API anahtarı geçersiz' };
+      const via = apiKeyFor('cli_cursor') ? 'API anahtarı' : 'tarayıcı girişi';
+      return state === 'ok' ? { ok: true, installed: true, detail: `cursor-agent ${version.stdout.trim()} · ${via}` } : { ok: false, installed: true, detail: 'Cursor hesabı bağlı değil' };
+    }),
+  async complete(prompt, opts) {
+    const model = opts.model ?? env().CURSOR_CLI_MODEL;
+    const args = ['-p', '--output-format', 'json', '--trust', '--mode', 'ask', ...(model ? ['--model', model] : [])];
+    const r = await runProcess(env().CURSOR_CLI_PATH, args, prompt, env().AI_CLI_TIMEOUT_SECONDS * 1000, opts.files, cursorEnv());
+    const parsed = parseCursorResult(r.stdout);
+    const failure = parsed.error ?? (r.code !== 0 ? r.stderr.slice(0, 400) || `kod ${r.code}` : null);
+    if (failure) {
+      if (LIMIT_PATTERN.test(failure)) throw new ProviderLimitError(`Cursor limiti: ${failure.slice(0, 200)}`, limitResetAt(failure));
+      throw new Error(`cursor-agent hatası: ${failure.slice(0, 300)}`);
+    }
+    return { text: parsed.text, usage: { model: parsed.model ?? model ?? null } };
+  },
+};
+
 export const ollamaProvider: TextProvider = {
   name: 'ollama',
   ownerOnly: false,
@@ -321,8 +394,14 @@ export const ollamaProvider: TextProvider = {
   },
 };
 
-export type ApiKeyProvider = 'anthropic_api' | 'openai_api';
-export const API_KEY_PROVIDERS: ApiKeyProvider[] = ['anthropic_api', 'openai_api'];
+export type ApiKeyProvider = 'anthropic_api' | 'openai_api' | 'cli_cursor';
+export const API_KEY_PROVIDERS: ApiKeyProvider[] = ['anthropic_api', 'openai_api', 'cli_cursor'];
+
+const ENV_API_KEYS: Record<ApiKeyProvider, () => string | undefined> = {
+  anthropic_api: () => env().ANTHROPIC_API_KEY,
+  openai_api: () => env().OPENAI_API_KEY,
+  cli_cursor: () => env().CURSOR_API_KEY,
+};
 
 /** Arayüzden girilip veritabanında şifreli saklanan anahtarlar (çözülmüş hâli yalnızca bellekte); yoksa ortam değişkeni kullanılır. */
 let storedApiKeys: Partial<Record<ApiKeyProvider, string>> = {};
@@ -345,16 +424,17 @@ export const hasClaudeToken = () => !!process.env[CLAUDE_TOKEN_ENV];
 
 export function setStoredApiKeys(keys: Partial<Record<ApiKeyProvider, string>>) {
   if (keys.anthropic_api !== storedApiKeys.anthropic_api) anthropicClient = null;
+  if (keys.cli_cursor !== storedApiKeys.cli_cursor) availabilityCache.delete('cli_cursor');
   storedApiKeys = { ...keys };
 }
 
 export function apiKeyFor(provider: ApiKeyProvider): string | undefined {
-  return storedApiKeys[provider] || (provider === 'anthropic_api' ? env().ANTHROPIC_API_KEY : env().OPENAI_API_KEY) || undefined;
+  return storedApiKeys[provider] || ENV_API_KEYS[provider]() || undefined;
 }
 
 export function apiKeySource(provider: ApiKeyProvider): 'stored' | 'env' | null {
   if (storedApiKeys[provider]) return 'stored';
-  return (provider === 'anthropic_api' ? env().ANTHROPIC_API_KEY : env().OPENAI_API_KEY) ? 'env' : null;
+  return ENV_API_KEYS[provider]() ? 'env' : null;
 }
 
 let anthropicClient: Anthropic | null = null;
@@ -403,6 +483,7 @@ export const openaiApiProvider: TextProvider = {
 export const TEXT_PROVIDERS: Record<string, TextProvider> = {
   cli_claude: cliClaudeProvider,
   cli_codex: cliCodexProvider,
+  cli_cursor: cliCursorProvider,
   ollama: ollamaProvider,
   anthropic_api: anthropicApiProvider,
   openai_api: openaiApiProvider,

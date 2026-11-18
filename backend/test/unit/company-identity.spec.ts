@@ -45,6 +45,12 @@ describe('firma kimliği', () => {
     expect(applied.size).toBe(6);
   });
 
+  it('kullanıcının "farklı firmalar" dediği çift ad benzese de eşleşmez', () => {
+    const applied = new CompanyIdentityIndex([company('a1', 'Kartal Ödeme (İstanbul)', 'kartalodeme.com')], new Set(['a1|x1']));
+    expect(applied.match(company('x1', 'Kartal Ödeme Hizmetleri'))).toBeNull();
+    expect(applied.match(company('x2', 'Kartal Ödeme Hizmetleri'))?.id).toBe('a1');
+  });
+
   it('anahtarlar ad ve alan adı köklerini birlikte taşır', () => {
     expect(identityKeysOf({ name: 'Kartal Ödeme', canonicalDomain: 'kartalodeme.com', website: 'https://www.kartalodeme.com.tr' })).toEqual(['n:kartal odeme', 'd:kartalodeme']);
   });

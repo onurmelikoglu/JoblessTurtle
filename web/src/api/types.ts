@@ -5,6 +5,9 @@ export type * from '@contracts/learning';
 export type * from '@contracts/notifications';
 export type * from '@contracts/scrapers';
 export type * from '@contracts/ai-setup';
+export type * from '@contracts/auto-apply';
+export type * from '@contracts/directory';
+export type * from '@contracts/contact-search';
 
 export interface AuthStatus {
   needsSetup: boolean;

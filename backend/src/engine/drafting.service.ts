@@ -6,7 +6,7 @@ import { OutboxService } from '../common/outbox.service';
 import { PrismaService, Tx } from '../common/prisma.service';
 import { isValidEmail, RecipientScoring, recipientScore, SENDABLE_CONTACT_KINDS } from '../domain/contacts';
 import { ApplicationLanguage, applicationLanguageOf, ENGLISH_CV_MISSING, englishCvMissing, LanguageDecision, textLanguage } from '../domain/application-language';
-import { attachmentsFor, attachmentsInLanguage, PRIMARY_LANGUAGE } from '../domain/documents';
+import { attachmentsFor, attachmentsInLanguage, PRIMARY_LANGUAGE, ORIGINAL_VARIANT } from '../domain/documents';
 import { replaceAdWord } from '../domain/text';
 import { buildSignature, checkDraftContent, INTENT_LABELS, IntentType } from '../domain/templates';
 import { AiService } from './ai/ai.service';
@@ -117,7 +117,7 @@ export class DraftingService {
   }
 
   async defaultDocuments(candidateId: string, language = PRIMARY_LANGUAGE) {
-    const docs = await this.prisma.documentVersion.findMany({ where: { candidateId, archived: false, scanState: 'clean' } });
+    const docs = await this.prisma.documentVersion.findMany({ where: { candidateId, archived: false, scanState: 'clean', variant: ORIGINAL_VARIANT } });
     return attachmentsFor(docs, language);
   }
 
@@ -305,7 +305,7 @@ export class DraftingService {
   private async documentsInLanguage(candidateId: string, requested: string[] | undefined, language: ApplicationLanguage): Promise<string[]> {
     if (!requested) return this.defaultDocuments(candidateId, language);
     if (language === PRIMARY_LANGUAGE || !requested.length) return requested;
-    const available = await this.prisma.documentVersion.findMany({ where: { candidateId, archived: false, scanState: 'clean' } });
+    const available = await this.prisma.documentVersion.findMany({ where: { candidateId, archived: false, scanState: 'clean', variant: ORIGINAL_VARIANT } });
     const attached = available.filter((d) => requested.includes(d.id));
     return attached.length === requested.length ? attachmentsInLanguage(attached, available, language) : requested;
   }

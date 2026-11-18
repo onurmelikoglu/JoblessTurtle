@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import * as path from 'path';
 import { PrismaService } from '../common/prisma.service';
-import { pickDocument } from '../domain/documents';
+import { pickDocument, ORIGINAL_VARIANT } from '../domain/documents';
 import { StorageService } from '../common/storage.service';
 import { AiService } from './ai/ai.service';
 import { LetterService } from './letter.service';
@@ -46,7 +46,7 @@ export class CandidateFactsService {
   ) {}
 
   async ensureFromCv(candidateId: string) {
-    const cv = pickDocument(await this.prisma.documentVersion.findMany({ where: { candidateId, type: 'cv', archived: false, scanState: 'clean' } }), 'cv');
+    const cv = pickDocument(await this.prisma.documentVersion.findMany({ where: { candidateId, type: 'cv', archived: false, scanState: 'clean', variant: ORIGINAL_VARIANT } }), 'cv');
     if (!cv) return { status: 'no_cv' as const };
     const marker = `cvfacts:${candidateId}`;
     const done = await this.prisma.keyValue.findUnique({ where: { key: marker } });

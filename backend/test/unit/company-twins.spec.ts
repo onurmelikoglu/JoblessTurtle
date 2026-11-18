@@ -1,4 +1,4 @@
-import { findTwins, strictCoreOf, TwinProfile, twinVerdict } from '../../src/domain/company-twins';
+import { bestTwinFor, findTwins, strictCoreOf, TwinProfile, twinVerdict } from '../../src/domain/company-twins';
 
 const firm = (id: string, name: string, patch: Partial<TwinProfile> = {}): TwinProfile => ({ id, name, domains: [], jobs: [], emailDomains: [], officePlaces: [], ...patch });
 const job = { title: 'dijital pazarlama ve sosyal medya uzmani', place: 'Kocaeli Körfez' };
@@ -37,5 +37,22 @@ describe('aynı firmanın kayıtları', () => {
   it('çiftler bir kez döner', () => {
     const twins = findTwins([firm('x', 'DURU TAŞ LTD ŞTİ', { jobs: [job] }), firm('y', 'DURU TAŞ YAPI İNŞ. LTD. ŞTİ.', { jobs: [job] }), firm('z', 'Başka Firma')]);
     expect(twins.map((t) => [t.a.id, t.b.id, t.verdict.level])).toEqual([['x', 'y', 'certain']]);
+  });
+});
+
+describe('yeni firma adının kayıtlı ikizi', () => {
+  const existing = [firm('a', 'ORNEKTAS STONE LTD ŞTİ', { jobs: [job] }), firm('b', 'Ornektas Medya'), firm('c', 'Başka Firma')];
+
+  it('ortak ilanı olan güçlü ad kesin, yalnız ad benzerliği olasıdır', () => {
+    expect(bestTwinFor(firm('', 'ORNEKTAS STONE YAPI İNŞ. LTD. ŞTİ.', { jobs: [job] }), existing)).toMatchObject({ profile: { id: 'a' }, verdict: { level: 'certain' } });
+    expect(bestTwinFor(firm('', 'Ornektas Stone Yapı'), existing)).toMatchObject({ profile: { id: 'a' }, verdict: { level: 'likely' } });
+  });
+
+  it('adlardan biri diğerinin devamıysa kanıt olmadan da sorulur', () => {
+    expect(bestTwinFor(firm('', 'Ornektas Stone Doğal Taş'), existing)).toMatchObject({ profile: { id: 'a' }, verdict: { level: 'likely', reasons: ['Adlardan biri diğerinin devamı'] } });
+  });
+
+  it('benzer ad yoksa ikiz yoktur', () => {
+    expect(bestTwinFor(firm('', 'Kırmızı Yazılım'), existing)).toBeNull();
   });
 });

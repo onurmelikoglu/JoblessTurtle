@@ -38,3 +38,24 @@ describe('belge dil sürümleri', () => {
     expect(replacementFor({ type: 'portfolio', language: 'en' }, [pfTr])?.id).toBe('pf-tr');
   });
 });
+
+describe('ATS sürümlerinin dil değişimi', () => {
+  const at = (day: number) => new Date(`2026-11-${String(day).padStart(2, '0')}T00:00:00Z`);
+  const docs = [
+    { id: 'tr-orig', type: 'cv', language: 'tr', createdAt: at(1), variant: 'original' },
+    { id: 'tr-main', type: 'cv', language: 'tr', createdAt: at(2), variant: 'ats_main' },
+    { id: 'en-orig', type: 'cv', language: 'en', createdAt: at(1), variant: 'original' },
+    { id: 'en-main', type: 'cv', language: 'en', createdAt: at(3), variant: 'ats_main' },
+    { id: 'en-job-x', type: 'cv', language: 'en', createdAt: at(4), variant: 'ats_job', targetJobId: 'x' },
+  ];
+
+  it('ana ATS sürümü hedef dildeki ana sürüme, orijinal orijinale geçer', () => {
+    expect(attachmentsInLanguage([docs[1]], docs, 'en')).toEqual(['en-main']);
+    expect(attachmentsInLanguage([docs[0]], docs, 'en')).toEqual(['en-orig']);
+  });
+
+  it('başka ilanın sürümüne geçilmez; hedef dilde aynı sürüm yoksa orijinal seçilir', () => {
+    const trJob = { id: 'tr-job-y', type: 'cv', language: 'tr', createdAt: at(5), variant: 'ats_job', targetJobId: 'y' };
+    expect(attachmentsInLanguage([trJob], [...docs, trJob], 'en')).toEqual(['en-orig']);
+  });
+});

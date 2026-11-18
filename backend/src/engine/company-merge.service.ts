@@ -4,7 +4,7 @@ import { AuditService } from '../common/audit.service';
 import { AppError, notFound } from '../common/errors';
 import { OutboxService } from '../common/outbox.service';
 import { PrismaService, Tx } from '../common/prisma.service';
-import { findTwins, TwinProfile, twinPairKey, TwinVerdict } from '../domain/company-twins';
+import { bestTwinFor, findTwins, TwinProfile, twinPairKey, TwinVerdict } from '../domain/company-twins';
 import { isHiddenCompany } from '../domain/hidden-company';
 import { SENDABLE_CONTACT_KINDS } from '../domain/contacts';
 
@@ -17,6 +17,12 @@ export interface TwinSuggestion {
   a: { id: string; name: string };
   b: { id: string; name: string };
   verdict: NonNullable<TwinVerdict>;
+}
+
+/** Kullanıcının "farklı firmalar" dediği çiftler (twinPairKey). */
+export async function dismissedTwinPairs(db: { keyValue: { findUnique: (args: { where: { key: string } }) => Promise<{ value: unknown } | null> } }, workspaceId: string): Promise<Set<string>> {
+  const kv = await db.keyValue.findUnique({ where: { key: dismissedKey(workspaceId) } });
+  return new Set(((kv?.value as { pairs?: string[] } | null)?.pairs ?? []).filter((p) => typeof p === 'string'));
 }
 
 /** Birleştirilmiş kaydın yönlendirdiği firma; zincir varsa sonuna kadar izlenir. */
@@ -41,7 +47,7 @@ export class CompanyMergeService {
     private readonly audit: AuditService,
   ) {}
 
-  private async profiles(workspaceId: string): Promise<TwinProfile[]> {
+  async profiles(workspaceId: string): Promise<TwinProfile[]> {
     const companies = await this.prisma.company.findMany({
       where: { workspaceId, excluded: false, mergedIntoId: null },
       select: {
@@ -64,9 +70,16 @@ export class CompanyMergeService {
     }));
   }
 
-  private async dismissed(workspaceId: string): Promise<Set<string>> {
-    const kv = await this.prisma.keyValue.findUnique({ where: { key: dismissedKey(workspaceId) } });
-    return new Set(((kv?.value as { pairs?: string[] } | null)?.pairs ?? []).filter((p) => typeof p === 'string'));
+  private dismissed(workspaceId: string): Promise<Set<string>> {
+    return dismissedTwinPairs(this.prisma, workspaceId);
+  }
+
+  /**
+   * Henüz kaydedilmemiş firmanın kayıtlı (birleştirilmemiş, gizlenmemiş) firmalar arasındaki en olası ikizi. profiles
+   * verilirse yeniden okunmaz (aynı turda birden çok firma soruluyorsa).
+   */
+  async similarTo(workspaceId: string, candidate: Omit<TwinProfile, 'id'>, profiles?: TwinProfile[]) {
+    return bestTwinFor({ ...candidate, id: '' }, profiles ?? (await this.profiles(workspaceId)));
   }
 
   /** Olası ikizler; kullanıcının "farklı firmalar" dediği çiftler hariç. */

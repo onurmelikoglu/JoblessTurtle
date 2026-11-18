@@ -4,8 +4,8 @@
  */
 import type { IsoDate } from './wire';
 
-export type ConnectProvider = 'cli_claude' | 'cli_codex';
-export type ApiKeyProviderName = 'anthropic_api' | 'openai_api';
+export type ConnectProvider = 'cli_claude' | 'cli_codex' | 'cli_cursor';
+export type ApiKeyProviderName = 'anthropic_api' | 'openai_api' | 'cli_cursor';
 
 /** starting: CLI açılıyor · waiting: kullanıcı tarayıcıda giriş yapıyor · verifying: Claude kodu doğrulanıyor. */
 export type LoginPhase = 'starting' | 'waiting' | 'verifying' | 'failed' | 'expired';

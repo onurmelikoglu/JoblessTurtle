@@ -1,10 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import { Download, MailCheck, Paperclip } from 'lucide-react';
 import { errorText } from '@/api/client';
 import { homeApi } from '@/api/home';
 import type { HomeApplicationDetail, HomeDocument } from '@/api/types';
+import { DocumentPreviewDialog } from '@/features/shared/DocumentPreviewDialog';
 import { documentLabel } from '@/features/shared/documents';
-import { openBlob, saveBlob } from '@/lib/download';
+import { saveBlob } from '@/lib/download';
 import { fmtBytes, fmtDateTime } from '@/lib/format';
 import { Button, IconButton } from '@/ui/Button';
 import { Dialog } from '@/ui/Dialog';
@@ -21,17 +23,16 @@ const REPLY_LABELS: Record<string, string> = {
   do_not_contact: 'İletişim istemiyor',
 };
 
-async function fetchDocument(doc: HomeDocument, download: boolean) {
+async function downloadDocument(doc: HomeDocument) {
   try {
-    const blob = await homeApi.downloadDocument(doc.id);
-    if (download) saveBlob(blob, doc.fileName);
-    else openBlob(blob);
+    saveBlob(await homeApi.downloadDocument(doc.id), doc.fileName);
   } catch (error) {
     toast.error(errorText(error));
   }
 }
 
 function Details({ d }: { d: HomeApplicationDetail }) {
+  const [previewDoc, setPreviewDoc] = useState<HomeDocument | null>(null);
   return (
     <div className="flex flex-col gap-4">
       <p className="text-sm text-ink-soft">
@@ -59,10 +60,10 @@ function Details({ d }: { d: HomeApplicationDetail }) {
                   {documentLabel(doc.type)} · {fmtBytes(doc.size)}
                 </span>
               </span>
-              <Button variant="ghost" size="sm" onClick={() => void fetchDocument(doc, false)}>
+              <Button variant="ghost" size="sm" onClick={() => setPreviewDoc(doc)}>
                 Önizle
               </Button>
-              <IconButton label={`${doc.fileName} indir`} size="sm" onClick={() => void fetchDocument(doc, true)}>
+              <IconButton label={`${doc.fileName} indir`} size="sm" onClick={() => void downloadDocument(doc)}>
                 <Download className="size-4" aria-hidden />
               </IconButton>
             </li>
@@ -98,6 +99,7 @@ function Details({ d }: { d: HomeApplicationDetail }) {
           </ul>
         </section>
       )}
+      {previewDoc && <DocumentPreviewDialog doc={previewDoc} onClose={() => setPreviewDoc(null)} />}
     </div>
   );
 }

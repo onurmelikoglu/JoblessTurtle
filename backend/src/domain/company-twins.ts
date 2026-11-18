@@ -139,3 +139,26 @@ export function findTwins(profiles: TwinProfile[]): { a: TwinProfile; b: TwinPro
 }
 
 export const twinPairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+
+/**
+ * Henüz kaydedilmemiş bir firmanın kayıtlı firmalar arasındaki en olası ikizi: kesin eşleşme olası olandan önce gelir,
+ * eşit düzeyde daha çok gerekçesi olan seçilir. Yalnız aynı ilk ad sözcüğünü ya da alan adı kökünü paylaşanlara bakılır.
+ */
+export function bestTwinFor(candidate: TwinProfile, existing: TwinProfile[]): { profile: TwinProfile; verdict: NonNullable<TwinVerdict> } | null {
+  const core = strictCoreOf(candidate.name);
+  const first = core.split(' ')[0];
+  const roots = ownRootsOf(candidate);
+  let best: { profile: TwinProfile; verdict: NonNullable<TwinVerdict> } | null = null;
+  for (const profile of existing) {
+    const otherCore = strictCoreOf(profile.name);
+    const sameBucket = (!!first && otherCore.split(' ')[0] === first) || intersects(roots, ownRootsOf(profile));
+    if (!sameBucket) continue;
+    // Yeni kayıtta yalnızca sorulur, birleştirilmez: adlardan biri diğerinin devamıysa ("ornektas stone" ↔ "ornektas stone dogal tas")
+    // ortak kanıt olmasa da olası sayılır.
+    const verdict = twinVerdict(candidate, profile) ?? (!!core && !!otherCore && tokenPrefix(core, otherCore) ? { level: 'likely' as const, reasons: ['Adlardan biri diğerinin devamı'] } : null);
+    if (!verdict) continue;
+    const better = !best || (verdict.level === 'certain' && best.verdict.level !== 'certain') || (verdict.level === best.verdict.level && verdict.reasons.length > best.verdict.reasons.length);
+    if (better) best = { profile, verdict };
+  }
+  return best;
+}

@@ -1,4 +1,4 @@
-import { CircleCheck, FileText, Upload } from 'lucide-react';
+import { CircleCheck, Eye, FileText, Upload } from 'lucide-react';
 import { useRef } from 'react';
 import { Button } from '@/ui/Button';
 import { Spinner } from '@/ui/Spinner';
@@ -10,9 +10,11 @@ interface DocumentRowProps {
   uploading: boolean;
   disabled: boolean;
   onPick: (file: File) => void;
+  /** Yüklü ve taranmış dosya uygulama içinde önizlenir. */
+  onPreview?: () => void;
 }
 
-export function DocumentRow({ label, document, uploading, disabled, onPick }: DocumentRowProps) {
+export function DocumentRow({ label, document, uploading, disabled, onPick, onPreview }: DocumentRowProps) {
   const input = useRef<HTMLInputElement>(null);
   const status = uploading ? 'Yükleniyor ve güvenlik taramasından geçiriliyor…' : !document ? 'Henüz yüklenmedi' : `${document.fileName}${document.scanState === 'clean' ? '' : ' · taranıyor'}`;
   return (
@@ -37,6 +39,11 @@ export function DocumentRow({ label, document, uploading, disabled, onPick }: Do
           if (file) onPick(file);
         }}
       />
+      {onPreview && document?.scanState === 'clean' && !uploading && (
+        <Button variant="ghost" size="sm" icon={<Eye className="size-4" aria-hidden />} onClick={onPreview}>
+          Önizle
+        </Button>
+      )}
       <Button variant="outline" size="sm" icon={<Upload className="size-4" aria-hidden />} disabled={disabled || uploading} onClick={() => input.current?.click()}>
         {uploading ? 'Yükleniyor…' : document ? 'Yenisini yükle' : 'Yükle'}
       </Button>

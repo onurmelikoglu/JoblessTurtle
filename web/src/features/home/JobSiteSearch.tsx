@@ -4,7 +4,7 @@ import { extensionApi } from '@/api/extension';
 import type { ExtensionSearch } from '@/api/types';
 import { extensionVersion, openAllUrls, SEARCH_SOURCES, searchesOf, searchLabel } from '@/features/shared/extension-model';
 import { Button } from '@/ui/Button';
-import { Menu } from '@/ui/Menu';
+import { Menu, type MenuEntry } from '@/ui/Menu';
 import { toast } from '@/ui/toast';
 
 const SEARCHES_QUERY = ['extension', 'searches'] as const;
@@ -36,43 +36,33 @@ function openAll(urls: string[]) {
 
 /**
  * Profildeki unvan ve şehirlerle Kariyer.net / Indeed araması yeni sekmede açılır. Tarayıcı eklentisi kuruluysa o
- * sekmedeki sonuç sayfaları kendiliğinden aktarılır (adresin sonundaki #jt-import).
+ * sekmedeki sonuç sayfaları kendiliğinden aktarılır (adresin sonundaki #jt-import). Firmalar çubuğunda yer kaplamasın
+ * diye tek menü düğmesidir.
  */
 export function JobSiteSearch() {
   const searches = useQuery({ queryKey: SEARCHES_QUERY, queryFn: extensionApi.searches, staleTime: 5 * 60_000 });
   if (!searches.data?.searches.length) return null;
   const all = openAllUrls(searches.data.searches);
+  const items: MenuEntry[] = [];
+  if (all.length > 1) items.push({ label: `Hepsini aç (${all.length} sekme)`, icon: <Layers className="size-4" aria-hidden />, onSelect: () => openAll(all) });
+  for (const { source, button } of SEARCH_SOURCES) {
+    const found = searchesOf(searches.data.searches, source);
+    if (!found.length) continue;
+    if (items.length) items.push('separator');
+    items.push({ heading: button });
+    const siteUrls = openAllUrls(found);
+    if (found.length > 1) items.push({ label: `Tümünü aç (${siteUrls.length} sekme)`, icon: <Layers className="size-4" aria-hidden />, onSelect: () => openAll(siteUrls) });
+    for (const search of found) items.push({ label: searchLabel(search), icon: <ExternalLink className="size-4" aria-hidden />, onSelect: () => open(search) });
+  }
   return (
-    <div className="flex flex-wrap items-center gap-2 text-sm text-ink-soft">
-      <span title="Tarayıcı eklentisi kuruluysa açılan sekmedeki ilanlar buraya aktarılır (Profilim → Tarayıcı eklentisi)">İlan sitelerinde ara:</span>
-      {all.length > 1 && (
-        <Button variant="tonal" size="sm" icon={<Layers className="size-4" aria-hidden />} onClick={() => openAll(all)} title="Bütün pozisyon ve şehir aramaları ayrı sekmelerde açılır">
-          Hepsini aç ({all.length} sekme)
+    <Menu
+      align="end"
+      items={items}
+      trigger={
+        <Button variant="outline" icon={<ExternalLink className="size-4" aria-hidden />} aria-label="İlan sitelerinde ara" title="Tarayıcı eklentisi kuruluysa açılan sekmedeki ilanlar buraya aktarılır (Profilim → Tarayıcı eklentisi)">
+          <span className="max-sm:hidden">İlan sitelerinde ara</span>
         </Button>
-      )}
-      {SEARCH_SOURCES.map(({ source, button }) => {
-        const items = searchesOf(searches.data.searches, source);
-        if (!items.length) return null;
-        const trigger = (
-          <Button variant="outline" size="sm" icon={<ExternalLink className="size-4" aria-hidden />} onClick={items.length === 1 ? () => open(items[0]) : undefined}>
-            {button}
-          </Button>
-        );
-        if (items.length === 1) return <span key={source}>{trigger}</span>;
-        const siteUrls = openAllUrls(items);
-        return (
-          <Menu
-            key={source}
-            align="start"
-            trigger={trigger}
-            items={[
-              { label: `Tümünü aç (${siteUrls.length} sekme)`, icon: <Layers className="size-4" aria-hidden />, onSelect: () => openAll(siteUrls) },
-              'separator',
-              ...items.map((search) => ({ label: searchLabel(search), onSelect: () => open(search) })),
-            ]}
-          />
-        );
-      })}
-    </div>
+      }
+    />
   );
 }

@@ -103,22 +103,22 @@ export function buildJobQueries(profile: JobSearchProfile): JobQuery[] {
   return queries;
 }
 
-function restHours(stats: JobQueryStats) {
-  return Math.min(BASE_REST_HOURS * 2 ** stats.dry, MAX_REST_HOURS);
+function restHours(stats: JobQueryStats, baseHours = BASE_REST_HOURS) {
+  return Math.min(baseHours * 2 ** stats.dry, MAX_REST_HOURS);
 }
 
 /**
  * Sıradaki sorgular: hiç çalışmamışlar önce (aranan unvanlar, sonra yakın unvanlar); ardından dinlenmesi bitenler.
- * Yeni ilan getirmeyen sorgu her seferinde iki kat uzun dinlenir. force: kullanıcı başlattı, dinlenme süresi
+ * Yeni ilan getirmeyen sorgu her seferinde iki kat uzun dinlenir. restHours: temel dinlenme (kullanıcının arama aralığı). force: kullanıcı başlattı, dinlenme süresi
  * yalnızca son birkaç saatte çalışmış sorgular için geçerlidir.
  */
-export function pickJobQueries(queries: JobQuery[], log: JobQueryLog, opts: { count: number; now?: number; force?: boolean }): JobQuery[] {
+export function pickJobQueries(queries: JobQuery[], log: JobQueryLog, opts: { count: number; now?: number; force?: boolean; restHours?: number }): JobQuery[] {
   const now = opts.now ?? Date.now();
   const lastRun = (q: JobQuery) => (log[q.key] ? new Date(log[q.key].at).getTime() : 0);
   const due = (q: JobQuery) => {
     const stats = log[q.key];
     if (!stats) return true;
-    return now - lastRun(q) >= (opts.force ? FORCED_REST_HOURS : restHours(stats)) * HOUR_MS;
+    return now - lastRun(q) >= (opts.force ? FORCED_REST_HOURS : restHours(stats, opts.restHours)) * HOUR_MS;
   };
   return queries
     .filter(due)
@@ -220,4 +220,13 @@ export function companyNameKey(name: string): string {
   while (tokens.length > 1 && TRAILING_GENERIC.has(tokens[tokens.length - 1])) tokens.pop();
   const key = tokens.join(' ');
   return key.length >= MIN_KEY_LENGTH ? key : normalizeCompanyName(name);
+}
+
+/** Kullanıcının seçebildiği yapay zekâ ilan araması aralıkları (saat). */
+export const SEARCH_INTERVAL_HOURS = [2, 4, 8, 12, 24] as const;
+const DAILY_QUERY_TARGET = 4;
+
+/** Bir aramada çalışan sorgu: günlük toplam 24 saatlik aralıktaki 4 sorguya yakın kalır, en az 1. */
+export function queriesPerRun(everyHours: number): number {
+  return Math.max(1, Math.ceil((DAILY_QUERY_TARGET * everyHours) / 24));
 }

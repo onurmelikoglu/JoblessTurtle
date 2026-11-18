@@ -36,6 +36,8 @@ export interface QueueSendInput {
   campaignId?: string | null;
   scheduledAt?: Date | null;
   overrideCooldown?: boolean;
+  /** Otomatik gönderimde politikanın firma bekleme süresi; verilmezse 30 gün. */
+  companyCooldownDays?: number;
 }
 
 const DEFAULT_FOLLOW_UP_DAYS = 7;
@@ -43,6 +45,7 @@ const ACTIVE_STATES = ['queued', 'sending', 'provider_accepted', 'submission_unk
 const NOT_SENT_STATES = ['cancelled', 'blocked', 'failed_confirmed'];
 
 const PACING_KEY_PREFIX = 'send:pace:';
+const DEFAULT_COMPANY_COOLDOWN_DAYS = 30;
 const SEND_GAP_MIN_MS = 30_000;
 const SEND_GAP_MAX_MS = 50_000;
 const PACING_JITTER_MS = 2_000;
@@ -65,6 +68,8 @@ export class SendingService {
   /** Adres sicili yardımcı kayıttır; işlenememesi gönderimin sonucunu değiştirmez. */
   private async noteSent(attemptId: string) {
     await this.addressBook.noteSent(attemptId).catch((e) => this.logger.warn(`Adres sicili güncellenemedi (${attemptId}): ${(e as Error).message}`));
+    const attempt = await this.prisma.applicationAttempt.findUnique({ where: { id: attemptId }, select: { workspaceId: true } });
+    if (attempt) await this.outbox.emit({ workspaceId: attempt.workspaceId, eventType: 'attempt.accepted', aggregateId: attemptId, dedupKey: `attempt-accepted:${attemptId}` });
   }
 
   async isSuppressed(workspaceId: string, candidateId: string, companyId: string, email: string | null, tx?: Tx) {
@@ -169,8 +174,9 @@ export class SendingService {
     const dup = await this.prisma.applicationAttempt.findUnique({ where: { activeKey } });
     if (dup) throw new AppError(409, 'ALREADY_APPLIED', 'Bu aday bu ilana/amaca zaten başvurdu veya gönderim kuyrukta', { attemptId: dup.id, state: dup.state });
     if (draft.intentType !== 'follow_up' && !(input.overrideCooldown && COOLDOWN_OVERRIDE_MODES.includes(input.sendMode))) {
-      if (await this.companyCooldownActive(draft.candidateId, draft.companyId, 30))
-        throw new AppError(409, 'COMPANY_COOLDOWN', 'Bu firmaya son 30 gün içinde temas edildi');
+      const cooldownDays = input.sendMode === 'auto' && input.companyCooldownDays !== undefined ? input.companyCooldownDays : DEFAULT_COMPANY_COOLDOWN_DAYS;
+      if (cooldownDays > 0 && (await this.companyCooldownActive(draft.candidateId, draft.companyId, cooldownDays)))
+        throw new AppError(409, 'COMPANY_COOLDOWN', `Bu firmaya son ${cooldownDays} gün içinde temas edildi`);
     }
     if (input.sendMode === 'manual') {
       const used = await this.usage.get(input.workspaceId, `send:${account.id}`);

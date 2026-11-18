@@ -25,6 +25,11 @@ export function regionForSelection(selection: string | null | undefined): { city
 
 export const CITY_SELECTION_SEPARATOR = '; ';
 
+/** Profilde "; " ile birleştirilmiş şehir seçimleri. */
+export function citySelectionsOf(raw: string | null | undefined): string[] {
+  return (raw ?? '').split(CITY_SELECTION_SEPARATOR).map((s) => s.trim()).filter(Boolean);
+}
+
 export function regionForSelections(selections: string[]): { city: string | null; districtsPrimary: string[] } {
   const regions = selections.map((s) => regionForSelection(s)).filter((r) => r.city);
   const cities = [...new Set(regions.map((r) => r.city))];

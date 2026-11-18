@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Bell, Home, LogOut, Monitor, Moon, Sun, User, WifiOff } from 'lucide-react';
+import { Bell, Building2, Home, LogOut, Monitor, Moon, Sun, User, WifiOff } from 'lucide-react';
 import { useSyncExternalStore, type ReactNode } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { api } from '@/api/client';
@@ -39,6 +39,10 @@ function Header() {
           <NavLink to="/" end className={navClass}>
             <Home className="size-4" aria-hidden />
             <span className="max-sm:sr-only">Ana sayfa</span>
+          </NavLink>
+          <NavLink to="/sirketler" className={navClass}>
+            <Building2 className="size-4" aria-hidden />
+            <span className="max-sm:sr-only">Şirketler</span>
           </NavLink>
           <NavLink to="/profile" className={navClass}>
             <User className="size-4" aria-hidden />

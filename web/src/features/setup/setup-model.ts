@@ -23,12 +23,13 @@ export interface SetupInput {
 export const PROVIDER_NAMES: Record<string, string> = {
   cli_claude: 'Claude (aboneliğin)',
   cli_codex: 'ChatGPT (aboneliğin)',
+  cli_cursor: 'Cursor (aboneliğin)',
   anthropic_api: 'Claude API',
   openai_api: 'OpenAI API',
   ollama: 'Yerel model',
 };
 
-export const CONNECT_LABELS: Record<ConnectProvider, string> = { cli_claude: 'Claude', cli_codex: 'ChatGPT' };
+export const CONNECT_LABELS: Record<ConnectProvider, string> = { cli_claude: 'Claude', cli_codex: 'ChatGPT', cli_cursor: 'Cursor' };
 
 const PROFILE_PARTS: Record<string, string> = { profile: 'ad ve unvan', cv: 'CV', positions: 'aranan pozisyonlar' };
 

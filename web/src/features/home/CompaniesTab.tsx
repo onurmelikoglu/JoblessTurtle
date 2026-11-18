@@ -1,7 +1,7 @@
-import { BellRing, Building2, Combine, Languages, Plus, Radar, Search, Send } from 'lucide-react';
+import { BellRing, Building2, Combine, Languages, MailSearch, Plus, Radar, Search, Send } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { homeApi } from '@/api/home';
 import { useAction, useRefreshHome } from '@/api/queries';
 import type { HomeCompanies, HomeCompany, HomeOpportunity, HomeState } from '@/api/types';
@@ -19,8 +19,10 @@ import { ApplyPreviewDialog } from './ApplyPreviewDialog';
 import { BulkReviewDialog } from './BulkReviewDialog';
 import { CompanyCard, type CompanyCardActions } from './CompanyCard';
 import { activeFilterCount, filterCompanies, focusCompanies, groupByClass, isFocused, parseFilters, regionCounts, scopeCounts, sizeCounts, workModeCounts, writeFilters, type CompanyFilters, type CompanyFocus } from './company-filters';
+import { CompanyDecisionsDialog, SimilarCompanyDialog, type SimilarPrompt } from './CompanyDecisionsDialog';
+import { ContactSearchSettingsDialog } from './ContactSearchSettingsDialog';
+import { useCompanyDecisions } from './use-company-decisions';
 import { CompanyToolbar } from './CompanyToolbar';
-import { JobSiteSearch } from './JobSiteSearch';
 import { MergeWithDialog, TwinsDialog } from './MergeDialogs';
 import { ResearchProgress } from './ResearchProgress';
 import { useCompanyTwins } from './use-company-twins';
@@ -36,6 +38,7 @@ const MIN_LOOKUP_LENGTH = 2;
 const MIN_SCAN_LENGTH = 3;
 const SIZE_SEARCH_GROUP = 12;
 const FOCUS_PARAMS = [LINK_PARAMS.jobs, LINK_PARAMS.opportunities];
+const DECISIONS_PARAM = 'karar';
 
 interface CompaniesTabProps {
   data: HomeCompanies | undefined;
@@ -110,11 +113,17 @@ export function CompaniesTab({ data, state }: CompaniesTabProps) {
   const twins = useCompanyTwins();
   const [twinsOpen, setTwinsOpen] = useState(false);
   const [mergeId, setMergeId] = useState<string | null>(null);
+  const [contactSettingsOpen, setContactSettingsOpen] = useState(false);
   const afterMerge = () => {
     void twins.refetch();
     void refreshHome();
   };
   const lookups = useCompanyLookups((name) => setFilters({ ...filters, query: name }));
+  const navigate = useNavigate();
+  const decisions = useCompanyDecisions();
+  const decisionsOpen = params.get(DECISIONS_PARAM) === '1';
+  const setDecisionsOpen = (open: boolean) => setParams((current) => (open ? new URLSearchParams([...current, [DECISIONS_PARAM, '1']]) : withoutParams(current, DECISIONS_PARAM)), { replace: true });
+  const [similarPrompt, setSimilarPrompt] = useState<SimilarPrompt | null>(null);
 
   const companies = useMemo(() => data?.companies ?? [], [data]);
   const sizes = useMemo(() => sizeCounts(companies), [companies]);
@@ -211,7 +220,20 @@ export function CompaniesTab({ data, state }: CompaniesTabProps) {
     toast.info(`"${query}" için ilan aranıyor. Bulunan ilanlar birkaç dakika içinde listeye eklenir; günlük AI hakkından 1 düşer.`);
   };
 
+  const showExisting = (prompt: SimilarPrompt) => {
+    setSimilarPrompt(null);
+    if (companies.some((c) => c.id === prompt.match.id)) setFilters({ ...filters, query: prompt.match.name });
+    else navigate(`/sirketler/${prompt.match.id}`);
+  };
+
   const lookup = async () => {
+    const similar = await homeApi.similarCompany(query).catch(() => null);
+    if (similar?.match && fold(similar.match.name) !== fold(query)) return setSimilarPrompt({ query, match: similar.match });
+    await startLookup();
+  };
+
+  const startLookup = async () => {
+    setSimilarPrompt(null);
     const result = await run(() => homeApi.lookupCompany(query), { refresh: false });
     if (!result) return;
     if (result.status === 'exists') {
@@ -225,7 +247,9 @@ export function CompaniesTab({ data, state }: CompaniesTabProps) {
     onApply: (opportunity) => applyTo([opportunity]),
     onMarkApplied: (opportunity) => run(() => homeApi.markApplied(opportunity.id), { success: `${opportunity.company} Başvurularım'a taşındı` }),
     onDismiss: (opportunity) => run(() => homeApi.dismiss(opportunity.id), { success: 'Gizlendi' }),
-    onResearch: (companyId) => run(() => homeApi.researchCompany(companyId).then(() => setResearch((current) => ({ ...current, [companyId]: now }))), { success: 'Firma bilgileri aranıyor', refresh: false }),
+    onResearch: (companyId, opus = false) =>
+      run(() => homeApi.researchCompany(companyId, opus).then(() => setResearch((current) => ({ ...current, [companyId]: now }))), { success: opus ? 'Mail adresi Opus ile aranıyor' : 'Firma bilgileri aranıyor', refresh: false }),
+    onContactSearchSettings: () => setContactSettingsOpen(true),
     onSetLanguage: (companyId, language) =>
       run(() => homeApi.setCompanyLanguage(companyId, language), { success: language ? `Bu firmaya ${language === 'en' ? 'İngilizce' : 'Türkçe'} yazılacak; hazır yazılar çevriliyor` : 'Yazı dili firmaya göre otomatik seçilecek' }),
     onMergeWith: (companyId) => setMergeId(companyId),
@@ -301,6 +325,30 @@ export function CompaniesTab({ data, state }: CompaniesTabProps) {
           {twins.data!.length} çift kayıt aynı firma olabilir (ör. ilan sitelerinde farklı yazılmış ad). Kesin olanlar kendiliğinden birleşir; diğerlerine sen karar ver.
         </Notice>
       )}
+      {!focused && (decisions.data?.length ?? 0) > 0 && (
+        <Notice
+          tone="warn"
+          icon={<Building2 className="size-5 shrink-0" aria-hidden />}
+          action={
+            <Button variant="tonal" size="sm" onClick={() => setDecisionsOpen(true)}>
+              Karar ver
+            </Button>
+          }
+        >
+          {decisions.data!.reduce((sum, d) => sum + d.listingCount, 0)} ilanın firması kayıtlı bir firmaya benziyor; aynı firma mı, yeni mi diye karar verene kadar bekletiliyor.
+        </Notice>
+      )}
+      {decisionsOpen && (
+        <CompanyDecisionsDialog
+          onClose={() => setDecisionsOpen(false)}
+          onChanged={() => {
+            void decisions.refetch();
+            void refreshHome();
+          }}
+        />
+      )}
+      {contactSettingsOpen && <ContactSearchSettingsDialog onClose={() => setContactSettingsOpen(false)} />}
+      {similarPrompt && <SimilarCompanyDialog prompt={similarPrompt} onExisting={() => showExisting(similarPrompt)} onNew={() => void startLookup()} onClose={() => setSimilarPrompt(null)} />}
       {twinsOpen && <TwinsDialog twins={twins.data ?? []} onClose={() => setTwinsOpen(false)} onChanged={afterMerge} />}
       {mergeId && companies.find((c) => c.id === mergeId) && <MergeWithDialog company={companies.find((c) => c.id === mergeId)!} companies={companies} onClose={() => setMergeId(null)} onChanged={afterMerge} />}
       {data.totals.truncated && (
@@ -322,7 +370,6 @@ export function CompaniesTab({ data, state }: CompaniesTabProps) {
       {!focused && (
         <>
           <CompanyToolbar filters={filters} onChange={setFilters} totals={data.totals} regionLabels={data.regionFilters ?? []} regions={regions} workModes={workModes} sizes={sizes} scopes={scopes} shown={filtered.length} busy={busy} onFindSizes={findSizes} />
-          <JobSiteSearch />
           {lookupRow}
         </>
       )}
@@ -341,6 +388,11 @@ export function CompaniesTab({ data, state }: CompaniesTabProps) {
                 {batch.data && <span className="text-xs">Son araştırma: {foundSummary(batch.data)}</span>}
               </span>
             )
+          )}
+          {missingEmail.length > 0 && (
+            <Button variant="ghost" size="sm" disabled={busy} icon={<MailSearch className="size-4" aria-hidden />} onClick={() => setContactSettingsOpen(true)} title="Bulunamayan mail adresleri ne zaman, hangi modelle yeniden aranır">
+              Adres araması ayarları
+            </Button>
           )}
           {chosen.size > 0 && (
             <Button variant="primary" size="sm" className="ml-auto" disabled={busy} icon={<Send className="size-4" aria-hidden />} onClick={() => applyTo(selectable.filter((o) => chosen.has(o.id)))}>

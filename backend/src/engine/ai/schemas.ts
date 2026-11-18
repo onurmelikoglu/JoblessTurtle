@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const AI_KINDS = ['title_analysis', 'title_expansion', 'cv_facts', 'letter_template', 'letter_company_line', 'company_contacts', 'contact_review', 'company_report', 'company_discovery', 'company_lookup', 'company_sizes', 'job_search', 'job_alert', 'mail_draft', 'mail_translate', 'reply_classification', 'inbound_review', 'inbound_fix', 'follow_up', 'interview_extract'] as const;
+export const AI_KINDS = ['title_analysis', 'title_expansion', 'cv_facts', 'letter_template', 'letter_company_line', 'company_contacts', 'contact_review', 'company_report', 'company_discovery', 'company_lookup', 'company_sizes', 'job_search', 'job_alert', 'mail_draft', 'mail_translate', 'reply_classification', 'inbound_review', 'inbound_fix', 'follow_up', 'interview_extract', 'cv_structure', 'job_ats_profile', 'cv_ats_rewrite', 'cv_layout'] as const;
 export type AiKind = (typeof AI_KINDS)[number];
 
 export const AI_KIND_LABELS: Record<AiKind, string> = {
@@ -24,6 +24,10 @@ export const AI_KIND_LABELS: Record<AiKind, string> = {
   inbound_fix: 'Hatalı başvuruyu düzeltme',
   follow_up: 'Takip önerisi',
   interview_extract: 'Mülâkat davetinden tarih çıkarma',
+  cv_structure: 'CV’yi yapısal hâle getirme',
+  job_ats_profile: 'İlanın ATS gereksinimleri',
+  cv_ats_rewrite: 'CV’yi ilana göre iyileştirme (ATS)',
+  cv_layout: 'CV tasarımını şablona aktarma',
 };
 
 export const titleExpansionOutput = z.object({
@@ -309,6 +313,52 @@ export const interviewExtractOutput = z.object({
   note: z.string().max(300).nullable().optional(),
 });
 
+const shortText = (max: number) => z.string().trim().max(max);
+const termList = (max: number) => z.array(z.string().trim().min(1).max(80)).max(max).default([]);
+
+export const structuredCvSchema = z.object({
+  name: shortText(120).min(1),
+  title: shortText(160).nullable().optional(),
+  contact: z
+    .object({ email: shortText(200).nullable().optional(), phone: shortText(60).nullable().optional(), location: shortText(160).nullable().optional(), links: z.array(shortText(300)).max(8).default([]) })
+    .default({ links: [] }),
+  summary: shortText(1500).nullable().optional(),
+  experience: z
+    .array(z.object({ company: shortText(160).min(1), role: shortText(160).min(1), location: shortText(160).nullable().optional(), period: shortText(80).default(''), bullets: z.array(shortText(400)).max(12).default([]) }))
+    .max(20)
+    .default([]),
+  education: z.array(z.object({ school: shortText(200).min(1), degree: shortText(200).nullable().optional(), period: shortText(80).nullable().optional() })).max(8).default([]),
+  skills: termList(80),
+  languages: termList(10),
+  certifications: termList(20),
+  projects: z.array(z.object({ name: shortText(160).min(1), description: shortText(500).nullable().optional() })).max(12).default([]),
+});
+
+export const cvStructureOutput = structuredCvSchema;
+
+export const jobAtsProfileOutput = z.object({
+  hardSkills: termList(25),
+  tools: termList(25),
+  softSkills: termList(10),
+  certifications: termList(10),
+  languages: termList(5),
+  minYears: z.number().min(0).max(30).nullable().optional().catch(null),
+  education: shortText(200).nullable().optional(),
+  titleKeywords: termList(6),
+});
+
+export const cvAtsRewriteOutput = z.object({
+  cv: structuredCvSchema,
+  addedSkills: termList(30),
+  notes: shortText(600).nullable().optional(),
+});
+
+export const cvLayoutOutput = z.object({
+  html: z.string().min(200).max(80_000),
+  usesPhoto: z.boolean().default(false),
+  notes: shortText(600).nullable().optional(),
+});
+
 export const OUTPUT_SCHEMAS: Record<AiKind, z.ZodTypeAny> = {
   title_analysis: titleAnalysisOutput,
   title_expansion: titleExpansionOutput,
@@ -330,6 +380,10 @@ export const OUTPUT_SCHEMAS: Record<AiKind, z.ZodTypeAny> = {
   inbound_fix: inboundFixOutput,
   follow_up: followUpOutput,
   interview_extract: interviewExtractOutput,
+  cv_structure: cvStructureOutput,
+  job_ats_profile: jobAtsProfileOutput,
+  cv_ats_rewrite: cvAtsRewriteOutput,
+  cv_layout: cvLayoutOutput,
 };
 
 /** Model çıktısından JSON nesnesini çıkarır (kod bloğu içinde veya düz metin). */

@@ -154,10 +154,11 @@ Bağlantı **Kurulum** ekranından yapılır (ilk girişte sihirbazdan sonra aç
 
 ### a) Claude ya da ChatGPT aboneliğini bağlama (yönetici)
 
-Claude Code ve Codex CLI'leri `install.sh` ile kurulan imajda hazır gelir (elle kurulumda `.env` içinde `INSTALL_AI_CLI=true`, sonra imajı yeniden derle). Hesap bağlama yalnızca sunucu yöneticisine açıktır.
+Claude Code, Codex ve Cursor CLI'leri `install.sh` ile kurulan imajda hazır gelir (elle kurulumda `.env` içinde `INSTALL_AI_CLI=true`, sonra imajı yeniden derle). Hesap bağlama yalnızca sunucu yöneticisine açıktır.
 
 - **Claude (Pro / Max):** Kurulum › Yapay zekâ bağlantısı › **Claude'u bağla** → **Claude giriş sayfasını aç** → hesabınla giriş yapıp izin ver → sayfanın sonunda verilen kodu kopyala → uygulamadaki alana yapıştırıp **Kodu gönder**. Kart "Bağlı" ve hesabın adresi görünür.
 - **ChatGPT (Plus / Pro):** **ChatGPT'yi bağla** → **ChatGPT giriş sayfasını aç** (auth.openai.com/codex/device) → ekrandaki tek kullanımlık kodu gir. Onay verince ekran kendiliğinden "Bağlı" olur. Kodu yalnızca girişi bu ekranda kendin başlattıysan gir; bir site ya da başka biri sana kod verdiyse girme.
+- **Cursor (Pro / Ultra):** **Cursor'u bağla** → **Cursor giriş sayfasını aç** → Cursor hesabınla girişi onayla; ekran kendiliğinden "Bağlı" olur. Tarayıcı girişi yerine Cursor panelinde Integrations › User API Keys bölümünden oluşturduğun anahtarı da Cursor kartındaki "Tarayıcı yerine Cursor anahtarıyla bağla" alanına girebilirsin. Cursor, Claude ve ChatGPT'den sonra yedek olarak kullanılır; web araması gereken işlerde (firma ve adres araştırması, ilan araması) ve dosya okuyan işlerde kullanılmaz.
 - Giriş bağlantısı ve kod 15 dakika geçerlidir; süre dolarsa ya da **Vazgeç** dersen yeniden başlatırsın. Aynı anda tek giriş yapılır. **Bağlantıyı kes** hesaptan çıkar.
 - Giriş komutları API konteynerinde çalışır; giriş bilgileri worker ile ortak `ai-cli-home` volume'üne (`/home/node`) yazılır, repoya ya da imaja girmez, veritabanına ve loglara kod ya da token yazılmaz. Worker bağlantı değişince sağlayıcı listesini en geç 30 saniyede tazeler.
 

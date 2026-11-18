@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, Injectable, Module, Param, Patch, Post, Query, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { ORIGINAL_VARIANT } from '../../domain/documents';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { randomUUID } from 'crypto';
 import type { Response } from 'express';
@@ -50,7 +51,7 @@ export class DocumentsService {
     const fileName = Buffer.from(file.originalname, 'latin1').toString('utf8').replace(/[^\p{L}\p{N}._ -]/gu, '_').slice(0, 120);
     const scan = scanFile(fileName, file.buffer, env().MAX_UPLOAD_MB * 1024 * 1024);
     if (!scan.ok && !scan.mime) throw new AppError(422, 'FILE_REJECTED', scan.reason ?? 'Dosya reddedildi');
-    const prev = await this.prisma.documentVersion.count({ where: { candidateId: input.candidateId, type: input.type, language: input.language } });
+    const prev = await this.prisma.documentVersion.count({ where: { candidateId: input.candidateId, type: input.type, language: input.language, variant: ORIGINAL_VARIANT } });
     const objectKey = `candidates/${input.candidateId}/${randomUUID()}`;
     if (scan.ok) await this.storage.put(objectKey, file.buffer);
     const doc = await this.prisma.documentVersion.create({

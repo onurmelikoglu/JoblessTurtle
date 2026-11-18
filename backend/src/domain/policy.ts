@@ -2,6 +2,7 @@
  * Otomatik başvuru politikası değerlendirmesi — doküman §7.
  * Saf fonksiyon: kuyruğa alma öncesi ve worker'da gönderim çağrısından hemen önce aynı kurallar çalışır.
  */
+import { selectionsMatching } from './geo';
 
 export type ReasonCode =
   | 'POLICY_INACTIVE'
@@ -29,7 +30,10 @@ export type ReasonCode =
   | 'COMPANY_COOLDOWN'
   | 'DAILY_LIMIT'
   | 'SUPPRESSED'
-  | 'ACCOUNT_UNHEALTHY';
+  | 'ACCOUNT_UNHEALTHY'
+  | 'CITY_FILTERED'
+  | 'WORK_MODE_FILTERED'
+  | 'SIZE_FILTERED';
 
 export const REASON_LABELS: Record<ReasonCode, string> = {
   POLICY_INACTIVE: 'Politika aktif değil',
@@ -58,7 +62,48 @@ export const REASON_LABELS: Record<ReasonCode, string> = {
   DAILY_LIMIT: 'Günlük gönderim limiti doldu',
   SUPPRESSED: 'Kara liste / iletişime geçmeyin kaydı',
   ACCOUNT_UNHEALTHY: 'Gönderici hesabı geçersiz',
+  CITY_FILTERED: 'İlanın şehri otomatik başvuru şehirlerinde değil',
+  WORK_MODE_FILTERED: 'Çalışma şekli otomatik başvuru seçiminde değil',
+  SIZE_FILTERED: 'Firmanın çalışan sayısı otomatik başvuru seçiminde değil',
 };
+
+export interface AutoApplyFilters {
+  filterCities: string[];
+  filterWorkModes: string[];
+  filterSizes: string[];
+  includeUnknownWorkMode: boolean;
+  includeUnknownSize: boolean;
+}
+
+export interface FilterSubject {
+  /** İlanın konum metni (şehir, ilçe ya da adres); yoksa null. */
+  place: string | null;
+  /** İlanda yazan çalışma şekli; yazmıyorsa 'unknown'. */
+  workMode: string;
+  employeeRange: string | null;
+}
+
+const KNOWN_WORK_MODES = ['onsite', 'hybrid', 'remote'];
+
+/**
+ * Kullanıcının otomatik başvuru filtreleri. Boş liste "hepsi" demektir. Uzaktan ilan şehir filtresine takılmaz; konumu
+ * bilinmeyen ilan şehir filtresine de takılmaz (onu konum kuralı ayrıca değerlendirir).
+ */
+export function filterReasons(filters: AutoApplyFilters, subject: FilterSubject, intent: 'job_application' | 'general_intent'): ReasonCode[] {
+  const reasons: ReasonCode[] = [];
+  if (intent === 'job_application') {
+    const remote = subject.workMode === 'remote';
+    if (filters.filterCities.length && !remote && subject.place?.trim() && selectionsMatching(filters.filterCities, subject.place).length === 0) reasons.push('CITY_FILTERED');
+    if (filters.filterWorkModes.length) {
+      const known = KNOWN_WORK_MODES.includes(subject.workMode);
+      if (known ? !filters.filterWorkModes.includes(subject.workMode) : !filters.includeUnknownWorkMode) reasons.push('WORK_MODE_FILTERED');
+    }
+  }
+  if (filters.filterSizes.length) {
+    if (subject.employeeRange ? !filters.filterSizes.includes(subject.employeeRange) : !filters.includeUnknownSize) reasons.push('SIZE_FILTERED');
+  }
+  return reasons;
+}
 
 export interface PolicyInput {
   policy: {
@@ -90,6 +135,9 @@ export interface PolicyInput {
   dailyLimitReached: boolean;
   suppressed: boolean;
   accountHealthy: boolean;
+  /** Verilmezse kullanıcı filtreleri uygulanmaz (eski politika girdileri). */
+  filters?: AutoApplyFilters;
+  subject?: FilterSubject;
   now: Date;
   freshnessMinutes?: number;
   /** Kuyruğa alma aşamasında tazelik kontrolü worker'a bırakılır. */
@@ -142,5 +190,6 @@ export function evaluatePolicy(i: PolicyInput): PolicyDecision {
   if (i.companyCooldownActive) r.push('COMPANY_COOLDOWN');
   if (i.dailyLimitReached) r.push('DAILY_LIMIT');
   if (i.suppressed && !r.includes('SUPPRESSED')) r.push('SUPPRESSED');
+  if (i.filters && i.subject) r.push(...filterReasons(i.filters, i.subject, i.intent));
   return { eligible: r.length === 0, reasons: r };
 }
