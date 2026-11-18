@@ -14,6 +14,8 @@ interface IndeedResult {
   jobLocationCity?: string;
   jobLocationState?: string;
   remoteLocation?: boolean;
+  /** "remote" etiketi: ilanın çalışma şekli ("Uzaktan", "Hibrit çalışma"); 26 Ekim 2026'da gömülü veride görüldü. */
+  taxonomyAttributes?: { label?: string; attributes?: { label?: string }[] }[];
   jobTypes?: string[];
   pubDate?: number;
   formattedRelativeTime?: string;
@@ -59,6 +61,13 @@ export function indeedLocation(result: Pick<IndeedResult, 'formattedLocation' | 
   return `${province} - ${text}`;
 }
 
+/** Gömülü verideki çalışma şekli: "remote" etiketinin değerleri; yoksa yalnızca uzaktan bayrağı. */
+export function indeedWorkMode(r: Pick<IndeedResult, 'remoteLocation' | 'taxonomyAttributes'>): string | null {
+  const labels = r.taxonomyAttributes?.find((t) => t.label === INDEED.remoteAttribute)?.attributes?.map((a) => a.label?.trim()).filter(Boolean) ?? [];
+  if (labels.length) return labels.join(', ');
+  return r.remoteLocation ? 'Uzaktan' : null;
+}
+
 function fromResult(r: IndeedResult): RawCard {
   const at = typeof r.pubDate === 'number' && r.pubDate > 0 ? new Date(r.pubDate) : null;
   return {
@@ -70,7 +79,7 @@ function fromResult(r: IndeedResult): RawCard {
     companyUrl: r.companyOverviewLink ?? null,
     description: r.snippet ? stripHtml(r.snippet) : null,
     employmentType: r.jobTypes?.length ? r.jobTypes.join(', ') : null,
-    workModeText: r.remoteLocation ? 'Uzaktan' : null,
+    workModeText: indeedWorkMode(r),
     publishedAt: at && !Number.isNaN(at.getTime()) ? at : null,
     publishedText: r.formattedRelativeTime ?? null,
   };

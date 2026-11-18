@@ -1,4 +1,4 @@
-import { detectLocation, evaluateLocation, regionForSelection, regionForSelections } from '../../src/domain/geo';
+import { detectLocation, evaluateLocation, ISTANBUL_UNSPECIFIED_SIDE, regionFilterLabels, regionForSelection, regionForSelections, selectionsMatching } from '../../src/domain/geo';
 import { classifyTitle, normalizeTitle } from '../../src/domain/titles';
 
 const rules = {
@@ -82,5 +82,28 @@ describe('Çoklu şehir seçimi', () => {
     const sides = regionForSelections(['İstanbul (Anadolu Yakası)', 'İstanbul (Avrupa Yakası)']);
     expect(sides.city).toBe('İstanbul');
     expect(sides.districtsPrimary).toEqual(expect.arrayContaining(['Kadıköy', 'Beşiktaş']));
+  });
+});
+
+describe('Seçim başına bölge eşleşmesi', () => {
+  const selections = ['İstanbul (Avrupa Yakası)', 'İstanbul (Anadolu Yakası)', 'Kocaeli'];
+
+  it('yakalar ayrı ayrı eşleşir', () => {
+    expect(selectionsMatching(selections, 'Maslak, Sarıyer, İstanbul')).toEqual(['İstanbul (Avrupa Yakası)']);
+    expect(selectionsMatching(selections, 'Kozyatağı')).toEqual(['İstanbul (Anadolu Yakası)']);
+    expect(selectionsMatching(selections, 'Gebze, Kocaeli')).toEqual(['Kocaeli']);
+    expect(selectionsMatching(selections, 'Ankara')).toEqual([]);
+    expect(selectionsMatching(selections, null)).toEqual([]);
+  });
+
+  it('ilçesiz İstanbul, yaka seçiliyken "yaka belirsiz" olur', () => {
+    expect(selectionsMatching(selections, 'İstanbul')).toEqual([ISTANBUL_UNSPECIFIED_SIDE]);
+    expect(regionFilterLabels(selections)).toEqual([...selections, ISTANBUL_UNSPECIFIED_SIDE]);
+  });
+
+  it('bütün İstanbul seçimi ilçe adını da kapsar', () => {
+    expect(selectionsMatching(['İstanbul'], 'Kadıköy')).toEqual(['İstanbul']);
+    expect(selectionsMatching(['İstanbul'], 'İstanbul')).toEqual(['İstanbul']);
+    expect(regionFilterLabels(['İstanbul', 'İstanbul (Avrupa Yakası)'])).toEqual(['İstanbul', 'İstanbul (Avrupa Yakası)']);
   });
 });

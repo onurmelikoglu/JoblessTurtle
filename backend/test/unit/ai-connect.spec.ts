@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
 import { AiService } from '../../src/engine/ai/ai.service';
-import { AiConnectService, lastLines, parseClaudeStatus, parseCodexStatus, parseLoginPrompt, redactSecrets, stripAnsi } from '../../src/modules/ai/ai-connect.service';
+import { AiConnectService, lastLines, parseClaudeStatus, parseSetupToken, parseCodexStatus, parseLoginPrompt, redactSecrets, stripAnsi } from '../../src/modules/ai/ai-connect.service';
 
 interface FakeChild extends EventEmitter {
   stdout: PassThrough;
@@ -41,7 +41,16 @@ function fakeSpawner(script: (args: string[], child: FakeChild) => void) {
 
 /** Bağlantı değişince worker'a verilen sinyal sayılır; veritabanı gerekmez. */
 function newService() {
-  const ai = { changes: 0, markProvidersChanged: async () => void ai.changes++ };
+  const ai = {
+    changes: 0,
+    token: null as string | null,
+    markProvidersChanged: async () => void ai.changes++,
+    claudeTokenStatus: async () => (ai.token ? { last4: ai.token.slice(-4), savedAt: new Date(), expiresAt: new Date(Date.now() + 365 * 86_400_000) } : null),
+    saveClaudeToken: async (token: string | null) => {
+      ai.token = token;
+      return ai.claudeTokenStatus();
+    },
+  };
   return Object.assign(new AiConnectService(ai as unknown as AiService), { aiStub: ai });
 }
 
@@ -61,7 +70,10 @@ describe('yapay zekâ hesabı bağlama: çıktı çözümleme', () => {
   });
 
   it('durum çıktıları', () => {
-    expect(parseClaudeStatus('{"loggedIn":true,"email":"a@b.c","subscriptionType":"pro"}')).toEqual({ connected: true, account: 'a@b.c', plan: 'pro' });
+    expect(parseClaudeStatus('{"loggedIn":true,"email":"a@b.c","subscriptionType":"pro"}')).toEqual({ connected: true, account: 'a@b.c', plan: 'pro', sessionExpiresAt: null });
+    expect(parseClaudeStatus('{"loggedIn":true,"loginExpiresAt":"2026-12-01T10:00:00.000Z"}').sessionExpiresAt?.toISOString()).toBe('2026-12-01T10:00:00.000Z');
+    expect(parseSetupToken(`Your token:\n\x1b[1msk-ant-oat01-AbCdEfGhIjKlMnOpQrStUvWxYz0123\x1b[0m\nStore it safely`)).toBe('sk-ant-oat01-AbCdEfGhIjKlMnOpQrStUvWxYz0123');
+    expect(parseSetupToken('Login failed')).toBeNull();
     expect(parseClaudeStatus('{"loggedIn":false}').connected).toBe(false);
     expect(parseClaudeStatus('Not logged in').connected).toBe(false);
     expect(parseCodexStatus(0, 'Logged in using ChatGPT\n')).toEqual({ connected: true, account: null, plan: 'ChatGPT' });
@@ -204,5 +216,27 @@ describe('yapay zekâ hesabı bağlama: giriş akışı', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('Claude kalıcı bağlantı: setup-token akışının verdiği belirteç saklanır, oturum düşse de bağlı görünür', async () => {
+    const fake = fakeSpawner((args, child) => {
+      if (args[0] === '--version') return finish(child, '2.5.0 (Claude Code)');
+      if (args.join(' ') === 'auth status --json') return finish(child, JSON.stringify({ loggedIn: false }), 1);
+      if (args.join(' ') === 'setup-token') {
+        child.stdout.write(`Open this URL\n${CLAUDE_URL}\nPaste code here if prompted > `);
+        child.stdin.on('data', () => finish(child, 'Long-lived token created:\nsk-ant-oat01-AbCdEfGhIjKlMnOpQrStUvWxYz0123\n'));
+      }
+    });
+    const svc = newService();
+    svc.spawner = fake.spawner;
+    const started = await svc.start('cli_claude', 'long_lived');
+    expect(started.login).toMatchObject({ phase: 'waiting', mode: 'long_lived', needsCode: true });
+    const done = await svc.submitCode('cli_claude', 'kod');
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(svc.aiStub.token).toBe('sk-ant-oat01-AbCdEfGhIjKlMnOpQrStUvWxYz0123');
+    const after = await svc.status('cli_claude', true);
+    expect(after).toMatchObject({ connected: true, longLived: { last4: '0123' }, login: null });
+    expect(done.login === null || done.connected).toBe(true);
+    await expect(svc.start('cli_codex', 'long_lived')).rejects.toMatchObject({ code: 'LONG_LIVED_UNSUPPORTED' });
   });
 });

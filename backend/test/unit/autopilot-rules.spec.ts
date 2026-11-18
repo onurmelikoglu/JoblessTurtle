@@ -161,8 +161,8 @@ describe('yapay zekâ öncelik sınıfları', () => {
     const resetsAt = new Date(NOW + 3_600_000).toISOString();
     const open = (utilization: number) => AI_CLASSES.filter((cls) => utilizationAllows(cls, [{ name: 'five_hour', utilization, resetsAt }], NOW));
     expect(open(0.5)).toEqual([...AI_CLASSES]);
-    expect(open(0.65)).toEqual(['interactive', 'fix', 'letters', 'research']);
-    expect(open(0.75)).toEqual(['interactive', 'fix', 'letters']);
+    expect(open(0.65)).toEqual(['interactive', 'enrich', 'fix', 'letters', 'research']);
+    expect(open(0.75)).toEqual(['interactive', 'enrich', 'fix', 'letters']);
     expect(open(0.85)).toEqual(['interactive', 'fix']);
     expect(open(0.89)).toEqual(['interactive']);
     expect(open(0.95)).toEqual([]);

@@ -2,11 +2,11 @@ import { RawCard } from '../../../domain/scraped-jobs';
 import { SECRETCV } from '../selectors/secretcv';
 import { ParsedPage } from '../types';
 import { assertReadable, readBrowserPayload } from './browser-payload';
-import { secretcvDate } from './secretcv.parser';
+import { secretcvDate, secretcvLocation } from './secretcv.parser';
 
 /**
  * Secretcv sonuç sayfasını kullanıcının tarayıcısında okuyan betik; sunucudaki ayrıştırıcıyla aynı selector'lar.
- * Kartlar: [bağlantı, başlık, firma, konum, ilan tarihi]. Sonraki sayfa: "sf" parametresi bir fazla olan bağlantı.
+ * Kartlar: [bağlantı, başlık, firma, konum, ilan tarihi, ilçe]. Sonraki sayfa: "sf" parametresi bir fazla olan bağlantı.
  */
 export const SECRETCV_BROWSER_SCRIPT = `(() => {
   const S = ${JSON.stringify(SECRETCV.selectors)};
@@ -17,7 +17,7 @@ export const SECRETCV_BROWSER_SCRIPT = `(() => {
   const text = (el) => (el ? el.textContent.replace(/\\s+/g, ' ').trim() : '') || null;
   const cards = [...document.querySelectorAll(S.card)].map((el) => {
     const link = el.querySelector(S.title);
-    return [link ? link.getAttribute('href') : null, text(link), text(el.querySelector(S.company)), text(el.querySelector(S.location)), text(el.querySelector(S.date))];
+    return [link ? link.getAttribute('href') : null, text(link), text(el.querySelector(S.company)), text(el.querySelector(S.location)), text(el.querySelector(S.date)), text(el.querySelector(S.district))];
   });
   const current = Number(new URLSearchParams(location.search).get(PAGE)) || 1;
   const next = [...document.querySelectorAll('a[href]')].some((a) => {
@@ -37,8 +37,8 @@ export function secretcvFromBrowser(payload: unknown, url: string): ParsedPage {
   const data = readBrowserPayload(payload, 'secretcv', url);
   assertReadable(data, url, `İlan listesi bulunamadı (${SECRETCV.selectors.card}); sayfa düzeni değişmiş olabilir`);
   const cards: RawCard[] = data.cards.map((row) => {
-    const [href, title, company, location, date] = row.map(str);
-    return { platformId: href?.split(/[?#]/)[0].match(SECRETCV.listingId)?.[1] ?? null, title, company, location, url: href, publishedText: secretcvDate(date) };
+    const [href, title, company, city, date, district] = row.map(str);
+    return { platformId: href?.split(/[?#]/)[0].match(SECRETCV.listingId)?.[1] ?? null, title, company, location: secretcvLocation(city, district), url: href, publishedText: secretcvDate(date) };
   });
   return { cards, hasNextPage: data.next };
 }

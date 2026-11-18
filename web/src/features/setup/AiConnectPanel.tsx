@@ -101,6 +101,36 @@ function LoginSteps({ connection, busy, onCode, onCancel }: { connection: Connec
   );
 }
 
+/** Kendi bilgisayarında `claude setup-token` ile üretilen bir yıllık belirteç buraya yapıştırılır. */
+function ClaudeTokenForm({ busy, onSave }: { busy: boolean; onSave: (token: string) => void }) {
+  const [token, setToken] = useState('');
+  return (
+    <details className="rounded-lg border border-line p-3">
+      <summary className="cursor-pointer text-sm font-medium">Belirteci kendim üreteyim</summary>
+      <form
+        className="mt-3 flex flex-col gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (token.trim()) onSave(token.trim());
+          setToken('');
+        }}
+      >
+        <p className="text-xs text-ink-soft">
+          Claude Code kurulu bir bilgisayarda terminalde <code className="rounded bg-sunken px-1">claude setup-token</code> çalıştır; tarayıcıda onayladıktan sonra çıkan sk-ant-oat… ile başlayan değeri buraya yapıştır. Belirteç şifreli saklanır ve bir daha gösterilmez.
+        </p>
+        <div className="flex flex-wrap items-end gap-2">
+          <Field label="Claude belirteci" className="min-w-0 flex-1 basis-60">
+            {(props) => <Input {...props} type="password" autoComplete="off" spellCheck={false} placeholder="sk-ant-oat01-…" value={token} onChange={(e) => setToken(e.target.value)} />}
+          </Field>
+          <Button type="submit" variant="outline" loading={busy} disabled={!token.trim()} icon={<KeyRound className="size-4" aria-hidden />}>
+            Kaydet
+          </Button>
+        </div>
+      </form>
+    </details>
+  );
+}
+
 function ConnectionCard({ connection }: { connection: ConnectStatus }) {
   const { busy, run } = useAction();
   const refresh = useRefreshAiSetup();
@@ -110,6 +140,12 @@ function ConnectionCard({ connection }: { connection: ConnectStatus }) {
   const act = async (fn: () => Promise<ConnectStatus>, success?: (result: ConnectStatus) => string | null) => {
     await run(fn, { refresh: false, success });
     await refresh();
+  };
+  const isClaude = connection.provider === 'cli_claude';
+  const startLongLived = () => act(() => aiSetupApi.startLogin('cli_claude', 'long_lived'));
+  const removeToken = async () => {
+    if (!(await confirm({ title: 'Kalıcı Claude belirteci kaldırılsın mı?', message: 'Tarayıcı girişi varsa o kullanılır; yoksa Claude işleri durur.', confirmLabel: 'Kaldır', danger: true }))) return;
+    await act(() => aiSetupApi.removeClaudeToken(), () => 'Kalıcı belirteç kaldırıldı');
   };
   const disconnect = async () => {
     if (!(await confirm({ title: `${label} bağlantısı kesilsin mi?`, message: 'Yapay zekâ işleri sıradaki sağlayıcıyla (ya da kopyala-yapıştırla) sürer. İstediğin zaman yeniden bağlayabilirsin.', confirmLabel: 'Bağlantıyı kes', danger: true }))) return;
@@ -128,18 +164,38 @@ function ConnectionCard({ connection }: { connection: ConnectStatus }) {
           <p className="text-sm break-words text-ink-soft">{connectionSummary(connection)}</p>
         </div>
         {connection.installed && !loginInProgress(login) && (
-          connection.connected ? (
-            <Button size="sm" variant="ghost" disabled={busy} icon={<LogOut className="size-4" aria-hidden />} onClick={() => void disconnect()}>
-              Bağlantıyı kes
-            </Button>
-          ) : (
-            <Button size="sm" variant="primary" loading={busy} onClick={() => void act(() => aiSetupApi.startLogin(connection.provider))}>
-              {CONNECT_ACTIONS[connection.provider]}
-            </Button>
-          )
+          <span className="flex flex-wrap gap-2">
+            {isClaude && !connection.longLived && (
+              <Button size="sm" variant={connection.connected ? 'tonal' : 'primary'} loading={busy} icon={<KeyRound className="size-4" aria-hidden />} onClick={() => void startLongLived()}>
+                Kalıcı bağla (1 yıl)
+              </Button>
+            )}
+            {isClaude && connection.longLived && (
+              <Button size="sm" variant="ghost" disabled={busy} icon={<Trash2 className="size-4" aria-hidden />} onClick={() => void removeToken()}>
+                Belirteci kaldır
+              </Button>
+            )}
+            {connection.connected && !connection.longLived ? (
+              <Button size="sm" variant="ghost" disabled={busy} icon={<LogOut className="size-4" aria-hidden />} onClick={() => void disconnect()}>
+                Bağlantıyı kes
+              </Button>
+            ) : (
+              !connection.connected && (
+                <Button size="sm" variant={isClaude ? 'ghost' : 'primary'} loading={busy} onClick={() => void act(() => aiSetupApi.startLogin(connection.provider))}>
+                  {isClaude ? 'Tarayıcıyla bağla' : CONNECT_ACTIONS[connection.provider]}
+                </Button>
+              )
+            )}
+          </span>
         )}
       </div>
       {!connection.installed && <p className="text-xs text-ink-soft">{CLI_MISSING_HINT}</p>}
+      {isClaude && connection.installed && !connection.longLived && !loginInProgress(login) && (
+        <>
+          <p className="text-xs text-ink-soft">Tarayıcıyla bağlantı birkaç haftada bir düşer. "Kalıcı bağla" aboneliğinle bir yıl geçerli bir belirteç oluşturur; Claude işleri kesintisiz sürer. Bitişine üç gün kala uyarı gelir.</p>
+          <ClaudeTokenForm busy={busy} onSave={(token) => void act(() => aiSetupApi.saveClaudeToken(token), () => 'Kalıcı Claude belirteci kaydedildi')} />
+        </>
+      )}
       {login && loginInProgress(login) && (
         <LoginSteps
           connection={connection}

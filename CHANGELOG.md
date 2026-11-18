@@ -2,6 +2,16 @@
 
 ## Yayımlanmamış (dev)
 
+### İlan ayrıntıları: çalışma şekli (ilanda yoksa tahmini), sektör, ilçe ve adres
+
+- **Çalışma şekli.** İlan sitelerinden gelen ilanlarda ilanda yazan çalışma şekli okunur: Kariyer.net ve Yenibiriş alanı, Indeed'in "Hibrit çalışma" / "Uzaktan" etiketi (önceden yalnızca uzaktan bayrağı), konum metni ya da unvan ("Remote …", "(Hibrit)"). "Kısmen uzaktan" artık hibrit sayılır. Yazmıyorsa tahmin edilir (açıklamadaki ifade, mahalle/cadde adresi, unvanın iş türü; hiçbiri yoksa iş yerinde). Tahmin süzgeçlere girmez: uzaktan ve şehir süzgeci yalnızca ilanda yazanı kullanır, böylece tahmin yüzünden ilan elenmez ya da yanlış şehre gitmez.
+- **Arayüz.** Firma kartındaki ilan satırında rozet: "İş yerinde", "Hibrit", "Uzaktan"; tahminse "(tahmini)" eki ve açıklama. Adresi bilinen ilanda ilçe ve mahalle satırı. Mevcut ilanlar da tahmin alır (okunurken hesaplanır).
+- **Yeni alanlar.** Kariyer.net firma sektörü (yeni keşfedilen firmanın sektörlerine yazılır), İşin Olsun mahallesi, Secretcv ilçesi (önceden okunmuyordu). İlan sitelerinin kısa açıklaması (Eleman.net, Indeed) çalışma alanındaki ilana da geçer.
+- **Çalışan sayısı.** Hiçbir sitenin herkese açık sayfasında yok (bkz. `docs/SCRAPERS.md`); firmanın çalışan sayısı eskisi gibi firma araştırmasından gelir.
+- **API.** `GET /api/v1/scrapers/jobs` öğelerinde yeni: `work_mode_estimate`, `company_sector`, `address`. `GET /api/v1/home/opportunities` öğelerinde yeni: `workMode`, `workModeEstimated`, `address`.
+- **Tarayıcı eklentisi 1.5.0.** Kariyer.net sektörü, Indeed çalışma şekli etiketi ve Secretcv ilçesi okunur. Eski sürüm eklentinin gönderdiği sayfalar da okunmaya devam eder (yeni alanlar boş kalır).
+- **Geçiş.** Veritabanı değişikliği: `ScrapedJob.companySector`, `ScrapedJob.address`, `Job.address` (boş sütun ekleme, `prisma migrate deploy`). Sektör ve adres boş kayıtların içerik özeti değişmez; ilk taramada yalnızca yeni bilgi gelen ilanlar "güncellendi" sayılır. API, worker ve web birlikte güncellenir; eklentiyi `chrome://extensions` sayfasında yenile.
+
 ### Tek komutla kurulum ve hazır imajlar
 
 - **`install.sh`.** `curl -fsSL https://raw.githubusercontent.com/onurmelikoglu/JoblessTurtle/main/install.sh | bash` ya da klasörde `./install.sh`. Docker'ı kontrol eder, `.env`'i gizli anahtarları rastgele üreterek oluşturur (var olan `.env`'e dokunmaz), boş port seçer, hazır imajları indirir (indirilemezse yerelde derler), başlatır ve tarayıcıda açar. `update`, `status`, `stop` komutları; `JT_PORT`, `JT_DIR`, `JT_BUILD`, `JT_NO_OPEN`, `JT_YES` ayarları.

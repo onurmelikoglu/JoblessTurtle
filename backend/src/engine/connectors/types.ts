@@ -7,6 +7,8 @@ export interface RawListing {
   title: string;
   url?: string | null;
   locationText?: string | null;
+  /** İl ve ilçeden ayrıntılı adres (mahalle, cadde); ilan sitesinde varsa. */
+  address?: string | null;
   description?: string | null;
   postedAt?: Date | null;
   updatedAt?: Date | null;

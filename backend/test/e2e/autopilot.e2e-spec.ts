@@ -205,6 +205,8 @@ describe('otopilot: "Otomatik başvur" açıkken geri dönen başvuru kendiliği
     const ai = aiAnswers(() => ({ contacts: [{ email: 'ik@arayan.example', sourceUrl: 'https://arayan.example/kariyer', purpose: 'hr' }], offices: [] }));
     await clearPacing();
     await autopilot.onInbound(message.id);
+    expect(await actionOf(message.id)).toMatchObject({ step: 'research', state: 'running' });
+    await h.worker.drain();
     expect(ai.mock.calls.map((c) => c[0].kind)).toEqual(['company_contacts', 'contact_review']);
     expect(ai.mock.calls[0][0]).toMatchObject({ kind: 'company_contacts', input: { avoidEmails: ['kariyer@arayan.example'] } });
     expect(await retryOf(first.id)).toMatchObject({ toEmail: 'ik@arayan.example', sendMode: 'autopilot' });
@@ -218,6 +220,7 @@ describe('otopilot: "Otomatik başvur" açıkken geri dönen başvuru kendiliği
     const message = await returned(first, 'bad_address');
     const ai = aiAnswers(() => ({ contacts: [], offices: [] }));
     await autopilot.onInbound(message.id);
+    await h.worker.drain();
     expect(ai).toHaveBeenCalledTimes(1);
     expect(await retryOf(first.id)).toBeNull();
     expect(await actionOf(message.id)).toMatchObject({ step: 'stop', state: 'info' });
@@ -347,6 +350,7 @@ describe('otopilot: "Otomatik başvur" kapalıyken düzeltmeler onaya düşer', 
     const message = await returned(first, 'closed_address');
     const ai = aiAnswers(() => ({ contacts: [{ email: 'ik@onayarama.example', sourceUrl: 'https://onayarama.example/kariyer', purpose: 'hr' }], offices: [] }));
     await autopilot.onInbound(message.id);
+    await h.worker.drain();
     expect(ai.mock.calls.map((c) => c[0].kind)).toEqual(['company_contacts', 'contact_review']);
     expect(await retryOf(first.id)).toBeNull();
     expect(await actionOf(message.id)).toMatchObject({ step: 'resend', state: 'proposed', toEmail: 'ik@onayarama.example' });
@@ -692,12 +696,21 @@ describe('adres araması: hafıza ve basamaklar', () => {
     expect((await h.prisma.company.findUniqueOrThrow({ where: { id: board.id } })).canonicalDomain).toBeNull();
   });
 
-  it('toplu adres araması yakın zamanda derin aranmış firmaları atlar', async () => {
+  it('toplu araştırma adresi eksik firmaları kalıcı bir işe alır; yakın zamanda derin aranmış firma atlandı diye raporlanır', async () => {
     const idOf = (domain: string) => h.prisma.company.findFirstOrThrow({ where: { workspaceId: workspaceId(), canonicalDomain: domain } }).then((c) => c.id);
+    aiAnswers(() => ({ contacts: [], offices: [] }));
     const result = (await h.http().post('/api/v1/home/companies/missing-emails').set(u.auth).send({ force: false }).expect(201)).body;
+    expect(result.batchId).toEqual(expect.any(String));
     expect(result.companyIds).toContain(await idOf('hafizali.example'));
     expect(result.companyIds).not.toContain(await idOf('adressiz.example'));
-    expect(result.skippedRecent).toBeGreaterThanOrEqual(1);
+    const again = (await h.http().post('/api/v1/home/companies/missing-emails').set(u.auth).send({ force: false }).expect(201)).body;
+    expect(again).toMatchObject({ batchId: null, queued: 0 });
+    await h.worker.drain();
+    const item = await h.prisma.researchBatchItem.findFirstOrThrow({ where: { batchId: result.batchId, companyId: await idOf('hafizali.example') } });
+    expect(item.state).not.toBe('queued');
+    const current = (await h.http().get('/api/v1/home/research-batches/current').set(u.auth).expect(200)).body;
+    expect(current).toMatchObject({ id: result.batchId, status: 'done', total: result.queued });
+    expect(current.skipped).toBeGreaterThanOrEqual(1);
   });
 
   it('kaynağında doğrulanmış adres yapay zekâsız yeniden teyit edilir', async () => {
@@ -743,7 +756,7 @@ describe('yapay zekâ payı: öncelik sınıfları', () => {
   });
 
   it('düşük öncelikli sınıf payını aşamaz; kalan hak etkileşimli işlere kalır', async () => {
-    const reserve = (cls: string) => (ai() as any).reserveBudget(workspaceId(), cls, 10) as Promise<boolean>;
+    const reserve = (cls: string) => (ai() as any).reserveBudget(workspaceId(), cls, { dailyTaskLimit: 10 }) as Promise<boolean>;
     expect([await reserve('discovery'), await reserve('discovery'), await reserve('discovery')]).toEqual([true, true, false]);
     expect([await reserve('research'), await reserve('research'), await reserve('research'), await reserve('research'), await reserve('research')]).toEqual([true, true, true, true, false]);
     expect(await usage('ai:tasks')).toBe(6);
@@ -764,12 +777,13 @@ describe('yapay zekâ payı: öncelik sınıfları', () => {
     const classes = (await h.http().get('/api/v1/home').set(u.auth).expect(200)).body.ai.classes;
     expect(classes.map((c: any) => [c.aiClass, c.open, c.blockedBy])).toEqual([
       ['interactive', true, null],
+      ['enrich', true, null],
       ['fix', true, null],
       ['letters', true, null],
       ['research', false, 'subscription'],
       ['discovery', false, 'subscription'],
     ]);
-    expect(new Date(classes[4].opensAt).toISOString()).toBe(resetsAt);
+    expect(new Date(classes.find((c: any) => c.aiClass === 'discovery').opensAt).toISOString()).toBe(resetsAt);
   });
 
   it('sınıf kapalıyken arka plan işi başlatılmaz; sağlayıcı kurulu değilse elle/şablon akışı sürer', async () => {

@@ -34,9 +34,9 @@ export interface ProbeOptions {
 }
 
 const SMTP_PORT = 25;
-const SESSION_TIMEOUT_MS = 12_000;
+const SESSION_TIMEOUT_MS = 20_000;
 const MAX_MX_HOSTS = 2;
-const MAX_RECIPIENTS = 8;
+const MAX_RECIPIENTS = 16;
 const MISSING_MAILBOX = /\b5\.1\.(1|10)\b|user unknown|unknown user|no such user|does not exist|doesn't exist|not exist|invalid recipient|recipient (address )?rejected|address rejected|no mailbox|mailbox not found|mailbox unavailable|unrouteable|undeliverable/i;
 const POLICY_REJECTION = /\b5\.7\.\d+\b|spam|block|blacklist|blocklist|listed|reputation|policy|denied|not allowed|relay|authenticat|helo|reverse dns|ptr/i;
 

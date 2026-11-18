@@ -20,11 +20,12 @@ export const queryKeys = {
 
 export const useHomeState = () => useQuery({ queryKey: queryKeys.state, queryFn: homeApi.state, refetchInterval: POLL_MS });
 
-const listOptions = (enabled: boolean) => ({ enabled, refetchInterval: POLL_MS });
+/** Liste bir kez yüklenir (sekme sayaçları için); düzenli yenileme yalnızca açık sekmede yapılır. */
+const listOptions = (enabled: boolean, poll: boolean) => ({ enabled, refetchInterval: poll ? POLL_MS : (false as const) });
 
-export const useCompanies = (enabled: boolean) => useQuery({ queryKey: queryKeys.companies, queryFn: homeApi.companies, ...listOptions(enabled) });
-export const useApplications = (enabled: boolean) => useQuery({ queryKey: queryKeys.applications, queryFn: homeApi.applications, ...listOptions(enabled) });
-export const useInbox = (enabled: boolean) => useQuery({ queryKey: queryKeys.inbox, queryFn: homeApi.inbox, ...listOptions(enabled) });
+export const useCompanies = (enabled: boolean, poll = true) => useQuery({ queryKey: queryKeys.companies, queryFn: homeApi.companies, ...listOptions(enabled, poll) });
+export const useApplications = (enabled: boolean, poll = true) => useQuery({ queryKey: queryKeys.applications, queryFn: homeApi.applications, ...listOptions(enabled, poll) });
+export const useInbox = (enabled: boolean, poll = true) => useQuery({ queryKey: queryKeys.inbox, queryFn: homeApi.inbox, ...listOptions(enabled, poll) });
 export const useLetters = () => useQuery({ queryKey: queryKeys.letters, queryFn: homeApi.letters });
 
 interface ActionOptions<T> {

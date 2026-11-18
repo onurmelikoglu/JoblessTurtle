@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { HomeCompany, HomeOpportunity, IsoDate } from '@/api/types';
-import { activeFilterCount, DEFAULT_FILTERS, filterCompanies, focusCompanies, groupByClass, isFocused, parseFilters, scopeCounts, sizeBucketOf, sizeCounts, writeFilters } from './company-filters';
+import { activeFilterCount, DEFAULT_FILTERS, filterCompanies, focusCompanies, groupByClass, isFocused, parseFilters, regionCounts, scopeCounts, sizeBucketOf, sizeCounts, workModeCounts, writeFilters } from './company-filters';
 
 const at = (iso: string) => iso as IsoDate;
 
@@ -16,6 +16,13 @@ function opportunity(patch: Partial<HomeOpportunity> = {}): HomeOpportunity {
     careersUrl: null,
     location: null,
     scope: 'local',
+    workMode: null,
+    workModeEstimated: false,
+    regions: [],
+    regionSource: 'none',
+    language: 'tr',
+    languageReason: 'Varsayılan dil',
+    address: null,
     applyUrl: null,
     formOnly: false,
     canEmail: true,
@@ -46,6 +53,10 @@ function company(patch: Partial<HomeCompany> = {}): HomeCompany {
     analysis: null,
     offices: [],
     regionMatch: 'unknown',
+    officeRegions: [],
+    languageChoice: null,
+    phone: null,
+    workPolicy: null,
     opportunities: [opportunity()],
     matchingJobs: 0,
     researching: false,
@@ -55,7 +66,7 @@ function company(patch: Partial<HomeCompany> = {}): HomeCompany {
   };
 }
 
-const ready = { id: 'd', status: 'draft', revision: 1, subject: 's', body: 'b', toEmail: 'ik@teslimatfirma.com', problems: [] };
+const ready = { id: 'd', status: 'draft', revision: 1, subject: 's', body: 'b', toEmail: 'ik@teslimatfirma.com', problems: [], language: 'tr' as const };
 
 const getir = company({
   id: 'getir',
@@ -64,10 +75,11 @@ const getir = company({
   sectors: ['hızlı teslimat'],
   cities: ['İstanbul'],
   regionMatch: 'yes',
+  officeRegions: ['İstanbul (Avrupa Yakası)'],
   matchingJobs: 1,
   employees: { range: '1001-5000', count: 4200 },
   offices: [{ id: 'of1', label: 'Genel Merkez', kind: 'hq', city: 'İstanbul', district: 'Beşiktaş', address: 'Etiler Mah.', inRegion: true }],
-  opportunities: [opportunity({ id: 'g1', jobId: 'j1', title: 'Senior iOS Developer', category: 'target_open', location: 'İstanbul', draft: ready, foundAt: at('2026-10-10T00:00:00Z') })],
+  opportunities: [opportunity({ id: 'g1', jobId: 'j1', title: 'Senior iOS Developer', category: 'target_open', location: 'İstanbul', workMode: 'hybrid', regions: ['İstanbul (Avrupa Yakası)'], regionSource: 'office', draft: ready, foundAt: at('2026-10-10T00:00:00Z') })],
 });
 const insider = company({
   id: 'insider',
@@ -78,7 +90,7 @@ const insider = company({
   employees: { range: '501-1000', count: null },
   regionMatch: 'no',
   foundAt: at('2026-10-12T00:00:00Z'),
-  opportunities: [opportunity({ id: 'i1', jobId: 'j2', title: 'Flutter Developer', category: 'past_closed', canEmail: false })],
+  opportunities: [opportunity({ id: 'i1', jobId: 'j2', title: 'Flutter Developer', category: 'past_closed', canEmail: false, workMode: 'remote', workModeEstimated: true, regions: ['İstanbul (Anadolu Yakası)'], regionSource: 'job' })],
 });
 const ciceksepeti = company({
   id: 'cs',
@@ -125,7 +137,7 @@ describe('firma araması', () => {
 describe('firma filtreleri', () => {
   it('sınıf ve bölge filtresi', () => {
     expect(names(filter({ classes: ['open', 'past'] }))).toEqual(['Getir', 'Insider']);
-    expect(names(filter({ inRegion: true }))).toEqual(['Getir']);
+    expect(names(filter({ regions: ['bolgem'] }))).toEqual(['Getir', 'Insider']);
   });
 
   it('mail filtresi fırsat düzeyinde çalışır ve yalnızca uyan fırsatları bırakır', () => {
@@ -188,10 +200,10 @@ describe('filtrelerin adres çubuğunda tutulması', () => {
   });
 
   it('yazılan filtre aynen geri okunur', () => {
-    const filters = { query: 'ankara ios', classes: ['open', 'potential'] as const, sizes: ['11-50', '1000+', 'bilinmiyor'] as const, scopes: ['uzaktan', 'yurtdisi'] as const, inRegion: true, email: 'missing' as const, ready: true, sort: 'newest' as const };
-    const params = writeFilters(new URLSearchParams(), { ...filters, classes: [...filters.classes], sizes: [...filters.sizes], scopes: [...filters.scopes] });
-    expect(parseFilters(new URLSearchParams(params.toString()))).toEqual({ ...filters, classes: [...filters.classes], sizes: [...filters.sizes], scopes: [...filters.scopes] });
-    expect(activeFilterCount(parseFilters(params))).toBe(7);
+    const filters = { query: 'ankara ios', classes: ['open', 'potential'] as const, sizes: ['11-50', '1000+', 'bilinmiyor'] as const, scopes: ['uzaktan', 'yurtdisi'] as const, regions: ['istanbul-avrupa-yakasi', 'kocaeli'], workModes: ['hibrit', 'belirtilmemis'] as const, email: 'missing' as const, ready: true, sort: 'newest' as const };
+    const params = writeFilters(new URLSearchParams(), { ...filters, classes: [...filters.classes], sizes: [...filters.sizes], scopes: [...filters.scopes], workModes: [...filters.workModes] });
+    expect(parseFilters(new URLSearchParams(params.toString()))).toEqual({ ...filters, classes: [...filters.classes], sizes: [...filters.sizes], scopes: [...filters.scopes], workModes: [...filters.workModes] });
+    expect(activeFilterCount(parseFilters(params))).toBe(8);
   });
 
   it('bozuk parametreleri yok sayar', () => {
@@ -217,5 +229,35 @@ describe('bildirimden gelinen odak', () => {
     expect(focusCompanies([a, b], { jobs: ['yok'], opportunities: [] })).toEqual([]);
     expect(isFocused({ jobs: [], opportunities: [] })).toBe(false);
     expect(isFocused({ jobs: ['j1'], opportunities: [] })).toBe(true);
+  });
+});
+
+describe('bölge ve çalışma şekli filtreleri', () => {
+  it('yakalar ayrı filtrelenir; konumu olmayan fırsat diğerdir', () => {
+    expect(names(filter({ regions: ['istanbul-avrupa-yakasi'] }))).toEqual(['Getir']);
+    expect(names(filter({ regions: ['istanbul-anadolu-yakasi'] }))).toEqual(['Insider']);
+    expect(names(filter({ regions: ['istanbul-avrupa-yakasi', 'istanbul-anadolu-yakasi'] }))).toEqual(['Getir', 'Insider']);
+    expect(names(filter({ regions: ['diger'] }))).toEqual(['Çiçeksepeti']);
+    expect(regionCounts(all)).toEqual({ 'istanbul-avrupa-yakasi': 1, 'istanbul-anadolu-yakasi': 1, diger: 1 });
+  });
+
+  it('çalışma şekli tahmini değeri de sayar; şekli olmayan belirtilmemiştir', () => {
+    expect(names(filter({ workModes: ['uzaktan'] }))).toEqual(['Insider']);
+    expect(names(filter({ workModes: ['hibrit', 'uzaktan'] }))).toEqual(['Getir', 'Insider']);
+    expect(names(filter({ workModes: ['belirtilmemis'] }))).toEqual(['Çiçeksepeti']);
+    expect(workModeCounts(all)).toEqual({ yerinde: 0, hibrit: 1, uzaktan: 1, belirtilmemis: 1 });
+  });
+
+  it('ilk araştırması süren, fırsatı olmayan firma ofisine göre bölgede kalır', () => {
+    const fresh = company({ id: 'fresh', name: 'Yeni', opportunities: [], officeRegions: ['Kocaeli'] });
+    expect(names(filterCompanies([fresh], { ...DEFAULT_FILTERS, regions: ['kocaeli'] }))).toEqual(['Yeni']);
+    expect(names(filterCompanies([fresh], { ...DEFAULT_FILTERS, regions: ['istanbul-avrupa-yakasi'] }))).toEqual([]);
+  });
+
+  it('eski "bolge=1" bağlantısı tüm bölgelerim olarak açılır; yeni değerler adres çubuğuna yazılır', () => {
+    expect(parseFilters(new URLSearchParams('bolge=1')).regions).toEqual(['bolgem']);
+    const written = writeFilters(new URLSearchParams(), { ...DEFAULT_FILTERS, regions: ['istanbul-avrupa-yakasi'], workModes: ['uzaktan'] });
+    expect(written.toString()).toBe('bolge=istanbul-avrupa-yakasi&sekil=uzaktan');
+    expect(parseFilters(written)).toMatchObject({ regions: ['istanbul-avrupa-yakasi'], workModes: ['uzaktan'] });
   });
 });

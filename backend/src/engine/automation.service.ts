@@ -23,6 +23,8 @@ export const PREDRAFT_CATEGORIES = ['target_open', 'adjacent_open', 'needs_confi
 const ACTIVE_DRAFT_STATUSES = ['draft', 'needs_review', 'queued', 'sent'];
 const PREDRAFT_SCAN_MULTIPLIER = 4;
 const PREDRAFT_BATCH = 6;
+const MAX_FOLLOW_UP_ATTEMPTS = 3;
+const FOLLOW_UP_RETRY_MS = 3600_000;
 const AI_INTERACTIVE_RESERVE_RATIO = 0.25;
 const AI_INTERACTIVE_RESERVE_MIN = 10;
 
@@ -385,6 +387,7 @@ export class AutomationService {
   }
 
   /** 7 iş günü sonra takip: varsayılan yalnızca taslak; politika takip anahtarı açıksa en fazla bir otomatik takip. */
+  /** Geçici hatada (yapay zekâ, ağ, veritabanı) takip iptal edilmez; artan aralıklarla birkaç kez yeniden denenir. */
   async processFollowUps(now = new Date()) {
     const due = await this.prisma.followUp.findMany({ where: { state: 'pending', dueAt: { lte: now } }, take: 100 });
     let drafted = 0;
@@ -392,9 +395,15 @@ export class AutomationService {
       try {
         drafted += await this.processFollowUp(f, now);
       } catch (e) {
-        // Tek bir bozuk kayıt (silinmiş aday/firma/hesap) diğer takipleri durdurmaz.
-        this.logger.warn(`Takip işlenemedi (${f.id}): ${(e as Error).message}`);
-        await this.prisma.followUp.update({ where: { id: f.id }, data: { state: 'cancelled', cancellationReason: `Hata: ${(e as Error).message}`.slice(0, 300) } });
+        const message = (e as Error).message.slice(0, 300);
+        this.logger.warn(`Takip işlenemedi (${f.id}, deneme ${f.attempts + 1}): ${message}`);
+        const giveUp = f.attempts + 1 >= MAX_FOLLOW_UP_ATTEMPTS;
+        await this.prisma.followUp.update({
+          where: { id: f.id },
+          data: giveUp
+            ? { state: 'cancelled', attempts: { increment: 1 }, lastError: message, cancellationReason: `Hata: ${message}` }
+            : { attempts: { increment: 1 }, lastError: message, dueAt: new Date(now.getTime() + FOLLOW_UP_RETRY_MS * 2 ** f.attempts) },
+        });
       }
     }
     return { drafted };
@@ -452,6 +461,7 @@ export class AutomationService {
               scheduledAt: nextSendSlot(now, pv.policy.sendWindowStart, pv.policy.sendWindowEnd, pv.policy.sendDays),
             });
             autoSent = true;
+            await this.prisma.followUp.update({ where: { id: f.id }, data: { state: 'sent' } });
           } catch (e) {
             this.logger.warn(`Takip otomatik kuyruğa alınamadı: ${(e as Error).message}`);
           }
@@ -462,6 +472,14 @@ export class AutomationService {
       }
     }
     return drafted;
+  }
+
+  /** Kullanıcı takip taslağını vadesini beklemeden hazırlatır. */
+  async prepareFollowUpNow(workspaceId: string, followUpId: string, now = new Date()) {
+    const f = await this.prisma.followUp.findFirst({ where: { id: followUpId, workspaceId, state: 'pending' } });
+    if (!f) return { drafted: 0 };
+    await this.prisma.followUp.update({ where: { id: f.id }, data: { dueAt: now } });
+    return { drafted: await this.processFollowUp(f, now) };
   }
 
   /** İnsan yanıtı, ret, bounce veya "iletişime geçmeyin" otomatik takibi iptal eder. */

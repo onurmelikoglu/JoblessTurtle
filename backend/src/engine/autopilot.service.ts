@@ -9,6 +9,7 @@ import { ServerShape } from '../contracts/wire';
 import { AiClass } from '../domain/ai-budget';
 import { AUTOPILOT_LOOKBACK_DAYS, AutopilotMode, AutopilotState, AutopilotStep, decideFix, FixContext, FixDecision, needsAi } from '../domain/autopilot';
 import { contactSearchPlan } from '../domain/contact-search';
+import { MANUAL_ONLY_KINDS } from '../domain/contact-research';
 import { isValidEmail, recipientScore, SENDABLE_CONTACT_KINDS } from '../domain/contacts';
 import { INBOUND_GROUP, INBOUND_LABELS, InboundCategory } from '../domain/inbound';
 import { AddressBookService } from './address-book.service';
@@ -16,6 +17,7 @@ import { withAiClass } from './ai/ai-context';
 import { AiService } from './ai/ai.service';
 import { InboxService } from './inbox.service';
 import { LearnedModelsService } from './learned-models.service';
+import { ResearchBatchService } from './research-batch.service';
 import { ResearchMeta, ResearchService } from './research.service';
 
 const DAY_MS = 86_400_000;
@@ -24,6 +26,9 @@ const DECIDED_GROUPS = new Set(['failed', 'action', 'review']);
 const SENT_ONWARD_STATES = ['provider_accepted', 'submission_unknown', 'replied', 'bounced', 'outcome_recorded'];
 const PENDING_RETRY_STATES = ['queued', 'sending', ...SENT_ONWARD_STATES];
 const RUNNING_STALE_MS = 30 * 60_000;
+const MAX_MANUAL_OPTIONS = 3;
+/** Adres araştırmasını bekleyen karar; araştırma kotaya takılıp ertesi güne kalabildiği için daha uzun beklenir. */
+const RESEARCH_WAIT_STALE_MS = 3 * DAY_MS;
 const SWEEP_LIMIT = 200;
 const LOG_LIMIT = 100;
 const RETURNS_LINK = '/home?tab=donusler';
@@ -63,7 +68,7 @@ interface ResendPlan {
 
 type Result =
   | { state: 'executed'; step: AutopilotStep; toEmail: string; resultAttemptId: string; detail: string }
-  | { state: Exclude<AutopilotState, 'executed' | 'running'>; step: AutopilotStep; detail: string; toEmail?: string | null; plan?: ResendPlan | null };
+  | { state: Exclude<AutopilotState, 'executed'>; step: AutopilotStep; detail: string; toEmail?: string | null; plan?: ResendPlan | null };
 
 /**
  * Otopilot: mail dönüşü geldiğinde kategoriye göre karar verir (domain/autopilot), "Otomatik başvur" açıksa uygular,
@@ -81,6 +86,7 @@ export class AutopilotService {
     private readonly addressBook: AddressBookService,
     private readonly outbox: OutboxService,
     private readonly models: LearnedModelsService,
+    private readonly researchBatches: ResearchBatchService,
   ) {}
 
   async mode(workspaceId: string): Promise<AutopilotMode> {
@@ -88,6 +94,40 @@ export class AutopilotService {
     if (!ws || ws.automationPaused) return 'stopped';
     const autoSend = await this.prisma.automationPolicy.count({ where: { workspaceId, active: true, autoSend: true } });
     return autoSend ? 'auto' : 'approval';
+  }
+
+  /**
+   * Geri dönen başvuru için başlatılan adres araştırması bitti: yeni adreslerle yeniden karar verilir (bir daha
+   * araştırılmaz). Yalnız elle seçilebilen kişi adresleri bulunduysa kullanıcıya hangilerinin bulunduğu söylenir.
+   */
+  async resumeAfterResearch(messageId: string) {
+    const action = await this.prisma.autopilotAction.findUnique({ where: { inboundMessageId: messageId } });
+    if (!action || action.state !== 'running' || action.step !== 'research') return { status: 'skipped' as const };
+    const message = await this.prisma.inboundMessage.findUnique({ where: { id: messageId } });
+    const situation = message ? await this.situationOf(message) : null;
+    if (!situation) {
+      await this.prisma.autopilotAction.update({ where: { id: action.id }, data: { state: 'info', detail: 'Başvuru artık düzeltilecek durumda değil.' } });
+      return { status: 'skipped' as const };
+    }
+    const next = decideFix({ ...situation.context, canResearch: false });
+    const auto = (await this.mode(action.workspaceId)) === 'auto';
+    const run = await withAiClass('fix', () => this.settle(situation, next, { arrival: true, auto }));
+    const result = run.value.state === 'info' && next.step === 'stop' ? await this.withManualOptions(situation, run.value) : run.value;
+    const updated = await this.record(situation, result, { aiTasks: run.calls, mode: 'auto', actionId: action.id });
+    if (updated) await this.announce(updated, situation.company.name);
+    return { status: 'recorded' as const, state: updated?.state ?? null };
+  }
+
+  /** Otomatik gönderilemeyen kişi adresleri (çalışan, yönetici, tahmin) bulunduysa sonuca eklenir. */
+  private async withManualOptions(situation: Situation, result: Result): Promise<Result> {
+    const people = await this.prisma.contactPoint.findMany({
+      where: { companyId: situation.company.id, suppressed: false, kind: { in: MANUAL_ONLY_KINDS } },
+      orderBy: { score: 'desc' },
+      take: MAX_MANUAL_OPTIONS,
+      select: { email: true },
+    });
+    if (!people.length) return result;
+    return { ...result, detail: `${result.detail} Elle seçebileceğin ${people.length} kişi adresi bulundu (${people.map((p) => p.email).join(', ')}); Mail dönüşleri'nden birini seçip yeniden gönderebilirsin.` };
   }
 
   /** Yeni gelen dönüş: karar verilir; adres araması hemen yapılır, gönderim "Otomatik başvur" açıksa kendiliğinden gider. */
@@ -104,7 +144,17 @@ export class AutopilotService {
    * işlenememiş ya da otopilottan önce gelmiş dönüşler kullanıcının onayına sunulur.
    */
   async sweep(workspaceId?: string, now = new Date()) {
-    await this.prisma.autopilotAction.updateMany({ where: { state: 'running', updatedAt: { lt: new Date(now.getTime() - RUNNING_STALE_MS) }, ...(workspaceId ? { workspaceId } : {}) }, data: { state: 'proposed' } });
+    await this.prisma.autopilotAction.updateMany({
+      where: {
+        state: 'running',
+        OR: [
+          { step: { not: 'research' }, updatedAt: { lt: new Date(now.getTime() - RUNNING_STALE_MS) } },
+          { step: 'research', updatedAt: { lt: new Date(now.getTime() - RESEARCH_WAIT_STALE_MS) } },
+        ],
+        ...(workspaceId ? { workspaceId } : {}),
+      },
+      data: { state: 'proposed' },
+    });
     const decided = await this.prisma.autopilotAction.findMany({ where: workspaceId ? { workspaceId } : {}, select: { inboundMessageId: true } });
     const messages = await this.prisma.inboundMessage.findMany({
       where: {
@@ -166,10 +216,14 @@ export class AutopilotService {
     if (decision.step === 'ai_review') return { state: 'proposed', step: 'ai_review', detail: decision.why };
     if (decision.step === 'research') {
       if (!opts.arrival) return { state: 'proposed', step: 'research', detail: decision.why };
-      const searched = await this.searchAddress(situation, null);
-      if (!searched.ok) return { state: 'proposed', step: 'research', detail: `${decision.why} Arama şu an yapılamadı; onaylarsan yeniden denenir.` };
-      const next = decideFix({ ...searched.situation.context, canResearch: false });
-      return this.settle(searched.situation, next, opts);
+      const queued = await this.researchBatches.start(situation.attempt.workspaceId, [situation.company.id], {
+        userId: null,
+        force: true,
+        origin: 'autopilot',
+        context: { messageId: situation.message.id, avoidEmails: situation.attempt.toEmail ? [situation.attempt.toEmail] : [] },
+      });
+      if (!queued.batchId) return { state: 'proposed', step: 'research', detail: `${decision.why} Firma şu an başka bir araştırmada; bitince onaylarsan yeniden denenir.` };
+      return { state: 'running', step: 'research', detail: `${decision.why} Firmanın başka adresleri araştırılıyor; uygun adres bulunursa başvuru ona gönderilir.` };
     }
     if (decision.step === 'fix_format') {
       if (!opts.auto) return { state: 'proposed', step: 'fix_format', detail: decision.why };

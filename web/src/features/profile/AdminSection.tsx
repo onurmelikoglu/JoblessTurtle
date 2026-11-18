@@ -48,19 +48,22 @@ function InviteeSettings() {
   );
 }
 
+const ENRICH_DEFAULT_LIMIT = 120;
+const ENRICH_LIMIT_OPTIONS = [40, 80, 120, 200, 300, 500];
+
 function DailyAiLimit() {
   const status = useAiStatus();
   const { busy, run } = useAction();
   const refreshAdmin = useAdminRefresh();
 
   /** Günlük limit ana ekrandaki AI durumunu da değiştirdiği için ana ekran verileri de yenilenir. */
-  const update = (value: number) =>
+  const update = (patch: { dailyTaskLimit: number } | { enrichDailyLimit: number }, success: string) =>
     run(
       async () => {
-        await adminApi.updateAiSettings({ dailyTaskLimit: value });
+        await adminApi.updateAiSettings(patch);
         await refreshAdmin(adminKeys.aiStatus);
       },
-      { success: `Günlük AI limiti ${value} oldu` },
+      { success },
     );
 
   return (
@@ -71,6 +74,35 @@ function DailyAiLimit() {
           hint="Firma keşfi, firma analizi ve yazılar bu limitten düşer. Derin taramada firma başına bir analiz yapılır; limit dolunca AI ertesi güne kadar durur."
           value={settings.dailyTaskLimit}
           options={DAILY_AI_LIMIT_OPTIONS}
+          disabled={busy}
+          onChange={(value) => void update({ dailyTaskLimit: value }, `Günlük AI limiti ${value} oldu`)}
+        />
+      )}
+    </Loaded>
+  );
+}
+
+function EnrichAiLimit() {
+  const status = useAiStatus();
+  const { busy, run } = useAction();
+  const refreshAdmin = useAdminRefresh();
+  const update = (value: number) =>
+    run(
+      async () => {
+        await adminApi.updateAiSettings({ enrichDailyLimit: value });
+        await refreshAdmin(adminKeys.aiStatus);
+      },
+      { success: `Toplu araştırma limiti ${value} oldu` },
+    );
+
+  return (
+    <Loaded query={status}>
+      {({ settings }) => (
+        <LimitField
+          label="Toplu firma araştırması günlük limiti"
+          hint="Firmalar'daki “Eksik bilgileri araştır” bu ayrı limitle çalışır; günlük AI limitinden düşmez. Bir firma genellikle 2–3 işlem harcar; limit dolunca kalan firmalar ertesi gün kendiliğinden sürer."
+          value={settings.enrichDailyLimit ?? ENRICH_DEFAULT_LIMIT}
+          options={ENRICH_LIMIT_OPTIONS}
           disabled={busy}
           onChange={(value) => void update(value)}
         />
@@ -91,6 +123,8 @@ export function AdminSection() {
       <AdminUsers />
       <Divider />
       <DailyAiLimit />
+      <Divider />
+      <EnrichAiLimit />
     </Section>
   );
 }

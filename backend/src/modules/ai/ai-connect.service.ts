@@ -45,13 +45,19 @@ export function parseLoginPrompt(provider: ConnectProvider, raw: string): { url:
 }
 
 /** `claude auth status --json` çıktısı. */
-export function parseClaudeStatus(raw: string): { connected: boolean; account: string | null; plan: string | null } {
+export function parseClaudeStatus(raw: string): { connected: boolean; account: string | null; plan: string | null; sessionExpiresAt: Date | null } {
   try {
-    const data = JSON.parse(stripAnsi(raw).trim()) as { loggedIn?: boolean; email?: string; subscriptionType?: string };
-    return { connected: data.loggedIn === true, account: data.email ?? null, plan: data.subscriptionType ?? null };
+    const data = JSON.parse(stripAnsi(raw).trim()) as { loggedIn?: boolean; email?: string; subscriptionType?: string; loginExpiresAt?: string | number | null };
+    const expires = data.loginExpiresAt ? new Date(data.loginExpiresAt) : null;
+    return { connected: data.loggedIn === true, account: data.email ?? null, plan: data.subscriptionType ?? null, sessionExpiresAt: expires && !Number.isNaN(expires.getTime()) ? expires : null };
   } catch {
-    return { connected: false, account: null, plan: null };
+    return { connected: false, account: null, plan: null, sessionExpiresAt: null };
   }
+}
+
+/** `claude setup-token` çıktısındaki uzun süreli belirteç. */
+export function parseSetupToken(raw: string): string | null {
+  return stripAnsi(raw).match(/sk-ant-oat\d{0,3}-[A-Za-z0-9_-]{20,}/)?.[0] ?? null;
 }
 
 /** `codex login status`: girişliyken "Logged in using ChatGPT", değilken "Not logged in" (çıkış kodu 1). */
@@ -99,7 +105,7 @@ export class AiConnectService implements OnApplicationShutdown {
   spawner: Spawner = (command, args) => spawn(command, args, { env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
 
   private readonly logins = new Map<ConnectProvider, ActiveLogin>();
-  private readonly statusCache = new Map<ConnectProvider, { at: number; value: Omit<ConnectStatus, 'login'> }>();
+  private readonly statusCache = new Map<ConnectProvider, { at: number; value: Omit<ConnectStatus, 'login' | 'longLived'> }>();
 
   onApplicationShutdown() {
     for (const provider of CONNECT_PROVIDERS) this.cancel(provider);
@@ -135,19 +141,19 @@ export class AiConnectService implements OnApplicationShutdown {
     });
   }
 
-  private async probe(provider: ConnectProvider, fresh = false): Promise<Omit<ConnectStatus, 'login'>> {
+  private async probe(provider: ConnectProvider, fresh = false): Promise<Omit<ConnectStatus, 'login' | 'longLived'>> {
     const hit = this.statusCache.get(provider);
     if (!fresh && hit && Date.now() - hit.at < STATUS_CACHE_MS) return hit.value;
     const version = await this.run(provider, ['--version']);
-    let value: Omit<ConnectStatus, 'login'>;
+    let value: Omit<ConnectStatus, 'login' | 'longLived'>;
     if (version.code !== 0) {
-      value = { provider, installed: false, connected: false, account: null, plan: null };
+      value = { provider, installed: false, connected: false, account: null, plan: null, sessionExpiresAt: null };
     } else if (provider === 'cli_claude') {
       const status = await this.run(provider, ['auth', 'status', '--json']);
       value = { provider, installed: true, ...parseClaudeStatus(status.output) };
     } else {
       const status = await this.run(provider, ['login', 'status']);
-      value = { provider, installed: true, ...parseCodexStatus(status.code, status.output) };
+      value = { provider, installed: true, ...parseCodexStatus(status.code, status.output), sessionExpiresAt: null };
     }
     this.statusCache.set(provider, { at: Date.now(), value });
     return value;
@@ -155,7 +161,21 @@ export class AiConnectService implements OnApplicationShutdown {
 
   async status(provider: ConnectProvider, fresh = false): Promise<ConnectStatus> {
     const probed = await this.probe(provider, fresh);
-    return { ...probed, login: this.logins.get(provider)?.session ?? null };
+    const longLived = provider === 'cli_claude' ? await this.ai.claudeTokenStatus() : null;
+    return { ...probed, connected: probed.connected || !!longLived, longLived, login: this.logins.get(provider)?.session ?? null };
+  }
+
+  /** Kendi bilgisayarında `claude setup-token` ile üretilen belirteç yapıştırılır. */
+  async saveToken(token: string): Promise<ConnectStatus> {
+    await this.ai.saveClaudeToken(token);
+    this.statusCache.delete('cli_claude');
+    return this.status('cli_claude', true);
+  }
+
+  async removeToken(): Promise<ConnectStatus> {
+    await this.ai.saveClaudeToken(null);
+    this.statusCache.delete('cli_claude');
+    return this.status('cli_claude', true);
   }
 
   async statuses(): Promise<ConnectStatus[]> {
@@ -163,13 +183,14 @@ export class AiConnectService implements OnApplicationShutdown {
   }
 
   /** Girişi başlatır; giriş adresi (ChatGPT'de kod da) çıktıya düşünce döner. Önceki yarım giriş iptal edilir. */
-  async start(provider: ConnectProvider): Promise<ConnectStatus> {
+  async start(provider: ConnectProvider, mode: 'session' | 'long_lived' = 'session'): Promise<ConnectStatus> {
+    if (mode === 'long_lived' && provider !== 'cli_claude') throw new AppError(422, 'LONG_LIVED_UNSUPPORTED', 'Uzun süreli bağlantı yalnızca Claude için var');
     if (!(await this.probe(provider, true)).installed) throw new AppError(409, 'AI_CLI_MISSING', 'Bu kurulumda yapay zekâ aracı yok. install.sh ile kurulumda gelir; elle kurulumda .env içinde INSTALL_AI_CLI=true yapıp imajı yeniden derle.');
     for (const other of CONNECT_PROVIDERS) this.cancel(other);
 
-    const args = provider === 'cli_claude' ? ['auth', 'login', '--claudeai'] : ['login', '--device-auth'];
+    const args = mode === 'long_lived' ? ['setup-token'] : provider === 'cli_claude' ? ['auth', 'login', '--claudeai'] : ['login', '--device-auth'];
     const child = this.spawner(this.command(provider), args);
-    const session: LoginSession = { phase: 'starting', url: null, userCode: null, needsCode: provider === 'cli_claude', message: null, expiresAt: new Date(Date.now() + LOGIN_TTL_MS) };
+    const session: LoginSession = { phase: 'starting', url: null, userCode: null, needsCode: provider === 'cli_claude', message: null, expiresAt: new Date(Date.now() + LOGIN_TTL_MS), mode };
     let ready: () => void = () => undefined;
     const prompted = new Promise<void>((resolve) => (ready = resolve));
     const login: ActiveLogin = {
@@ -221,6 +242,18 @@ export class AiConnectService implements OnApplicationShutdown {
     if (this.logins.get(provider) !== login) return;
     this.statusCache.delete(provider);
     resetProviderCache();
+    if (code === 0 && login.session.mode === 'long_lived') {
+      const token = parseSetupToken(login.output);
+      login.output = '';
+      if (!token) {
+        login.session.phase = 'failed';
+        login.session.message = 'Belirteç alınamadı. Yeniden dene ya da kendi bilgisayarında `claude setup-token` çalıştırıp çıkan değeri yapıştır.';
+        return;
+      }
+      this.logins.delete(provider);
+      void this.ai.saveClaudeToken(token).catch(() => undefined);
+      return;
+    }
     if (code === 0) {
       this.logins.delete(provider);
       void this.ai.markProvidersChanged().catch(() => undefined);

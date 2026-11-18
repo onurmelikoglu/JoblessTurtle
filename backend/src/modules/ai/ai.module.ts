@@ -11,9 +11,12 @@ import type { AiSetupStatus, ConnectProvider } from '../../contracts/ai-setup';
 import type { ServerShape } from '../../contracts/wire';
 import { AiConnectService, CONNECT_PROVIDERS } from './ai-connect.service';
 
+const loginStartSchema = z.object({ mode: z.enum(['session', 'long_lived']).default('session') }).default({ mode: 'session' });
+const claudeTokenSchema = z.object({ token: z.string().trim().min(20).max(500) });
 const settingsSchema = z.object({
   providerOrder: z.array(z.enum(['cli_claude', 'cli_codex', 'manual', 'ollama', 'anthropic_api', 'openai_api', 'template'])).optional(),
   dailyTaskLimit: z.number().int().min(0).max(1000).optional(),
+  enrichDailyLimit: z.number().int().min(0).max(1000).optional(),
   webResearch: z.boolean().optional(),
   dailyDiscovery: z.boolean().optional(),
   discoveryLimit: z.number().int().min(1).max(50).optional(),
@@ -145,8 +148,20 @@ export class AiController {
 
   @Post('connect/:provider/login')
   @AdminOnly()
-  startLogin(@Param('provider', connectProviderPipe) provider: ConnectProvider) {
-    return this.connect.start(provider);
+  startLogin(@Param('provider', connectProviderPipe) provider: ConnectProvider, @Body(new ZodPipe(loginStartSchema)) body: z.infer<typeof loginStartSchema>) {
+    return this.connect.start(provider, body.mode);
+  }
+
+  @Put('connect/cli_claude/token')
+  @AdminOnly()
+  saveClaudeToken(@Body(new ZodPipe(claudeTokenSchema)) body: z.infer<typeof claudeTokenSchema>) {
+    return this.connect.saveToken(body.token);
+  }
+
+  @Delete('connect/cli_claude/token')
+  @AdminOnly()
+  removeClaudeToken() {
+    return this.connect.removeToken();
   }
 
   @Post('connect/:provider/code')

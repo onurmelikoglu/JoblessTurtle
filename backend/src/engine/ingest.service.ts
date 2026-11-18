@@ -1,4 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { followMerged } from './company-merge.service';
+import { visibleCompanyName } from '../domain/hidden-company';
 import { Company, JobListing, Prisma, SourceConnector } from '@prisma/client';
 import { hashObject } from '../common/crypto';
 import { OutboxService } from '../common/outbox.service';
@@ -174,12 +176,12 @@ export class IngestService {
     if (source.companyId) return this.prisma.company.findUniqueOrThrow({ where: { id: source.companyId } });
     const domain = normalizeDomain(raw.companyDomain ?? null);
     if (domain) {
-      const byDomain = await this.prisma.company.findFirst({ where: { workspaceId: source.workspaceId, canonicalDomain: domain } });
+      const byDomain = await followMerged(this.prisma, await this.prisma.company.findFirst({ where: { workspaceId: source.workspaceId, canonicalDomain: domain } }));
       if (byDomain) return byDomain;
     }
     const name = raw.companyName?.trim() || 'Bilinmeyen firma';
     const normalizedName = normalizeCompanyName(name);
-    const byName = await this.prisma.company.findFirst({ where: { workspaceId: source.workspaceId, normalizedName } });
+    const byName = await followMerged(this.prisma, await this.prisma.company.findFirst({ where: { workspaceId: source.workspaceId, normalizedName }, orderBy: { mergedIntoId: { sort: 'asc', nulls: 'first' } } }));
     if (byName) return byName;
     return this.prisma.company.create({
       data: { workspaceId: source.workspaceId, name, normalizedName, canonicalDomain: domain, origin: 'discovery' },
@@ -223,6 +225,7 @@ export class IngestService {
         locationText: raw.locationText ?? null,
         district: loc.district,
         city: loc.city,
+        address: raw.address ?? null,
         workMode: raw.workMode ?? (loc.remote ? 'remote' : loc.hybrid ? 'hybrid' : 'unknown'),
         status: 'open',
         description: raw.description ?? null,
@@ -292,8 +295,11 @@ export class IngestService {
     const seen = new Set<string>();
     const touchedJobs = new Set<string>();
 
-    for (const raw of result.listings) {
-      if (!raw.externalId || !raw.title) continue;
+    for (const found of result.listings) {
+      if (!found.externalId || !found.title) continue;
+      const companyName = source.companyId ? found.companyName : visibleCompanyName(found.companyName);
+      if (!source.companyId && found.companyName && !companyName) continue;
+      const raw = { ...found, companyName: companyName ?? found.companyName };
       seen.add(raw.externalId);
       const hash = listingHash(raw);
       const existing = await this.prisma.jobListing.findUnique({ where: { sourceId_externalId: { sourceId: source.id, externalId: raw.externalId } } });

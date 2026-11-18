@@ -58,6 +58,8 @@ export class ScrapedJobRepository {
       description: listing.description,
       employmentType: listing.employmentType,
       workMode: listing.workMode,
+      companySector: listing.companySector,
+      address: listing.address,
       contentHash,
     };
     const key = { source_externalId: { source: listing.source, externalId: listing.externalId } };

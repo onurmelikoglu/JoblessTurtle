@@ -21,6 +21,8 @@ export const SECRETCV = {
     title: 'a.title',
     company: '.company',
     location: '.city > span',
+    /** Konumun ikinci satırı ilçedir ("Levent" ilanı → Beşiktaş); 26 Ekim 2026'da gerçek kartlarda görüldü. */
+    district: '.city > span:nth-of-type(2)',
     date: '.city small',
   },
   datePrefix: /^\s*İlan Tarihi:\s*/i,

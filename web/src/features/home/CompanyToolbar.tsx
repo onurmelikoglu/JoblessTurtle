@@ -1,8 +1,24 @@
-import { ArrowUpDown, FileText, Globe, MailCheck, MailX, MapPin, Search, Users, X } from 'lucide-react';
+import { ArrowUpDown, Briefcase, FileText, Globe, MailCheck, MailX, MapPin, Search, Users, X } from 'lucide-react';
 import type { CompanyClass, HomeCompanies } from '@/api/types';
 import { FilterChip, SearchInput } from '@/ui/controls';
 import { Select } from '@/ui/fields';
-import { activeFilterCount, DEFAULT_FILTERS, SCOPE_FILTERS, SIZE_BUCKETS, UNKNOWN_SIZE, type CompanyFilters, type CompanySort, type EmailFilter, type ScopeFilter, type SizeBucket } from './company-filters';
+import {
+  activeFilterCount,
+  DEFAULT_FILTERS,
+  REGION_ANY,
+  REGION_OTHER,
+  regionSlug,
+  SCOPE_FILTERS,
+  SIZE_BUCKETS,
+  UNKNOWN_SIZE,
+  WORK_MODE_FILTERS,
+  type CompanyFilters,
+  type CompanySort,
+  type EmailFilter,
+  type ScopeFilter,
+  type SizeBucket,
+  type WorkModeFilter,
+} from './company-filters';
 import { CLASS_INFO, COMPANY_CLASS_ORDER } from './model';
 
 const SORT_LABELS: Record<CompanySort, string> = { recommended: 'Önerilen sıra', newest: 'En yeni bulunan', name: 'Firma adı (A-Z)' };
@@ -11,12 +27,21 @@ const SCOPE_LABELS: Record<ScopeFilter, { label: string; hint: string }> = {
   uzaktan: { label: 'Uzaktan', hint: 'Uzaktan çalışılabilen ilanlar' },
   yurtdisi: { label: 'Yurt dışı', hint: 'Taşınmayı gerektiren yurt dışı ilanları' },
 };
+const WORK_MODE_LABELS: Record<WorkModeFilter, { label: string; hint: string }> = {
+  yerinde: { label: 'Yerinde', hint: 'İş yerinde çalışılan ilanlar (ilanda yazmıyorsa tahmini)' },
+  hibrit: { label: 'Hibrit', hint: 'Hibrit çalışılan ilanlar (ilanda yazmıyorsa tahmini)' },
+  uzaktan: { label: 'Uzaktan', hint: 'Uzaktan çalışılan ilanlar (ilanda yazmıyorsa tahmini)' },
+  belirtilmemis: { label: 'Belirtilmemiş', hint: 'Çalışma şekli bilinmeyen ilanlar ve firmaya genel başvurular' },
+};
 const SIZE_LABELS: Record<SizeBucket, string> = { '1-10': '1-10', '11-50': '11-50', '51-200': '51-200', '201-1000': '201-1.000', '1000+': '1.000+', bilinmiyor: 'Bilinmiyor' };
 
 interface CompanyToolbarProps {
   filters: CompanyFilters;
   onChange: (filters: CompanyFilters) => void;
   totals: HomeCompanies['totals'];
+  regionLabels: string[];
+  regions: Record<string, number>;
+  workModes: Record<WorkModeFilter, number>;
   sizes: Record<SizeBucket, number>;
   scopes: Record<ScopeFilter, number>;
   shown: number;
@@ -24,11 +49,18 @@ interface CompanyToolbarProps {
   onFindSizes: () => void;
 }
 
-export function CompanyToolbar({ filters, onChange, totals, sizes, scopes, shown, busy, onFindSizes }: CompanyToolbarProps) {
+export function CompanyToolbar({ filters, onChange, totals, regionLabels, regions, workModes, sizes, scopes, shown, busy, onFindSizes }: CompanyToolbarProps) {
   const patch = (next: Partial<CompanyFilters>) => onChange({ ...filters, ...next });
   const toggleClass = (companyClass: CompanyClass) => patch({ classes: filters.classes.includes(companyClass) ? filters.classes.filter((c) => c !== companyClass) : [...filters.classes, companyClass] });
   const toggleSize = (size: SizeBucket) => patch({ sizes: filters.sizes.includes(size) ? filters.sizes.filter((s) => s !== size) : [...filters.sizes, size] });
   const toggleScope = (scope: ScopeFilter) => patch({ scopes: filters.scopes.includes(scope) ? filters.scopes.filter((s) => s !== scope) : [...filters.scopes, scope] });
+  const regionSlugs = regionLabels.map(regionSlug);
+  const regionActive = (slug: string) => filters.regions.includes(slug) || (slug !== REGION_OTHER && filters.regions.includes(REGION_ANY));
+  const toggleRegion = (slug: string) => {
+    const current = filters.regions.includes(REGION_ANY) ? [...filters.regions.filter((r) => r !== REGION_ANY), ...regionSlugs] : filters.regions;
+    patch({ regions: current.includes(slug) ? current.filter((r) => r !== slug) : [...current, slug] });
+  };
+  const toggleWorkMode = (mode: WorkModeFilter) => patch({ workModes: filters.workModes.includes(mode) ? filters.workModes.filter((m) => m !== mode) : [...filters.workModes, mode] });
   const showScopes = scopes.uzaktan + scopes.yurtdisi > 0 || filters.scopes.length > 0;
   const toggleEmail = (value: EmailFilter) => patch({ email: filters.email === value ? 'any' : value });
   const active = activeFilterCount(filters);
@@ -56,9 +88,6 @@ export function CompanyToolbar({ filters, onChange, totals, sizes, scopes, shown
           </FilterChip>
         ))}
         <span className="mx-1 h-5 w-px bg-line" aria-hidden />
-        <FilterChip active={filters.inRegion} onToggle={() => patch({ inRegion: !filters.inRegion })} icon={<MapPin className="size-3.5" aria-hidden />} title="Seçtiğin şehirlerde ofisi olan firmalar">
-          Bölgemde
-        </FilterChip>
         <FilterChip active={filters.email === 'has'} onToggle={() => toggleEmail('has')} icon={<MailCheck className="size-3.5" aria-hidden />} title="Başvuru gönderilebilecek mail adresi bulunanlar">
           Mail adresi var
         </FilterChip>
@@ -68,6 +97,33 @@ export function CompanyToolbar({ filters, onChange, totals, sizes, scopes, shown
         <FilterChip active={filters.ready} onToggle={() => patch({ ready: !filters.ready })} icon={<FileText className="size-3.5" aria-hidden />} title="Başvuru yazısı hazır ve sorunsuz olanlar">
           Yazısı hazır
         </FilterChip>
+      </div>
+      {regionLabels.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Bölge">
+          <span className="flex items-center gap-1.5 text-[13px] font-medium text-ink-soft">
+            <MapPin className="size-3.5" aria-hidden />
+            Bölge
+          </span>
+          {regionLabels.map((label, i) => (
+            <FilterChip key={label} active={regionActive(regionSlugs[i])} onToggle={() => toggleRegion(regionSlugs[i])} count={regions[regionSlugs[i]] ?? 0} title={`İlanı ${label} bölgesinde olanlar; ilanda konum yoksa firmanın ofisine bakılır`}>
+              {label}
+            </FilterChip>
+          ))}
+          <FilterChip active={regionActive(REGION_OTHER)} onToggle={() => toggleRegion(REGION_OTHER)} count={regions[REGION_OTHER] ?? 0} title="Seçtiğin bölgelerin dışında kalanlar ya da konumu bilinmeyenler">
+            Diğer / bilinmiyor
+          </FilterChip>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Çalışma şekli">
+        <span className="flex items-center gap-1.5 text-[13px] font-medium text-ink-soft">
+          <Briefcase className="size-3.5" aria-hidden />
+          Çalışma şekli
+        </span>
+        {WORK_MODE_FILTERS.map((mode) => (
+          <FilterChip key={mode} active={filters.workModes.includes(mode)} onToggle={() => toggleWorkMode(mode)} count={workModes[mode]} title={WORK_MODE_LABELS[mode].hint}>
+            {WORK_MODE_LABELS[mode].label}
+          </FilterChip>
+        ))}
       </div>
       {showScopes && (
         <div className="flex flex-wrap items-center gap-2" role="group" aria-label="İlan kapsamı">

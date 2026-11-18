@@ -276,7 +276,10 @@ export class InboxService {
             entityType: 'ApplicationAttempt',
             entityId: attempt.id,
           })
-          .catch(() => null);
+          .catch((e) => {
+            this.logger.warn(`Mail dönüşü yapay zekâyla sınıflanamadı, kurala göre sınıflandı (${attempt.id}): ${(e as Error).message}`);
+            return null;
+          });
     if (r?.status === 'succeeded') {
       const out = r.output as { category: InboundCategory; confidence: number; reason?: string; suggestedEmail?: string | null; suggestedUrl?: string | null };
       if (out.confidence >= AI_MIN_CONFIDENCE) category = out.category;

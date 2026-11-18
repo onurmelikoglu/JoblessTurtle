@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Injectable, Module, Param, Patch, Post, Put, Res } from '@nestjs/common';
+import { Body, Controller, Get, Injectable, Module, Param, Patch, Post, Put, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { AutomationPolicy } from '@prisma/client';
 import { z } from 'zod';
@@ -8,7 +8,28 @@ import { AppError, errorMessage, notFound } from '../../common/errors';
 import { OutboxService } from '../../common/outbox.service';
 import { PrismaService } from '../../common/prisma.service';
 import { ZodPipe } from '../../common/zod.pipe';
-import { HomeApplicationDetail, HomeApplications, HomeCompanies, HomeInboxWithAutopilot, HomeLetters, HomeOpportunity, HomePreview, HomeState, SetupStep, SizeSearchResult } from '../../contracts/home';
+import {
+  HomeApplicationDetail,
+  HomeApplications,
+  HomeCompanies,
+  HomeInboxWithAutopilot,
+  HomeLetters,
+  HomeOpportunity,
+  HomePreview,
+  HomeState,
+  FollowUpItem,
+  FollowUpList,
+  InterviewItem,
+  StageItem,
+  FollowUpState,
+  ResearchBatchStart,
+  ResearchBatchStatus,
+  SetupStep,
+  SizeSearchResult,
+  StatsOverview,
+  CompanyTwin,
+  StatsRange,
+} from '../../contracts/home';
 import { ServerShape } from '../../contracts/wire';
 import { activityItems, activityStatus, ROUTINE_CRAWL } from '../../domain/activity';
 import { companyLinks, jobApplyLinks, mergeLinks, replyApplyLink } from '../../domain/apply-links';
@@ -16,10 +37,10 @@ import { classOfCompany, classOfOpportunity, COMPANY_CLASSES, CompanyClass } fro
 import { employeeSizeOf } from '../../domain/company-size';
 import { ENGLISH_LANGUAGE, pickDocument, replacementFor } from '../../domain/documents';
 import { MANUAL_ONLY_KINDS } from '../../domain/contact-research';
-import { contactSearchPlan } from '../../domain/contact-search';
 import { CANDIDATE_HR_KIND, classifyPublishedEmail, isValidEmail, RecipientScoring, recipientScore, SENDABLE_CONTACT_KINDS, SUGGESTED_ONLY_KINDS } from '../../domain/contacts';
-import { CITY_SELECTION_SEPARATOR, evaluateLocation, regionForSelections, workScopeOf } from '../../domain/geo';
+import { CITY_SELECTION_SEPARATOR, detectLocation, evaluateLocation, isInTurkey, regionFilterLabels, regionForSelections, selectionsMatching, workScopeOf } from '../../domain/geo';
 import { normalizeCompanyName, preferTurkishUrl } from '../../domain/text';
+import { estimateWorkMode, WorkMode } from '../../domain/work-mode';
 import { AiService, DEFAULT_AI_SETTINGS } from '../../engine/ai/ai.service';
 import { UsageService } from '../../common/usage.service';
 import { SendingService } from '../../engine/sending.service';
@@ -29,11 +50,17 @@ import { careersLinkOfSource, DISCOVERED_SOURCE_KINDS } from '../../engine/conne
 import { AutomationService, predraftBudget } from '../../engine/automation.service';
 import { AppliedCompaniesService } from '../../engine/applied-companies.service';
 import { AutopilotService } from '../../engine/autopilot.service';
-import { addressSearchExhausted, detailsNeeded, pickSegments, ResearchMeta, ResearchService, SIZE_BATCH } from '../../engine/research.service';
-import { DraftingService, intentForOpportunity, pickContact } from '../../engine/drafting.service';
+import { addressSearchExhausted, detailsNeeded, pickSegments, ResearchService, SIZE_BATCH } from '../../engine/research.service';
+import { DraftingService, intentForOpportunity, languageForApplication, pickContact } from '../../engine/drafting.service';
+import { isApplicationLanguage, LANGUAGE_REASON_TEXT } from '../../domain/application-language';
+import { ghostedSuggestion, INTERVIEW_KINDS, INTERVIEW_STATUSES, InterviewKind, PIPELINE_STAGES, PipelineStage, STAGE_LABELS } from '../../domain/pipeline';
+import { PipelineService } from '../../engine/pipeline.service';
+import { funnel, MIN_REPLIES_FOR_SUGGESTION, ratesBy, sendTimeGrid, StatAttempt, suggestSendTime, weekly } from '../../domain/stats';
 import { isLetterIntent, LETTER_INTENTS, LETTER_PLACEHOLDERS, LetterService } from '../../engine/letter.service';
 import { InboxService } from '../../engine/inbox.service';
 import { LearnedModelsService } from '../../engine/learned-models.service';
+import { ResearchBatchService } from '../../engine/research-batch.service';
+import { CompanyMergeService, followMerged } from '../../engine/company-merge.service';
 import { INBOUND_GROUP, INBOUND_LABELS, InboundCategory } from '../../domain/inbound';
 import { INTENT_LABELS } from '../../domain/templates';
 import { ApplicationsModule, ApplicationsService } from '../applications/applications.module';
@@ -42,7 +69,7 @@ import { CandidatesModule, CandidatesService } from '../candidates/candidates.mo
 const CATEGORY_ORDER = ['target_open', 'adjacent_open', 'needs_confirmation', 'user_selected', 'past_closed', 'sector_target', 'not_found'];
 const USER_SELECTED_CATEGORY = 'user_selected';
 const CLI_PROVIDERS = ['cli_claude', 'cli_codex'];
-const OPPORTUNITY_LIST_LIMIT = 2000;
+const OPPORTUNITY_LIST_LIMIT = 5000;
 const NEW_COMPANY_RESEARCH_WINDOW_MS = 30 * 60_000;
 const ATTEMPT_REASON_LABELS: Record<string, string> = {
   DAILY_LIMIT: 'Mail hesabının günlük gönderim limiti doldu',
@@ -97,7 +124,14 @@ const OFFICE_REFRESH_LIMIT = 100;
 const DETAILS_REFRESH_LIMIT = 30;
 const INVITEE_DISCOVERY_SEGMENTS = 3;
 const AI_NEAR_LIMIT_RATIO = 0.9;
-const BULK_DETAILS_LIMIT = 40;
+const MIN_FOLLOW_UP_DAYS = 2;
+const MAX_FOLLOW_UP_DAYS = 30;
+const FOLLOW_UP_HISTORY_DAYS = 14;
+const FOLLOW_UP_LIST_LIMIT = 300;
+const DEFAULT_FOLLOW_UP_DAYS = 7;
+
+/** Tek toplu araştırmaya eklenebilecek en fazla firma; işler kendi kotasıyla günlere yayılır. */
+const MAX_RESEARCH_BATCH = 500;
 /** Kullanıcının tek istekte başlatabileceği çalışan sayısı araması (her grup tek yapay zekâ çağrısı). */
 const SIZE_SEARCH_BATCHES = 15;
 /** "Yeniden ara" ile bir kerede başlatılan ilan arama sorgusu (her biri tek yapay zekâ çağrısı). */
@@ -122,10 +156,29 @@ const profileSchema = z.object({
 });
 const applySchema = z.object({ opportunityIds: z.array(z.string()).min(1).max(MAX_APPLY_BATCH) });
 const autoApplySchema = z.object({ enabled: z.boolean() });
+const companyLanguageSchema = z.object({ language: z.enum(['tr', 'en']).nullable() });
+const mergeSchema = z.object({ keepId: z.string().min(1), dropId: z.string().min(1) });
+const twinPairSchema = z.object({ aId: z.string().min(1), bId: z.string().min(1) });
+const statsRangeSchema = z.enum(['30d', '90d', 'all']).default('90d');
+const REPLY_CLASSES = ['human_reply', 'interview', 'rejection'];
+const NOT_COUNTED_STATES = ['cancelled', 'queued', 'sending', 'blocked'];
+const SOURCE_LABELS: Record<string, string> = { manual: 'Elle eklenen', excel: 'Excel', discovery: 'Keşif', catalog: 'Ortak katalog' };
+const isoDate = z.string().refine((v) => !Number.isNaN(Date.parse(v)), 'Geçersiz tarih');
+const stageSchema = z.object({ stage: z.enum(PIPELINE_STAGES), at: isoDate.optional(), note: z.string().max(1000).nullable().optional() });
+const interviewSchema = z.object({
+  startsAt: isoDate,
+  durationMin: z.number().int().min(5).max(480).optional(),
+  kind: z.enum(INTERVIEW_KINDS).optional(),
+  link: z.string().max(500).nullable().optional(),
+  location: z.string().max(300).nullable().optional(),
+  notes: z.string().max(2000).nullable().optional(),
+});
+const interviewPatchSchema = interviewSchema.partial().extend({ status: z.enum(INTERVIEW_STATUSES).optional() });
+const followUpSettingsSchema = z.object({ delayDays: z.number().int().min(MIN_FOLLOW_UP_DAYS).max(MAX_FOLLOW_UP_DAYS), auto: z.boolean() });
 const markAppliedSchema = z.object({ opportunityId: z.string() });
 const letterSchema = z.object({ body: z.string().trim().min(50).max(6000) });
 const letterStyleSchema = z.object({ text: z.string().trim().min(50).max(6000) });
-const missingEmailsSchema = z.object({ force: z.boolean().default(false) });
+const missingEmailsSchema = z.object({ force: z.boolean().default(true), companyIds: z.array(z.string()).max(MAX_RESEARCH_BATCH).optional() });
 const removeSchema = z.object({ ids: z.array(z.string()).min(1).max(200) });
 const retrySchema = z.object({ ids: z.array(z.string()).min(1).max(200).optional() });
 const mailLimitSchema = z.object({ dailyLimit: z.number().int().min(1).max(500) });
@@ -160,7 +213,16 @@ export class HomeService {
     private readonly activity: ActivityService,
     private readonly models: LearnedModelsService,
     private readonly appliedCompanies: AppliedCompaniesService,
+    private readonly researchBatches: ResearchBatchService,
+    private readonly pipeline: PipelineService,
+    private readonly companyMerge: CompanyMergeService,
   ) {}
+
+  private async citySelections(workspaceId: string): Promise<string[]> {
+    const candidate = await this.prisma.candidateProfile.findFirst({ where: { workspaceId }, orderBy: { createdAt: 'asc' }, select: { city: true, searchProfiles: { select: { city: true, active: true }, orderBy: { createdAt: 'asc' } } } });
+    const profile = candidate?.searchProfiles.find((p) => p.active) ?? candidate?.searchProfiles[0];
+    return citySelectionsOf(candidate?.city ?? profile?.city);
+  }
 
   private async primary(workspaceId: string) {
     const candidate = await this.prisma.candidateProfile.findFirst({
@@ -227,7 +289,7 @@ export class HomeService {
         english: { cv: englishOf('cv'), portfolio: englishOf('portfolio') },
         positions: searchProfile?.exactTitles ?? [],
         adjacentPositions: searchProfile?.adjacentTitles ?? [],
-        cities: (candidate?.city ?? searchProfile?.city ?? '').split(CITY_SELECTION_SEPARATOR).filter(Boolean),
+        cities: citySelectionsOf(candidate?.city ?? searchProfile?.city),
         allowRemote: searchProfile?.allowRemote ?? false,
         abroadRemote: searchProfile?.abroadRemote ?? false,
         abroadRelocation: searchProfile?.abroadRelocation ?? false,
@@ -430,17 +492,17 @@ export class HomeService {
     return { queued: true };
   }
 
-  async opportunities(ctx: RequestContext): Promise<{ items: ServerShape<HomeOpportunity>[] }> {
+  async opportunities(ctx: RequestContext, appliedIndex?: Awaited<ReturnType<AppliedCompaniesService['index']>>): Promise<{ items: ServerShape<HomeOpportunity>[]; truncated: boolean }> {
     const rows = await this.prisma.opportunity.findMany({
       where: { workspaceId: ctx.workspaceId, category: { in: CATEGORY_ORDER }, status: { notIn: ['dismissed'] } },
       orderBy: [{ f: { sort: 'desc', nulls: 'last' } }, { computedAt: 'desc' }],
       take: OPPORTUNITY_LIST_LIMIT,
       include: {
-        company: { select: { id: true, name: true, website: true, canonicalDomain: true, careersUrl: true, researchReport: true, researchMeta: true, groupName: true, employeeRange: true, origin: true, contacts: { where: { suppressed: false, kind: { in: [...SENDABLE_CONTACT_KINDS, ...SUGGESTED_ONLY_KINDS, ...MANUAL_ONLY_KINDS] } }, select: { id: true, kind: true, email: true, sourceUrl: true, ownershipEvidence: true } } } },
-        job: { select: { id: true, title: true, locationText: true, workMode: true, firstSeenAt: true, applyUrl: true, applyEmail: true, channel: true, listings: { select: { applyUrl: true, canonicalUrl: true } } } },
+        company: { select: { id: true, name: true, website: true, canonicalDomain: true, careersUrl: true, researchReport: true, researchMeta: true, groupName: true, employeeRange: true, origin: true, applicationLanguage: true, offices: { select: { city: true, district: true, address: true } }, contacts: { where: { suppressed: false, kind: { in: [...SENDABLE_CONTACT_KINDS, ...SUGGESTED_ONLY_KINDS, ...MANUAL_ONLY_KINDS] } }, select: { id: true, kind: true, email: true, sourceUrl: true, ownershipEvidence: true } } } },
+        job: { select: { id: true, title: true, locationText: true, city: true, district: true, address: true, description: true, workMode: true, firstSeenAt: true, applyUrl: true, applyEmail: true, channel: true, listings: { select: { applyUrl: true, canonicalUrl: true } } } },
       },
     });
-    const applied = await this.appliedCompanies.index(ctx.workspaceId);
+    const [applied, selections] = await Promise.all([appliedIndex ?? this.appliedCompanies.index(ctx.workspaceId), this.citySelections(ctx.workspaceId)]);
     const ids = rows.map((r) => r.id);
     const drafts = await this.prisma.applicationDraft.findMany({ where: { opportunityId: { in: ids }, status: { in: ACTIVE_DRAFT_STATES } }, orderBy: { createdAt: 'desc' } });
     const latestDraft = new Map<string, (typeof drafts)[number]>();
@@ -455,6 +517,9 @@ export class HomeService {
         const d = latestDraft.get(o.id);
         const rev = d ? revisionByDraft.get(d.id) : null;
         const canEmail = !!(rev?.toEmail || o.job?.applyEmail || o.company.contacts.some((c) => SENDABLE_CONTACT_KINDS.includes(c.kind)));
+        const scope = o.job ? workScopeOf(o.job.locationText, o.job.workMode) : ('local' as const);
+        const workMode = o.job ? jobWorkMode(o.job, scope) : null;
+        const language = languageForApplication(o.company, o.job);
         return {
           id: o.id,
           companyId: o.companyId,
@@ -465,7 +530,13 @@ export class HomeService {
           website: o.company.website,
           careersUrl: o.company.careersUrl,
           location: o.job?.locationText ?? null,
-          scope: o.job ? workScopeOf(o.job.locationText, o.job.workMode) : ('local' as const),
+          scope,
+          workMode: workMode?.mode ?? null,
+          workModeEstimated: workMode?.estimated ?? false,
+          ...jobRegions(selections, o.job),
+          language: language.language,
+          languageReason: LANGUAGE_REASON_TEXT[language.reason],
+          address: o.job?.address ?? null,
           applyUrl: o.job?.applyUrl ?? null,
           formOnly: !canEmail && !!o.job?.applyUrl && FORM_CHANNELS.includes(o.job.channel),
           canEmail,
@@ -475,7 +546,7 @@ export class HomeService {
           fit: fitLabel(o.category, o.f),
           summary: summarize(o),
           analysis: analysisOf(o.company.researchReport),
-          draft: d && rev ? { id: d.id, status: d.status, revision: d.currentRevision, subject: rev.subject, body: rev.body, toEmail: rev.toEmail, problems: d.blockedReasons } : null,
+          draft: d && rev ? { id: d.id, status: d.status, revision: d.currentRevision, subject: rev.subject, body: rev.body, toEmail: rev.toEmail, problems: d.blockedReasons, language: d.language === 'en' ? ('en' as const) : ('tr' as const) } : null,
           links: o.job ? jobApplyLinks(o.job) : [],
           foundAt: o.createdAt,
           rank: ranker
@@ -492,7 +563,7 @@ export class HomeService {
             : null,
         };
       });
-    return { items };
+    return { items, truncated: rows.length >= OPPORTUNITY_LIST_LIMIT };
   }
 
   /**
@@ -501,9 +572,11 @@ export class HomeService {
    * (açık ilan / geçmişte açmış / potansiyel). Görünür fırsatı kalmayan firma (ör. kullanıcı gizledi) listede yer almaz.
    */
   async companies(ctx: RequestContext): Promise<ServerShape<HomeCompanies>> {
-    const { searchProfile } = await this.primary(ctx.workspaceId);
-    const [{ items }, companies, applied, researchTasks, dismissedRows] = await Promise.all([
-      this.opportunities(ctx),
+    const { candidate, searchProfile } = await this.primary(ctx.workspaceId);
+    const selections = citySelectionsOf(candidate?.city ?? searchProfile?.city);
+    const applied = await this.appliedCompanies.index(ctx.workspaceId);
+    const [{ items, truncated }, companies, researchTasks, dismissedRows] = await Promise.all([
+      this.opportunities(ctx, applied),
       this.prisma.company.findMany({
         where: { workspaceId: ctx.workspaceId, excluded: false },
         select: {
@@ -515,6 +588,9 @@ export class HomeService {
           sectors: true,
           employeeRange: true,
           employeeCount: true,
+          applicationLanguage: true,
+          phone: true,
+          workPolicy: true,
           createdAt: true,
           lastResearchedAt: true,
           researchReport: true,
@@ -522,7 +598,6 @@ export class HomeService {
           offices: { select: { id: true, label: true, kind: true, city: true, district: true, address: true }, orderBy: { kind: 'asc' } },
         },
       }),
-      this.appliedCompanies.index(ctx.workspaceId),
       this.prisma.aiTask.findMany({ where: { workspaceId: ctx.workspaceId, entityType: 'Company', status: { in: ['pending', 'running'] }, kind: { in: ['company_report', 'company_contacts'] } }, select: { entityId: true } }),
       this.prisma.opportunity.findMany({ where: { workspaceId: ctx.workspaceId, status: 'dismissed' }, select: { companyId: true }, distinct: ['companyId'] }),
     ]);
@@ -543,6 +618,8 @@ export class HomeService {
       }));
       const careersUrl = preferTurkishUrl([c.careersUrl, ...c.sources.map(careersLinkOfSource)]);
       const regionMatch: 'yes' | 'no' | 'unknown' = offices.length === 0 ? 'unknown' : offices.some((o) => o.inRegion) ? 'yes' : 'no';
+      const officeRegions = [...new Set(c.offices.flatMap((o) => selectionsMatching(selections, [o.district, o.address, o.city].filter(Boolean).join(' '))))];
+      const withRegions = officeRegions.length ? opportunities.map((o) => (o.regionSource === 'none' ? { ...o, regions: officeRegions, regionSource: 'office' as const } : o)) : opportunities;
       return [
         {
           id: c.id,
@@ -556,7 +633,11 @@ export class HomeService {
           analysis: analysisOf(c.researchReport),
           offices,
           regionMatch,
-          opportunities,
+          officeRegions,
+          languageChoice: isApplicationLanguage(c.applicationLanguage) ? c.applicationLanguage : null,
+          phone: c.phone,
+          workPolicy: workPolicyOf(c.workPolicy),
+          opportunities: withRegions,
           matchingJobs: opportunities.filter((o) => o.jobId && classOfOpportunity(o) === 'open').length,
           researching,
           links: companyLinks({ careersUrl, website: c.website }),
@@ -569,12 +650,14 @@ export class HomeService {
     const byClass = Object.fromEntries(COMPANY_CLASSES.map((k) => [k, result.filter((c) => c.class === k).length])) as Record<CompanyClass, number>;
     return {
       companies: result,
+      regionFilters: regionFilterLabels(selections),
       totals: {
         companies: result.length,
         applied: companies.length - listed.length,
         matchingJobs: result.reduce((n, c) => n + c.matchingJobs, 0),
         byClass,
         sizeUnknown: result.filter((c) => !c.employees).length,
+        truncated,
       },
     };
   }
@@ -607,13 +690,22 @@ export class HomeService {
       this.prisma.inboundMessage.findMany({ where: { attemptId: { in: attemptIds }, category: { not: null } }, orderBy: { receivedAt: 'asc' }, select: { attemptId: true, category: true, status: true, suggestedUrl: true } }),
       this.sending.queueSummary(ctx.workspaceId),
     ]);
+    const [stageRows, interviewRows] = await Promise.all([
+      this.prisma.applicationStage.findMany({ where: { attemptId: { in: attemptIds } }, orderBy: { at: 'asc' }, select: { attemptId: true, stage: true } }),
+      this.prisma.interview.findMany({ where: { attemptId: { in: attemptIds }, status: { in: ['proposed', 'scheduled'] }, startsAt: { gte: new Date() } }, orderBy: { startsAt: 'asc' }, select: { attemptId: true, startsAt: true } }),
+    ]);
+    const latestStage = new Map(stageRows.map((r) => [r.attemptId, r.stage]));
+    const nextInterview = new Map<string, Date>();
+    for (const i of interviewRows) if (!nextInterview.has(i.attemptId)) nextInterview.set(i.attemptId, i.startsAt);
     const companies = new Map(companyRows.map((c) => [c.id, c]));
     const jobs = new Map(jobRows.map((j) => [j.id, j]));
     const replyCount = new Map(replies.map((r) => [r.attemptId, r._count]));
     const deliveryOf = new Map(inbound.map((m) => [m.attemptId, m]));
     const requestedUrl = new Map(inbound.filter((m) => m.suggestedUrl).map((m) => [m.attemptId, m.suggestedUrl]));
+    const total = attempts.length < APPLICATIONS_LIST_LIMIT ? attempts.length : await this.prisma.applicationAttempt.count({ where: { workspaceId: ctx.workspaceId, state: { not: 'cancelled' }, hiddenAt: null } });
     return {
       queue,
+      total,
       items: attempts.map((a) => {
         const job = a.jobId ? jobs.get(a.jobId) : undefined;
         const company = companies.get(a.companyId);
@@ -637,6 +729,9 @@ export class HomeService {
           retryOfId: a.retryOfId,
           retried: retried.has(a.id),
           links: mergeLinks([replyApplyLink(requestedUrl.get(a.id))], job ? jobApplyLinks(job) : [], company ? companyLinks(company) : []),
+          stage: latestStage.get(a.id) ?? null,
+          nextInterviewAt: nextInterview.get(a.id) ?? null,
+          ghosted: ghostedSuggestion({ state: a.state, outcome: a.outcome, acceptedAt: a.acceptedAt, replyCount: replyCount.get(a.id) ?? 0 }),
         };
       }),
     };
@@ -670,7 +765,96 @@ export class HomeService {
       documents: documents.map(({ archived: _archived, candidateId: _candidateId, ...d }) => d),
       currentDocuments,
       replies: detail.replies.map((r) => ({ id: r.id, fromEmail: r.fromEmail, subject: r.subject, snippet: r.snippet, classification: r.classification, receivedAt: r.receivedAt })),
+      ...(await this.timelineOf(ctx, detail.attempt.id, detail.company.name, detail.job?.title ?? null)),
     };
+  }
+
+  private async timelineOf(ctx: RequestContext, attemptId: string, company: string, title: string | null): Promise<{ stages: ServerShape<StageItem>[]; interviews: ServerShape<InterviewItem>[] }> {
+    const { stages, interviews } = await this.pipeline.timeline(ctx.workspaceId, attemptId);
+    return {
+      stages: stages.map((st) => ({ id: st.id, stage: st.stage, label: STAGE_LABELS[st.stage as PipelineStage] ?? st.stage, at: st.at, note: st.note, source: st.source === 'inbox' ? ('inbox' as const) : ('manual' as const) })),
+      interviews: interviews.map((i) => interviewItemOf({ ...i, company, title })),
+    };
+  }
+
+  /** Gönderilen başvuruların hunisi, boyutlara göre yanıt oranı, haftalık gidişat ve gönderim saati önerisi. */
+  async stats(ctx: RequestContext, range: StatsRange): Promise<ServerShape<StatsOverview>> {
+    const since = range === 'all' ? new Date(0) : new Date(Date.now() - (range === '30d' ? 30 : 90) * 86400_000);
+    const attempts = await this.prisma.applicationAttempt.findMany({
+      where: { workspaceId: ctx.workspaceId, hiddenAt: null, state: { notIn: NOT_COUNTED_STATES }, intentType: { not: 'follow_up' }, OR: [{ acceptedAt: { gte: since } }, { channel: 'platform', createdAt: { gte: since } }] },
+      select: { id: true, acceptedAt: true, createdAt: true, state: true, outcome: true, channel: true, intentType: true, companyId: true, draftId: true },
+    });
+    const ids = attempts.map((a) => a.id);
+    const [inbound, stages, interviews, companies, drafts, ai] = await Promise.all([
+      this.prisma.inboundMessage.findMany({ where: { attemptId: { in: ids } }, select: { attemptId: true, category: true, classification: true } }),
+      this.prisma.applicationStage.findMany({ where: { attemptId: { in: ids } }, select: { attemptId: true, stage: true } }),
+      this.prisma.interview.findMany({ where: { attemptId: { in: ids }, status: { not: 'cancelled' } }, select: { attemptId: true } }),
+      this.prisma.company.findMany({ where: { id: { in: [...new Set(attempts.map((a) => a.companyId))] } }, select: { id: true, sectors: true, employeeRange: true, origin: true } }),
+      this.prisma.applicationDraft.findMany({ where: { id: { in: attempts.map((a) => a.draftId) } }, select: { id: true, language: true } }),
+      this.prisma.aiTask.aggregate({ where: { workspaceId: ctx.workspaceId, createdAt: { gte: since }, status: 'succeeded' }, _count: true, _sum: { costUsd: true } }),
+    ]);
+    const failed = new Set(inbound.filter((m) => m.category && INBOUND_GROUP[m.category as InboundCategory] === 'failed').map((m) => m.attemptId));
+    const replied = new Set([...inbound.filter((m) => (m.category && INBOUND_GROUP[m.category as InboundCategory] === 'reply') || REPLY_CLASSES.includes(m.classification)).map((m) => m.attemptId), ...stages.filter((st) => st.stage !== 'ghosted' && st.stage !== 'withdrawn').map((st) => st.attemptId)]);
+    const interviewed = new Set([...interviews.map((i) => i.attemptId), ...stages.filter((st) => st.stage === 'interview' || st.stage === 'offer').map((st) => st.attemptId)]);
+    const offered = new Set(stages.filter((st) => st.stage === 'offer').map((st) => st.attemptId));
+    const companyById = new Map(companies.map((c) => [c.id, c]));
+    const languageOf = new Map(drafts.map((d) => [d.id, d.language]));
+    const rows: StatAttempt[] = attempts.map((a) => {
+      const company = companyById.get(a.companyId);
+      const outcomeReply = ['interview', 'offer', 'rejection'].includes(a.outcome ?? '');
+      return {
+        sentAt: a.acceptedAt ?? a.createdAt,
+        failed: failed.has(a.id) || a.state === 'bounced' || a.state === 'failed_confirmed',
+        replied: replied.has(a.id) || outcomeReply,
+        interview: interviewed.has(a.id) || a.outcome === 'interview' || a.outcome === 'offer',
+        offer: offered.has(a.id) || a.outcome === 'offer',
+        sector: company?.sectors[0] ?? null,
+        size: company?.employeeRange ?? null,
+        channel: a.channel === 'platform' ? 'form' : 'email',
+        language: languageOf.get(a.draftId) === 'en' ? 'en' : 'tr',
+        intent: a.intentType === 'job_application' ? 'job' : 'general',
+        source: company?.origin ?? 'manual',
+      };
+    });
+    const sentByMail = rows.filter((r) => r.channel === 'email');
+    const grid = sendTimeGrid(sentByMail);
+    return {
+      range,
+      funnel: funnel(rows),
+      rates: [
+        { title: 'Sektöre göre', rows: ratesBy(rows, (r) => r.sector) },
+        { title: 'Çalışan sayısına göre', rows: ratesBy(rows, (r) => r.size, (k) => `${k} çalışan`) },
+        { title: 'Başvuru türüne göre', rows: ratesBy(rows, (r) => r.intent, (k) => (k === 'job' ? 'İlana başvuru' : 'Genel başvuru')) },
+        { title: 'Dile göre', rows: ratesBy(rows, (r) => r.language, (k) => (k === 'en' ? 'İngilizce' : 'Türkçe')) },
+        { title: 'Firmanın bulunduğu yere göre', rows: ratesBy(rows, (r) => r.source, (k) => SOURCE_LABELS[k] ?? k) },
+      ],
+      weekly: weekly(rows),
+      sendTime: { grid, suggestion: suggestSendTime(grid), repliesNeeded: MIN_REPLIES_FOR_SUGGESTION, replies: sentByMail.filter((r) => r.replied).length },
+      ai: { tasks: ai._count, costUsd: Math.round((ai._sum.costUsd ?? 0) * 100) / 100 },
+    };
+  }
+
+  async interviews(ctx: RequestContext): Promise<ServerShape<InterviewItem>[]> {
+    return (await this.pipeline.upcoming(ctx.workspaceId)).map(interviewItemOf);
+  }
+
+  async addStage(ctx: RequestContext, attemptId: string, input: z.infer<typeof stageSchema>) {
+    await this.pipeline.addStage(ctx.workspaceId, attemptId, { stage: input.stage, at: input.at ? new Date(input.at) : undefined, note: input.note ?? null }, ctx.userId);
+    return { ok: true };
+  }
+
+  async addInterview(ctx: RequestContext, attemptId: string, input: z.infer<typeof interviewSchema>) {
+    const interview = await this.pipeline.createInterview(ctx.workspaceId, attemptId, { ...input, startsAt: new Date(input.startsAt) }, ctx.userId);
+    return { id: interview.id };
+  }
+
+  async updateInterview(ctx: RequestContext, id: string, input: z.infer<typeof interviewPatchSchema>) {
+    await this.pipeline.updateInterview(ctx.workspaceId, id, { ...input, startsAt: input.startsAt ? new Date(input.startsAt) : undefined });
+    return { ok: true };
+  }
+
+  interviewIcs(ctx: RequestContext, id: string) {
+    return this.pipeline.ics(ctx.workspaceId, id);
   }
 
   async markApplied(ctx: RequestContext, opportunityId: string) {
@@ -694,22 +878,27 @@ export class HomeService {
     return { ok: true };
   }
 
-  async researchMissingEmails(ctx: RequestContext, force = false) {
-    const { items } = await this.opportunities(ctx);
-    const companyIds = [...new Set(items.filter((i) => !i.canEmail).map((i) => i.companyId))];
-    const companies = await this.prisma.company.findMany({ where: { id: { in: companyIds }, workspaceId: ctx.workspaceId }, select: { id: true, researchMeta: true } });
-    const stamp = Date.now();
-    const due = companies.filter((c) => contactSearchPlan(c.researchMeta as ResearchMeta, { deep: true, force }, stamp).skip === null);
-    const queued = due.slice(0, BULK_DETAILS_LIMIT);
-    for (const c of queued) {
-      await this.outbox.emit({ workspaceId: ctx.workspaceId, eventType: 'research.details.bulk', aggregateId: c.id, dedupKey: `research-details:${c.id}:bulk:${stamp}`, payload: { actorId: ctx.userId, force } });
-    }
-    return { queued: queued.length, companyIds: queued.map((c) => c.id), skippedRecent: companies.length - due.length, deferred: due.length - queued.length };
+  /**
+   * Eksik bilgisi olan firmaların hepsi tek bir toplu araştırmaya alınır (ekranda görünen firmalar verildiyse yalnız
+   * onlar). Yakın zamanda derinlemesine aranmış firmalar araştırma sırasında atlanır ve öyle raporlanır.
+   */
+  async researchMissingEmails(ctx: RequestContext, force = true, companyIds?: string[]): Promise<ResearchBatchStart> {
+    const ids = companyIds?.length ? companyIds : [...new Set((await this.opportunities(ctx)).items.filter((i) => !i.canEmail).map((i) => i.companyId))];
+    const started = await this.researchBatches.start(ctx.workspaceId, ids, { userId: ctx.userId, force });
+    return { ...started, companyIds: ids };
+  }
+
+  async researchBatch(ctx: RequestContext): Promise<ServerShape<ResearchBatchStatus> | null> {
+    return this.researchBatches.current(ctx.workspaceId);
+  }
+
+  async cancelResearchBatch(ctx: RequestContext) {
+    return this.researchBatches.cancel(ctx.workspaceId);
   }
 
   async lookupCompany(ctx: RequestContext, query: string) {
     const normalizedName = normalizeCompanyName(query);
-    const existing = await this.prisma.company.findFirst({ where: { workspaceId: ctx.workspaceId, normalizedName }, select: { id: true, name: true, excluded: true } });
+    const existing = await followMerged(this.prisma, await this.prisma.company.findFirst({ where: { workspaceId: ctx.workspaceId, normalizedName } }));
     if (existing && !existing.excluded) return { status: 'exists', companyId: existing.id, name: existing.name };
     const lookupId = randomToken(12);
     await this.outbox.emit({ workspaceId: ctx.workspaceId, eventType: 'company.lookup', aggregateId: lookupId, dedupKey: `company-lookup:${lookupId}`, payload: { query, actorId: ctx.userId } });
@@ -750,6 +939,115 @@ export class HomeService {
     return { queued: true, revision: draft.currentRevision };
   }
 
+  /** Takipler: bekleyen, taslağı hazır olan ve son iki haftada gönderilen/vazgeçilen; ayrıca takip ayarları. */
+  async followUps(ctx: RequestContext): Promise<ServerShape<FollowUpList>> {
+    const since = new Date(Date.now() - FOLLOW_UP_HISTORY_DAYS * 86400_000);
+    const rows = await this.prisma.followUp.findMany({
+      where: { workspaceId: ctx.workspaceId, OR: [{ state: { in: ['pending', 'drafted'] } }, { updatedAt: { gte: since } }] },
+      orderBy: { dueAt: 'asc' },
+      take: FOLLOW_UP_LIST_LIMIT,
+    });
+    const attempts = await this.prisma.applicationAttempt.findMany({ where: { id: { in: rows.map((r) => r.attemptId) } }, select: { id: true, companyId: true, jobId: true, toEmail: true, acceptedAt: true, hiddenAt: true } });
+    const attemptById = new Map(attempts.map((a) => [a.id, a]));
+    const [companies, jobs, drafts] = await Promise.all([
+      this.prisma.company.findMany({ where: { id: { in: [...new Set(attempts.map((a) => a.companyId))] } }, select: { id: true, name: true } }),
+      this.prisma.job.findMany({ where: { id: { in: attempts.map((a) => a.jobId).filter((id): id is string => !!id) } }, select: { id: true, title: true } }),
+      this.prisma.applicationDraft.findMany({ where: { id: { in: rows.map((r) => r.draftId).filter((id): id is string => !!id) } } }),
+    ]);
+    const revisions = drafts.length ? await this.prisma.draftRevision.findMany({ where: { OR: drafts.map((d) => ({ draftId: d.id, revision: d.currentRevision })) } }) : [];
+    const companyName = new Map(companies.map((c) => [c.id, c.name]));
+    const jobTitle = new Map(jobs.map((j) => [j.id, j.title]));
+    const draftById = new Map(drafts.map((d) => [d.id, d]));
+    const revisionOf = new Map(revisions.map((r) => [r.draftId, r]));
+    const items: ServerShape<FollowUpItem>[] = rows.flatMap((f) => {
+      const attempt = attemptById.get(f.attemptId);
+      if (!attempt || attempt.hiddenAt) return [];
+      const draft = f.draftId ? draftById.get(f.draftId) : undefined;
+      const rev = draft ? revisionOf.get(draft.id) : undefined;
+      return [
+        {
+          id: f.id,
+          attemptId: f.attemptId,
+          company: companyName.get(attempt.companyId) ?? 'Firma',
+          title: attempt.jobId ? (jobTitle.get(attempt.jobId) ?? null) : null,
+          toEmail: attempt.toEmail,
+          sentAt: attempt.acceptedAt,
+          dueAt: f.dueAt,
+          state: f.state as FollowUpState,
+          draft: draft && rev ? { id: draft.id, revision: draft.currentRevision, status: draft.status, subject: rev.subject, body: rev.body, toEmail: rev.toEmail, problems: draft.blockedReasons, language: draft.language === 'en' ? ('en' as const) : ('tr' as const) } : null,
+          note: f.cancellationReason ?? f.lastError ?? null,
+        },
+      ];
+    });
+    const policy = await this.prisma.automationPolicy.findFirst({ where: { workspaceId: ctx.workspaceId }, orderBy: [{ active: 'desc' }, { createdAt: 'desc' }], select: { followUpDelayDays: true, modeFollowUp: true } });
+    return { items, settings: { delayDays: policy?.followUpDelayDays ?? DEFAULT_FOLLOW_UP_DAYS, auto: policy?.modeFollowUp ?? false, hasPolicy: !!policy } };
+  }
+
+  private async ownFollowUp(ctx: RequestContext, id: string) {
+    const f = await this.prisma.followUp.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
+    if (!f) throw notFound('Takip');
+    return f;
+  }
+
+  async prepareFollowUp(ctx: RequestContext, id: string) {
+    const f = await this.ownFollowUp(ctx, id);
+    if (f.state !== 'pending') throw new AppError(409, 'FOLLOW_UP_NOT_PENDING', 'Bu takibin taslağı zaten hazır ya da takip kapandı');
+    return this.automation.prepareFollowUpNow(ctx.workspaceId, id);
+  }
+
+  async sendFollowUp(ctx: RequestContext, id: string) {
+    const f = await this.ownFollowUp(ctx, id);
+    const draft = f.draftId ? await this.prisma.applicationDraft.findUnique({ where: { id: f.draftId } }) : null;
+    if (f.state !== 'drafted' || !draft) throw new AppError(409, 'FOLLOW_UP_NOT_READY', 'Takip taslağı henüz hazır değil');
+    const { attempt } = await this.sending.queueSend({
+      workspaceId: ctx.workspaceId,
+      userId: ctx.userId,
+      draftId: draft.id,
+      idempotencyKey: `followup-manual:${draft.id}:${draft.currentRevision}`,
+      expectedRevision: draft.currentRevision,
+      sendMode: 'manual',
+    });
+    await this.prisma.followUp.update({ where: { id: f.id }, data: { state: 'sent' } });
+    return { attemptId: attempt.id };
+  }
+
+  async skipFollowUp(ctx: RequestContext, id: string) {
+    const f = await this.ownFollowUp(ctx, id);
+    if (!['pending', 'drafted'].includes(f.state)) return { ok: true };
+    await this.prisma.followUp.update({ where: { id: f.id }, data: { state: 'cancelled', cancellationReason: 'Vazgeçildi' } });
+    if (f.draftId) await this.prisma.applicationDraft.updateMany({ where: { id: f.draftId, status: { in: EDITABLE_DRAFT_STATES } }, data: { status: 'cancelled' } });
+    return { ok: true };
+  }
+
+  /** Takip gecikmesi ve otomatik takip, çalışma alanının otomatik başvuru ayarlarına yazılır; bekleyen takiplerin vadesi değişmez. */
+  async saveFollowUpSettings(ctx: RequestContext, input: { delayDays: number; auto: boolean }) {
+    const { count } = await this.prisma.automationPolicy.updateMany({ where: { workspaceId: ctx.workspaceId }, data: { followUpDelayDays: input.delayDays, modeFollowUp: input.auto } });
+    if (!count) throw new AppError(422, 'POLICY_MISSING', 'Takip ayarı için önce otomatik başvuru ayarlarını oluştur');
+    return input;
+  }
+
+  async companyTwins(ctx: RequestContext): Promise<CompanyTwin[]> {
+    return (await this.companyMerge.suggestions(ctx.workspaceId)).map((t) => ({ a: t.a, b: t.b, level: t.verdict.level, reasons: t.verdict.reasons }));
+  }
+
+  async mergeCompanies(ctx: RequestContext, keepId: string, dropId: string) {
+    return this.companyMerge.merge(ctx.workspaceId, keepId, dropId, { actorId: ctx.userId });
+  }
+
+  async dismissTwin(ctx: RequestContext, aId: string, bId: string) {
+    await this.companyMerge.dismiss(ctx.workspaceId, aId, bId);
+    return { ok: true };
+  }
+
+  /** Firmaya yazılacak dil elle seçilir (null = otomatik); kullanıcının düzenlemediği hazır yazılar yeni dile çevrilir. */
+  async setCompanyLanguage(ctx: RequestContext, companyId: string, language: 'tr' | 'en' | null) {
+    const company = await this.prisma.company.findFirst({ where: { id: companyId, workspaceId: ctx.workspaceId }, select: { id: true } });
+    if (!company) throw notFound('Firma');
+    await this.prisma.company.update({ where: { id: companyId }, data: { applicationLanguage: language } });
+    await this.outbox.emit({ workspaceId: ctx.workspaceId, eventType: 'drafts.align_language', aggregateId: companyId, dedupKey: `drafts-language:${companyId}:${Date.now()}`, payload: { userTriggered: true } });
+    return { ok: true, language };
+  }
+
   async researchDetails(ctx: RequestContext, companyId: string) {
     const company = await this.prisma.company.findFirst({ where: { id: companyId, workspaceId: ctx.workspaceId }, select: { id: true } });
     if (!company) throw notFound('Firma');
@@ -784,9 +1082,13 @@ export class HomeService {
   async preview(ctx: RequestContext, opportunityId: string): Promise<ServerShape<HomePreview>> {
     const opp = await this.prisma.opportunity.findFirst({
       where: { id: opportunityId, workspaceId: ctx.workspaceId },
-      include: { company: { select: { id: true, name: true, groupName: true, canonicalDomain: true, aliases: true, contacts: true } }, job: { select: { title: true, applyUrl: true, applyEmail: true } } },
+      include: {
+        company: { select: { id: true, name: true, groupName: true, canonicalDomain: true, aliases: true, contacts: true, applicationLanguage: true, researchMeta: true, offices: { select: { city: true, district: true, address: true } } } },
+        job: { select: { title: true, applyUrl: true, applyEmail: true, description: true, locationText: true, workMode: true } },
+      },
     });
     if (!opp) throw notFound('Fırsat');
+    const language = languageForApplication(opp.company, opp.job);
     const scoring = { domain: opp.company.canonicalDomain, aliases: opp.company.aliases, delivery: await this.models.deliveryFor(opp.company) };
     const suggestedTo = opp.job?.applyEmail ?? pickContact(opp.company.contacts, scoring)?.email ?? null;
     const header = {
@@ -799,6 +1101,8 @@ export class HomeService {
       recipientOptions: recipientOptionsOf(opp.job?.applyEmail, opp.company.contacts, scoring),
       groupSuggestion: suggestedTo ? null : groupSuggestionOf(opp.company),
       recipientSuggestions: suggestedTo ? [] : recipientSuggestionsOf(opp.company),
+      language: language.language,
+      languageReason: LANGUAGE_REASON_TEXT[language.reason],
     };
     let draft = await this.prisma.applicationDraft.findFirst({ where: { opportunityId, status: { in: ACTIVE_DRAFT_STATES } }, orderBy: { createdAt: 'desc' } });
     if (draft && draft.currentRevision > 0 && suggestedTo && EDITABLE_DRAFT_STATES.includes(draft.status)) draft = await this.automation.fillMissingRecipient(draft, suggestedTo, ctx.userId);
@@ -825,6 +1129,7 @@ export class HomeService {
         documents,
         availableDocuments,
         problems: draft.blockedReasons,
+        language: draft.language === 'en' ? ('en' as const) : ('tr' as const),
       },
     };
   }
@@ -884,6 +1189,40 @@ export class HomeService {
   }
 }
 
+/** İlanın konumu tanınıyorsa (il, ilçe, yurt dışı) seçimlerle eşleşmesi; tanınmıyorsa firma ofisine düşülsün diye "none". */
+function jobRegions(selections: string[], job: { district: string | null; city: string | null; address: string | null; locationText: string | null } | null): { regions: string[]; regionSource: 'job' | 'none' } {
+  if (!job) return { regions: [], regionSource: 'none' };
+  const text = [job.district, job.city, job.address, job.locationText].filter(Boolean).join(' ');
+  const regions = selectionsMatching(selections, text);
+  const location = detectLocation(text);
+  const known = regions.length > 0 || !!location.district || isInTurkey(text) || workScopeOf(text) === 'abroad';
+  return known ? { regions, regionSource: 'job' } : { regions: [], regionSource: 'none' };
+}
+
+const WORK_POLICIES = ['remote', 'hybrid', 'onsite'] as const;
+const workPolicyOf = (value: string | null): (typeof WORK_POLICIES)[number] | null => (WORK_POLICIES as readonly (string | null)[]).includes(value) ? (value as (typeof WORK_POLICIES)[number]) : null;
+
+function interviewItemOf(i: { id: string; attemptId: string; company: string; title: string | null; startsAt: Date; durationMin: number; kind: string; link: string | null; location: string | null; notes: string | null; status: string; source: string }) {
+  return {
+    id: i.id,
+    attemptId: i.attemptId,
+    company: i.company,
+    title: i.title,
+    startsAt: i.startsAt,
+    durationMin: i.durationMin,
+    kind: (INTERVIEW_KINDS as readonly string[]).includes(i.kind) ? (i.kind as InterviewKind) : ('video' as const),
+    link: i.link,
+    location: i.location,
+    notes: i.notes,
+    status: (INTERVIEW_STATUSES as readonly string[]).includes(i.status) ? (i.status as InterviewItem['status']) : ('scheduled' as const),
+    source: i.source === 'inbox' ? ('inbox' as const) : ('manual' as const),
+  };
+}
+
+function citySelectionsOf(raw: string | null | undefined): string[] {
+  return (raw ?? '').split(CITY_SELECTION_SEPARATOR).map((s) => s.trim()).filter(Boolean);
+}
+
 function distinctCities(cities: (string | null)[]) {
   const seen = new Map<string, string>();
   for (const city of cities) {
@@ -937,6 +1276,15 @@ function fitLabel(category: string, f: number | null): 'strong' | 'good' | 'chec
   if (category === 'needs_confirmation') return 'check';
   if (category === 'target_open' && (f ?? 0) >= STRONG_FIT_SCORE) return 'strong';
   return 'good';
+}
+
+const WORK_MODES: readonly string[] = ['onsite', 'hybrid', 'remote'] satisfies WorkMode[];
+
+/** İlanda yazan çalışma şekli (konumda "uzaktan" geçmesi dahil); yazmıyorsa unvan, açıklama ve adresten tahmin. */
+function jobWorkMode(job: { title: string; description: string | null; locationText: string | null; address: string | null; workMode: string }, scope: string): { mode: WorkMode; estimated: boolean } {
+  if (WORK_MODES.includes(job.workMode)) return { mode: job.workMode as WorkMode, estimated: false };
+  if (scope === 'remote') return { mode: 'remote', estimated: false };
+  return { mode: estimateWorkMode({ title: job.title, description: job.description, location: job.address ?? job.locationText }), estimated: true };
 }
 
 function summarize(o: { category: string; titleMatch: string; locationState: string; job: { locationText: string | null; firstSeenAt: Date } | null }): string {
@@ -1062,9 +1410,68 @@ export class HomeController {
     return this.svc.applications(ctx);
   }
 
+  @Get('follow-ups')
+  followUps(@Ctx() ctx: RequestContext) {
+    return this.svc.followUps(ctx);
+  }
+
+  @Post('follow-ups/:id/prepare')
+  prepareFollowUp(@Ctx() ctx: RequestContext, @Param('id') id: string) {
+    return this.svc.prepareFollowUp(ctx, id);
+  }
+
+  @Post('follow-ups/:id/send')
+  sendFollowUp(@Ctx() ctx: RequestContext, @Param('id') id: string) {
+    return this.svc.sendFollowUp(ctx, id);
+  }
+
+  @Post('follow-ups/:id/skip')
+  skipFollowUp(@Ctx() ctx: RequestContext, @Param('id') id: string) {
+    return this.svc.skipFollowUp(ctx, id);
+  }
+
+  @Put('follow-ups/settings')
+  saveFollowUpSettings(@Ctx() ctx: RequestContext, @Body(new ZodPipe(followUpSettingsSchema)) body: z.infer<typeof followUpSettingsSchema>) {
+    return this.svc.saveFollowUpSettings(ctx, body);
+  }
+
   @Get('applications/:id')
   application(@Ctx() ctx: RequestContext, @Param('id') id: string) {
     return this.svc.application(ctx, id);
+  }
+
+  @Post('applications/:id/stages')
+  addStage(@Ctx() ctx: RequestContext, @Param('id') id: string, @Body(new ZodPipe(stageSchema)) body: z.infer<typeof stageSchema>) {
+    return this.svc.addStage(ctx, id, body);
+  }
+
+  @Post('applications/:id/interviews')
+  addInterview(@Ctx() ctx: RequestContext, @Param('id') id: string, @Body(new ZodPipe(interviewSchema)) body: z.infer<typeof interviewSchema>) {
+    return this.svc.addInterview(ctx, id, body);
+  }
+
+  @Get('stats')
+  stats(@Ctx() ctx: RequestContext, @Query('range', new ZodPipe(statsRangeSchema)) range: StatsRange) {
+    return this.svc.stats(ctx, range);
+  }
+
+  @Get('interviews')
+  interviews(@Ctx() ctx: RequestContext) {
+    return this.svc.interviews(ctx);
+  }
+
+  @Patch('interviews/:id')
+  updateInterview(@Ctx() ctx: RequestContext, @Param('id') id: string, @Body(new ZodPipe(interviewPatchSchema)) body: z.infer<typeof interviewPatchSchema>) {
+    return this.svc.updateInterview(ctx, id, body);
+  }
+
+  @Get('interviews/:id/ics')
+  async interviewIcs(@Ctx() ctx: RequestContext, @Param('id') id: string, @Res() res: Response) {
+    const ics = await this.svc.interviewIcs(ctx, id);
+    res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="mulakat-${id}.ics"`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(ics);
   }
 
   @Post('companies/sizes')
@@ -1074,7 +1481,17 @@ export class HomeController {
 
   @Post('companies/missing-emails')
   researchMissingEmails(@Ctx() ctx: RequestContext, @Body(new ZodPipe(missingEmailsSchema)) body: z.infer<typeof missingEmailsSchema>) {
-    return this.svc.researchMissingEmails(ctx, body.force);
+    return this.svc.researchMissingEmails(ctx, body.force, body.companyIds);
+  }
+
+  @Get('research-batches/current')
+  researchBatch(@Ctx() ctx: RequestContext) {
+    return this.svc.researchBatch(ctx);
+  }
+
+  @Post('research-batches/cancel')
+  cancelResearchBatch(@Ctx() ctx: RequestContext) {
+    return this.svc.cancelResearchBatch(ctx);
   }
 
   @Post('applications/remove')
@@ -1105,6 +1522,26 @@ export class HomeController {
   @Post('drafts/:id/translate')
   translateDraft(@Ctx() ctx: RequestContext, @Param('id') id: string, @Body(new ZodPipe(translateSchema)) body: z.infer<typeof translateSchema>) {
     return this.svc.translateDraft(ctx, id, body.lang);
+  }
+
+  @Get('companies/twins')
+  companyTwins(@Ctx() ctx: RequestContext) {
+    return this.svc.companyTwins(ctx);
+  }
+
+  @Post('companies/merge')
+  mergeCompanies(@Ctx() ctx: RequestContext, @Body(new ZodPipe(mergeSchema)) body: z.infer<typeof mergeSchema>) {
+    return this.svc.mergeCompanies(ctx, body.keepId, body.dropId);
+  }
+
+  @Post('companies/twins/dismiss')
+  dismissTwin(@Ctx() ctx: RequestContext, @Body(new ZodPipe(twinPairSchema)) body: z.infer<typeof twinPairSchema>) {
+    return this.svc.dismissTwin(ctx, body.aId, body.bId);
+  }
+
+  @Put('companies/:id/language')
+  setCompanyLanguage(@Ctx() ctx: RequestContext, @Param('id') id: string, @Body(new ZodPipe(companyLanguageSchema)) body: z.infer<typeof companyLanguageSchema>) {
+    return this.svc.setCompanyLanguage(ctx, id, body.language);
   }
 
   @Post('companies/:id/details')

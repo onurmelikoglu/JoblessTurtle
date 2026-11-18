@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Jobless Turtle — ilan aktarıcı",
   "short_name": "Jobless Turtle",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Kariyer.net, Indeed, Eleman.net, İşin Olsun, Secretcv ve Yenibiriş'te açtığın arama sonuç sayfasındaki ilanları Jobless Turtle'a aktarır. Siteye kendi başına istek atmaz.",
   "icons": { "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
   "action": { "default_title": "Jobless Turtle ayarları", "default_icon": { "32": "icons/icon-32.png" } },

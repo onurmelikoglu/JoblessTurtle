@@ -8,7 +8,7 @@ globalThis.JT_EXTRACTORS = {
     read: function () {
       return (() => {
         const S = {"listRoot":"[data-test=\"list-items\"]","card":"[data-test=\"ad-card\"]","link":"a[data-test=\"ad-card-item\"]","title":"[data-test=\"ad-card-title\"]","company":"[data-test=\"subtitle\"]","location":"[data-test=\"location\"]","workModel":"[data-test=\"work-model\"]","date":"[data-test=\"ad-date\"]"};
-        const A = {"city":"cityname","workType":"worktypetext","workModel":"workmodeltext","dateStatus":"jobdatestatus","position":"positionname"};
+        const A = {"city":"cityname","workType":"worktypetext","workModel":"workmodeltext","dateStatus":"jobdatestatus","position":"positionname","sector":"sectorname"};
         const MARKERS = ["px-captcha","window._pxAppId","Access to this page has been denied"];
         const html = document.documentElement.outerHTML;
         const marker = MARKERS.find((m) => html.includes(m)) || null;
@@ -22,7 +22,7 @@ globalThis.JT_EXTRACTORS = {
             copy.querySelectorAll('i').forEach((i) => i.remove());
             dateText = text(copy);
           }
-          return [link ? link.getAttribute('href') : null, text(el.querySelector(S.title)), text(el.querySelector(S.company)), text(el.querySelector(S.location)) || el.getAttribute(A.city), el.getAttribute(A.workType), el.getAttribute(A.workModel) || text(el.querySelector(S.workModel)), dateText, el.getAttribute(A.dateStatus)];
+          return [link ? link.getAttribute('href') : null, text(el.querySelector(S.title)), text(el.querySelector(S.company)), text(el.querySelector(S.location)) || el.getAttribute(A.city), el.getAttribute(A.workType), el.getAttribute(A.workModel) || text(el.querySelector(S.workModel)), dateText, el.getAttribute(A.dateStatus), el.getAttribute(A.sector)];
         });
         const m = location.pathname.match(/^\/is-ilanlari\/(.+?)(?:-(\d+))?\/?$/);
         const nextPath = m ? '/is-ilanlari/' + m[1] + '-' + ((Number(m[2]) || 1) + 1) : null;
@@ -50,6 +50,7 @@ globalThis.JT_EXTRACTORS = {
         const S = {"card":"a[data-jk]","title":"span[id^=\"jobTitle-\"]","cardRoot":"li","company":"[data-testid=\"company-name\"]","location":"[data-testid=\"text-location\"]"};
         const MARKERS = ["cf_chl_opt","Additional Verification Required","<title>Security Check","<title>Just a moment"];
         const EMBEDDED = "window.mosaic.providerData[\"mosaic-provider-jobcards\"]=";
+        const REMOTE = "remote";
         const html = document.documentElement.outerHTML;
         const marker = MARKERS.find((m) => html.includes(m)) || null;
         const objectAt = (src, start) => {
@@ -73,7 +74,7 @@ globalThis.JT_EXTRACTORS = {
         }
         const text = (el) => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '') || null;
         const cards = Array.isArray(results)
-          ? results.map((r) => [r.jobkey || null, r.displayTitle || r.title || null, r.company || null, r.formattedLocation || r.jobLocationCity || null, r.jobLocationState || null, r.remoteLocation ? 1 : 0, (r.jobTypes || []).join(', ') || null, r.pubDate || null, r.formattedRelativeTime || null, r.companyOverviewLink || null])
+          ? results.map((r) => [r.jobkey || null, r.displayTitle || r.title || null, r.company || null, r.formattedLocation || r.jobLocationCity || null, r.jobLocationState || null, r.remoteLocation ? 1 : 0, (r.jobTypes || []).join(', ') || null, r.pubDate || null, r.formattedRelativeTime || null, r.companyOverviewLink || null, ((r.taxonomyAttributes || []).find((t) => t.label === REMOTE) || { attributes: [] }).attributes.map((a) => a.label).filter(Boolean).join(', ') || null])
           : [...document.querySelectorAll(S.card)].map((a) => {
               const root = a.closest(S.cardRoot);
               return [a.getAttribute('data-jk'), text(a.querySelector(S.title)) || text(a), root ? text(root.querySelector(S.company)) : null, root ? text(root.querySelector(S.location)) : null, null, 0, null, null, null, null];
@@ -164,7 +165,7 @@ globalThis.JT_EXTRACTORS = {
     path: new RegExp("^\\/is-ilanlari(?:\\/([a-z0-9-]+))?\\/?$"),
     read: function () {
       return (() => {
-        const S = {"card":".cv-job-box.job-list","title":"a.title","company":".company","location":".city > span","date":".city small"};
+        const S = {"card":".cv-job-box.job-list","title":"a.title","company":".company","location":".city > span","district":".city > span:nth-of-type(2)","date":".city small"};
         const MARKERS = ["cf_chl_opt","<title>Just a moment","Attention Required! | Cloudflare","px-captcha","Access to this page has been denied"];
         const PAGE = "sf";
         const html = document.documentElement.outerHTML;
@@ -172,7 +173,7 @@ globalThis.JT_EXTRACTORS = {
         const text = (el) => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '') || null;
         const cards = [...document.querySelectorAll(S.card)].map((el) => {
           const link = el.querySelector(S.title);
-          return [link ? link.getAttribute('href') : null, text(link), text(el.querySelector(S.company)), text(el.querySelector(S.location)), text(el.querySelector(S.date))];
+          return [link ? link.getAttribute('href') : null, text(link), text(el.querySelector(S.company)), text(el.querySelector(S.location)), text(el.querySelector(S.date)), text(el.querySelector(S.district))];
         });
         const current = Number(new URLSearchParams(location.search).get(PAGE)) || 1;
         const next = [...document.querySelectorAll('a[href]')].some((a) => {

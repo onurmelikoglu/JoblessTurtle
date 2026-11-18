@@ -46,6 +46,7 @@ describe('Kariyer.net ayrıştırıcısı (kayıtlı sayfa)', () => {
       url: '/is-ilani/kaplumbaga-yazilim-a-s-flutter-developer-4500102',
       employmentType: 'Tam zamanlı',
       workModeText: 'Hibrit',
+      sector: 'Bilişim',
       publishedText: 'Bugün',
       dateIsUpdate: false,
     });
@@ -89,7 +90,7 @@ describe('Indeed ayrıştırıcısı (kayıtlı sayfa)', () => {
     const page = parseIndeedPage(fixture('indeed-search.html'));
     expect(page.cards).toHaveLength(4);
     expect(page.hasNextPage).toBe(false);
-    expect(page.cards[0]).toMatchObject({ platformId: 'a1b2c3d4e5f60001', title: 'Mobile Developer (CR-01)', company: 'Kaplumbağa Yazılım', location: 'İstanbul - Kağıthane', url: '/viewjob?jk=a1b2c3d4e5f60001', companyUrl: '/cmp/Kaplumbaga-Yazilim' });
+    expect(page.cards[0]).toMatchObject({ platformId: 'a1b2c3d4e5f60001', title: 'Mobile Developer (CR-01)', company: 'Kaplumbağa Yazılım', location: 'İstanbul - Kağıthane', url: '/viewjob?jk=a1b2c3d4e5f60001', companyUrl: '/cmp/Kaplumbaga-Yazilim', workModeText: 'Hibrit çalışma' });
     expect(page.cards[0].description).toContain('Mobil ekibimize katılacak');
     expect(page.cards[1]).toMatchObject({ title: 'Flutter Developer "Junior"', employmentType: 'Tam zamanlı, Yeni mezun', location: 'İstanbul' });
     expect(page.cards[1].publishedAt?.getTime()).toBe(1792400000000);

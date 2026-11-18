@@ -20,6 +20,14 @@ export interface LoginSession {
   needsCode: boolean;
   message: string | null;
   expiresAt: IsoDate;
+  /** session: tarayıcı girişi (oturum birkaç haftada düşer) · long_lived: `claude setup-token`, bir yıl geçerli belirteç. */
+  mode: 'session' | 'long_lived';
+}
+
+export interface LongLivedToken {
+  last4: string;
+  savedAt: IsoDate;
+  expiresAt: IsoDate;
 }
 
 export interface ConnectStatus {
@@ -29,6 +37,10 @@ export interface ConnectStatus {
   connected: boolean;
   account: string | null;
   plan: string | null;
+  /** Tarayıcı girişinin bitişi (Claude bildiriyorsa). */
+  sessionExpiresAt: IsoDate | null;
+  /** Claude'un uzun süreli belirteci; varsa CLI bununla çalışır. */
+  longLived: LongLivedToken | null;
   login: LoginSession | null;
 }
 

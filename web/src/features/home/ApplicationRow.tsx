@@ -81,6 +81,8 @@ export function ApplicationRow({ application: a, selected, ...actions }: Applica
           {a.toEmail ? ` · ${a.toEmail}` : ''}
         </span>
         {note && <span className={note.tone === 'bad' ? 'block text-sm text-bad' : 'block text-sm text-warn'}>{note.text}</span>}
+        {a.nextInterviewAt && <span className="block text-sm font-medium text-good">Mülâkat: {fmtDateTime(a.nextInterviewAt)}</span>}
+        {a.ghosted && <span className="block text-sm text-ink-soft">21 günden uzun süredir yanıt yok; menüden "Yanıt gelmedi" olarak işaretleyebilirsin.</span>}
       </button>
       <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
         {channelLinks(a).map((link) => (

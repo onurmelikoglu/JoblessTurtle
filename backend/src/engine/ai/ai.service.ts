@@ -6,12 +6,29 @@ import { join } from 'path';
 import { decryptSecret, encryptSecret, hashObject } from '../../common/crypto';
 import type { ApiKeyStatus } from '../../contracts/ai-setup';
 import type { ServerShape } from '../../contracts/wire';
+import { env } from '../../common/env';
 import { AppError, notFound } from '../../common/errors';
 import { OutboxService } from '../../common/outbox.service';
 import { PrismaService } from '../../common/prisma.service';
 import { UsageService } from '../../common/usage.service';
-import { AI_CLASS_LABELS, AI_CLASSES, AiClass, aiClassOf, budgetBlock, classUsageKey, dailyCeiling, dailyShare, utilizationAllows, utilizationOpensAt, UtilizationWindow } from '../../domain/ai-budget';
+import {
+  AI_CLASS_LABELS,
+  AI_CLASSES,
+  AiClass,
+  aiClassOf,
+  budgetBlock,
+  BudgetBlock,
+  classUsageKey,
+  dailyCeiling,
+  dailyShare,
+  DEFAULT_ENRICH_DAILY_LIMIT,
+  SEPARATE_BUDGET_CLASSES,
+  utilizationAllows,
+  utilizationOpensAt,
+  UtilizationWindow,
+} from '../../domain/ai-budget';
 import { currentAiClass, noteAiCall } from './ai-context';
+import { fmtIstanbul } from '../../common/time';
 import { buildPrompt } from './prompts';
 import {
   API_KEY_PROVIDERS,
@@ -23,7 +40,12 @@ import {
   ProviderName,
   ProviderUsage,
   resetProviderCache,
+  setClaudeToken,
+  claudeLoggedIn,
+  claudeSessionExpiry,
+  runProcess,
   setStoredApiKeys,
+  CLAUDE_TOKEN_PATTERN,
   TEXT_PROVIDERS,
   WEB_RESEARCH_KINDS,
 } from './providers';
@@ -34,6 +56,8 @@ import { validateAiOutput, ValidationContext } from './validate';
 export interface AiSettings {
   providerOrder: ProviderName[];
   dailyTaskLimit: number;
+  /** Kullanıcının başlattığı toplu firma araştırmasının ayrı günlük görev hakkı. */
+  enrichDailyLimit?: number;
   webResearch?: boolean;
   /** Her gün arama profillerindeki unvanlara göre yeni firma keşfi (varsayılan açık). */
   dailyDiscovery?: boolean;
@@ -76,7 +100,7 @@ export const CLAUDE_MODEL_OPTIONS: ModelOption[] = [
   { value: 'opus', label: 'Opus', description: 'En güçlü; yavaş ve kotayı çabuk tüketir' },
 ];
 
-const LIGHT_KINDS: AiKind[] = ['cv_facts', 'title_expansion', 'title_analysis', 'company_sizes', 'reply_classification', 'inbound_review', 'job_alert'];
+const LIGHT_KINDS: AiKind[] = ['cv_facts', 'title_expansion', 'title_analysis', 'company_sizes', 'reply_classification', 'inbound_review', 'job_alert', 'interview_extract'];
 
 export const DEFAULT_MODELS: Record<ModelProvider, Partial<Record<AiKind | 'default', string>>> = {
   cli_claude: { default: 'sonnet', ...Object.fromEntries(LIGHT_KINDS.map((k) => [k, 'haiku'])), company_contacts: 'sonnet', contact_review: 'opus' },
@@ -84,7 +108,8 @@ export const DEFAULT_MODELS: Record<ModelProvider, Partial<Record<AiKind | 'defa
 };
 
 /** Bu görevlerde sağlayıcı sırasından bağımsız olarak önce denenen sağlayıcılar: adres araması Claude ile (Sonnet toplar, Opus doğrular); Claude yoksa ChatGPT yedektir. */
-const PREFERRED_PROVIDERS: Partial<Record<AiKind, ProviderName[]>> = { company_contacts: ['cli_claude', 'cli_codex'], contact_review: ['cli_claude'] };
+const CLAUDE_FIRST: ProviderName[] = ['cli_claude', 'cli_codex'];
+const PREFERRED_PROVIDERS: Partial<Record<AiKind, ProviderName[]>> = { company_contacts: CLAUDE_FIRST, contact_review: CLAUDE_FIRST, company_report: CLAUDE_FIRST, company_sizes: CLAUDE_FIRST };
 
 /**
  * Görevin sağlayıcı sırası: yöneticinin bu görev için seçtiği sağlayıcı önce, sonra görevin tercih edilenleri, sonra genel
@@ -201,7 +226,17 @@ function usageColumns(usage: ProviderUsage | undefined, durationMs: number, mode
   };
 }
 
-export const DEFAULT_AI_SETTINGS: AiSettings = { providerOrder: ['manual', 'template'], dailyTaskLimit: 60, webResearch: true, dailyDiscovery: true, discoveryLimit: 10 };
+const CLAUDE_TOKEN_KEY = 'ai:claude-oauth-token';
+/** `claude setup-token` belirteci bir yıl geçerlidir. */
+const CLAUDE_TOKEN_TTL_MS = 365 * 86_400_000;
+interface StoredClaudeToken {
+  secret: string;
+  last4: string;
+  savedAt: string;
+  expiresAt: string;
+}
+
+export const DEFAULT_AI_SETTINGS: AiSettings = { providerOrder: ['manual', 'template'], dailyTaskLimit: 60, enrichDailyLimit: DEFAULT_ENRICH_DAILY_LIMIT, webResearch: true, dailyDiscovery: true, discoveryLimit: 10 };
 
 @Injectable()
 export class AiService {
@@ -304,7 +339,7 @@ export class AiService {
     const out: AiClassStatus[] = [];
     for (const aiClass of AI_CLASSES) {
       const used = await this.usage.get(workspaceId, classUsageKey(aiClass));
-      const budget = budgetBlock(aiClass, { dailyLimit: settings.dailyTaskLimit, usedTotal, usedByClass: used });
+      const budget = this.classBudget(aiClass, settings, usedTotal, used);
       const free = usable.filter((name) => !cooldowns[name] && utilizationAllows(aiClass, windows.get(name), now));
       const subscriptionBlocked = usable.length > 0 && free.length === 0;
       const reopenings = usable.map((name) => (cooldowns[name] ? new Date(cooldowns[name]!) : utilizationOpensAt(aiClass, windows.get(name), now))).filter((d): d is Date => !!d);
@@ -312,13 +347,33 @@ export class AiService {
         aiClass,
         label: AI_CLASS_LABELS[aiClass],
         used,
-        share: dailyShare(aiClass, settings.dailyTaskLimit),
+        share: this.classShare(aiClass, settings),
         open: !budget && !subscriptionBlocked,
         blockedBy: budget ?? (subscriptionBlocked ? 'subscription' : null),
         opensAt: !budget && subscriptionBlocked && reopenings.length ? new Date(Math.min(...reopenings.map((d) => d.getTime()))) : null,
       });
     }
     return out;
+  }
+
+  /**
+   * Sınıf neden kapalı: günlük kota mı, yoksa web araması yapabilen sağlayıcıların (Claude, ChatGPT) hesabı bağlı değil
+   * ya da abonelik sınırı mı dolu. Kullanıcıya gösterilen erteleme notu budur.
+   */
+  async unavailableReason(workspaceId: string, aiClass: AiClass): Promise<string> {
+    const status = (await this.classStatus(workspaceId, { local: true })).find((c) => c.aiClass === aiClass);
+    if (status?.blockedBy === 'daily' || status?.blockedBy === 'share') return 'Günlük araştırma kotası doldu; yarın kendiliğinden devam edecek';
+    const settings = await this.settings(workspaceId);
+    const cooldowns = await this.cooldowns();
+    const parts: string[] = [];
+    for (const name of this.realProviders(settings).filter((p) => p === 'cli_claude' || p === 'cli_codex')) {
+      const availability = await TEXT_PROVIDERS[name].available();
+      const label = PROVIDER_LABELS[name];
+      if (!availability.ok) parts.push(`${label}: ${availability.detail}`);
+      else if (cooldowns[name]) parts.push(`${label}: abonelik sınırı dolu, ${fmtIstanbul(new Date(cooldowns[name]!))} sonra açılır`);
+      else if (!utilizationAllows(aiClass, await this.limitWindows(name))) parts.push(`${label}: abonelik kullanımı sınıra yakın`);
+    }
+    return parts.length ? `${parts.join(' · ')}. Bağlantı ya da sınır düzelince kendiliğinden devam edecek.` : 'Yapay zekâ şu an kullanılamıyor; açılınca kendiliğinden devam edecek';
   }
 
   /** Arka plan işi başlamadan sorulur: sınıf kapalıysa iş, şablon ya da elle tamamlanacak görev üretmeden ertelenir. */
@@ -370,6 +425,58 @@ export class AiService {
       }
     }
     setStoredApiKeys(plain);
+    setClaudeToken(await this.claudeTokenPlain());
+  }
+
+  private async storedClaudeToken(): Promise<StoredClaudeToken | null> {
+    const kv = await this.prisma.keyValue.findUnique({ where: { key: CLAUDE_TOKEN_KEY } });
+    return (kv?.value as StoredClaudeToken | null) ?? null;
+  }
+
+  private async claudeTokenPlain(): Promise<string | null> {
+    const stored = await this.storedClaudeToken();
+    if (!stored) return null;
+    try {
+      return decryptSecret(stored.secret);
+    } catch {
+      this.logger.warn('Claude uzun süreli belirteci çözülemedi (APP_ENCRYPTION_KEY değişmiş olabilir); yeniden bağlanmalı');
+      return null;
+    }
+  }
+
+  /**
+   * Claude bağlantısının sağlığı: uzun süreli belirteç varsa onun bitişi, yoksa tarayıcı girişinin durumu. CLI kurulu
+   * değilse null (denetlenecek bir şey yok).
+   */
+  async claudeConnectionHealth(): Promise<{ connected: boolean; expiresAt: Date | null; longLived: boolean } | null> {
+    await this.syncApiKeys(true);
+    const version = await runProcess(env().CLAUDE_CLI_PATH, ['--version'], '', 15000).catch(() => null);
+    if (!version || version.code !== 0) return null;
+    const token = await this.claudeTokenStatus();
+    if (token) return { connected: token.expiresAt.getTime() > Date.now(), expiresAt: token.expiresAt, longLived: true };
+    const status = await runProcess(env().CLAUDE_CLI_PATH, ['auth', 'status', '--json'], '', 15000).catch(() => null);
+    return { connected: !!status && claudeLoggedIn(status.stdout) !== false, expiresAt: status ? claudeSessionExpiry(status.stdout) : null, longLived: false };
+  }
+
+  /** Uzun süreli Claude belirtecinin özeti; belirtecin kendisi hiçbir zaman dönmez. */
+  async claudeTokenStatus(): Promise<{ last4: string; savedAt: Date; expiresAt: Date } | null> {
+    const stored = await this.storedClaudeToken();
+    return stored ? { last4: stored.last4, savedAt: new Date(stored.savedAt), expiresAt: new Date(stored.expiresAt) } : null;
+  }
+
+  async saveClaudeToken(token: string | null) {
+    const clean = token?.trim() ?? null;
+    if (clean && !CLAUDE_TOKEN_PATTERN.test(clean)) throw new AppError(422, 'CLAUDE_TOKEN_INVALID', 'Bu bir Claude belirteci değil. `claude setup-token` komutunun verdiği sk-ant-oat… ile başlayan değeri yapıştır.');
+    if (clean) {
+      const now = new Date();
+      const value: StoredClaudeToken = { secret: encryptSecret(clean), last4: clean.slice(-4), savedAt: now.toISOString(), expiresAt: new Date(now.getTime() + CLAUDE_TOKEN_TTL_MS).toISOString() };
+      await this.prisma.keyValue.upsert({ where: { key: CLAUDE_TOKEN_KEY }, create: { key: CLAUDE_TOKEN_KEY, value: value as unknown as Prisma.InputJsonValue }, update: { value: value as unknown as Prisma.InputJsonValue } });
+    } else {
+      await this.prisma.keyValue.deleteMany({ where: { key: CLAUDE_TOKEN_KEY } });
+    }
+    await this.syncApiKeys(true);
+    await this.markProvidersChanged();
+    return this.claudeTokenStatus();
   }
 
   async apiKeyStatus(): Promise<Record<ApiKeyProvider, ServerShape<ApiKeyStatus>>> {
@@ -407,7 +514,18 @@ export class AiService {
     return known ? names.filter((name) => known[name] === true) : names;
   }
 
-  private async reserveBudget(workspaceId: string, aiClass: AiClass, dailyLimit: number): Promise<boolean> {
+  private classShare(aiClass: AiClass, settings: AiSettings): number {
+    return SEPARATE_BUDGET_CLASSES.includes(aiClass) ? (settings.enrichDailyLimit ?? DEFAULT_ENRICH_DAILY_LIMIT) : dailyShare(aiClass, settings.dailyTaskLimit);
+  }
+
+  private classBudget(aiClass: AiClass, settings: AiSettings, usedTotal: number, usedByClass: number): BudgetBlock {
+    if (SEPARATE_BUDGET_CLASSES.includes(aiClass)) return usedByClass >= this.classShare(aiClass, settings) ? 'share' : null;
+    return budgetBlock(aiClass, { dailyLimit: settings.dailyTaskLimit, usedTotal, usedByClass });
+  }
+
+  private async reserveBudget(workspaceId: string, aiClass: AiClass, settings: AiSettings): Promise<boolean> {
+    if (SEPARATE_BUDGET_CLASSES.includes(aiClass)) return this.usage.reserve(workspaceId, classUsageKey(aiClass), this.classShare(aiClass, settings));
+    const dailyLimit = settings.dailyTaskLimit;
     if (!(await this.usage.reserve(workspaceId, classUsageKey(aiClass), dailyShare(aiClass, dailyLimit)))) return false;
     if (await this.usage.reserve(workspaceId, AI_USAGE_KEY, dailyCeiling(aiClass, dailyLimit))) return true;
     await this.usage.release(workspaceId, classUsageKey(aiClass));
@@ -461,6 +579,7 @@ export class AiService {
     const next = {
       providerOrder: order,
       dailyTaskLimit: patch.dailyTaskLimit ?? current.dailyTaskLimit,
+      enrichDailyLimit: patch.enrichDailyLimit ?? current.enrichDailyLimit,
       webResearch: patch.webResearch ?? current.webResearch,
       dailyDiscovery: patch.dailyDiscovery ?? current.dailyDiscovery,
       discoveryLimit: patch.discoveryLimit ?? current.discoveryLimit,
@@ -590,7 +709,7 @@ export class AiService {
       const models = [firstModel, ...(req.modelOverride?.[name as ModelProvider] ? [] : [escalationModelFor(name, firstModel)])].filter((m, i) => i === 0 || !!m);
       let budgetExhausted = false;
       for (const model of models) {
-        if (!(await this.reserveBudget(req.workspaceId, aiClass, settings.dailyTaskLimit))) {
+        if (!(await this.reserveBudget(req.workspaceId, aiClass, settings))) {
           this.logger.warn(`AI günlük hakkı doldu (${req.workspaceId}, ${aiClass}); şablon moduna geçiliyor`);
           budgetExhausted = true;
           break;

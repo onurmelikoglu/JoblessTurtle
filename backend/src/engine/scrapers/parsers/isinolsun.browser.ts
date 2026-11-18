@@ -2,7 +2,7 @@ import { RawCard } from '../../../domain/scraped-jobs';
 import { ISINOLSUN } from '../selectors/isinolsun';
 import { ParsedPage } from '../types';
 import { assertReadable, readBrowserPayload } from './browser-payload';
-import { isinolsunLocation } from './isinolsun.parser';
+import { isinolsunLocation, isinolsunNeighbourhood } from './isinolsun.parser';
 
 /**
  * İşin Olsun sonuç sayfasını kullanıcının tarayıcısında okuyan betik. Kartlar yapıdan okunur (bağlantı içindeki h3,
@@ -46,6 +46,7 @@ export function isinolsunFromBrowser(payload: unknown, url: string): ParsedPage 
       title,
       company,
       location: isinolsunLocation(address),
+      address: isinolsunNeighbourhood(address),
       url: href,
       employmentType: workType,
     };

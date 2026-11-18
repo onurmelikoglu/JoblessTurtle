@@ -253,6 +253,10 @@ model Company {
   linkedinUrl      String?
   employeeRange    String? // domain/company-size.ts EMPLOYEE_RANGES
   employeeCount    Int?
+  applicationLanguage String? // tr | en; null = otomatik (domain/application-language.ts)
+  phone            String?
+  workPolicy       String? // remote | hybrid | onsite: firmanın genel çalışma düzeni (araştırmadan)
+  mergedIntoId     String? // aynı firmanın başka kaydıyla birleştirildi; bu kayıt yalnız yönlendirmedir
   // Kalite boyutları: {customer:{score,note,evidenceIds,override}, ...}
   qualityDims      Json      @default("{}")
   qScore           Float?
@@ -276,6 +280,7 @@ model Company {
   @@unique([workspaceId, canonicalDomain])
   @@index([workspaceId, normalizedName])
   @@index([catalogId])
+  @@index([mergedIntoId])
 }
 
 model Office {
@@ -294,6 +299,8 @@ model Office {
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
   jobs    Job[]
+
+  @@index([companyId])
 }
 
 model CompanyEvidence {
@@ -450,6 +457,7 @@ model Job {
   locationText   String?
   district       String?
   city           String?
+  address        String? // il ve ilçeden ayrıntılı adres (mahalle, cadde); ilanda varsa
   workMode       String    @default("unknown") // onsite | hybrid | remote | unknown
   status         String    @default("unknown") // open | closed | unknown | stale
   statusReason   String?
@@ -474,6 +482,7 @@ model Job {
 
   @@unique([workspaceId, canonicalKey])
   @@index([workspaceId, status])
+  @@index([companyId])
 }
 
 model JobListing {
@@ -558,6 +567,8 @@ model Opportunity {
 
   @@unique([searchProfileId, key])
   @@index([workspaceId, category])
+  @@index([companyId])
+  @@index([jobId])
 }
 
 model ContactPoint {
@@ -585,6 +596,7 @@ model ContactPoint {
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@unique([companyId, email])
+  @@index([workspaceId, email])
 }
 
 // ───────────────────────────── Mail hesapları ve belgeler ─────────────────────────────
@@ -652,6 +664,7 @@ model ApplicationDraft {
   campaignId        String?
   followUpOfId      String?
   intentType        String // job_application | intent_after_closed | general_intent | project_collab | follow_up
+  language          String   @default("tr") // tr | en
   mailAccountId     String?
   status            String   @default("draft") // draft | queued | sent | cancelled | blocked | needs_review
   origin            String   @default("manual") // manual | campaign | automation | follow_up
@@ -665,6 +678,8 @@ model ApplicationDraft {
 
   @@index([workspaceId, status])
   @@index([campaignId])
+  @@index([opportunityId])
+  @@index([followUpOfId])
 }
 
 model DraftRevision {
@@ -698,6 +713,7 @@ model AutomationPolicy {
   modeJobApplication   Boolean   @default(false)
   modeGeneralIntent    Boolean   @default(false)
   modeFollowUp         Boolean   @default(false)
+  followUpDelayDays    Int       @default(7) // takip taslağı kaç iş günü sonra hazırlanır
   includeAdjacent      Boolean   @default(false)
   fMin                 Float     @default(85)
   qMin                 Float     @default(65)
@@ -780,6 +796,9 @@ model ApplicationAttempt {
   @@unique([workspaceId, idempotencyKey])
   @@index([workspaceId, state])
   @@index([candidateId, companyId, createdAt])
+  @@index([companyId])
+  @@index([retryOfId])
+  @@index([state, sendingAt])
 }
 
 model Campaign {
@@ -804,10 +823,14 @@ model FollowUp {
   attemptId          String    @unique
   dueAt              DateTime
   state              String    @default("pending") // pending | drafted | sent | cancelled
+  attempts           Int       @default(0)
+  lastError          String?
   cancellationReason String?
   draftId            String?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
+
+  @@index([state, dueAt])
 }
 
 model UsageCounter {
@@ -882,6 +905,7 @@ model InboundMessage {
   @@unique([workspaceId, providerMessageId])
   @@index([workspaceId, status])
   @@index([attemptId])
+  @@index([resentAttemptId])
 }
 
 model WebhookEvent {
@@ -910,6 +934,7 @@ model Notification {
 
   @@unique([eventId, channel])
   @@index([workspaceId, createdAt])
+  @@index([userId, readAt])
 }
 
 model Suppression {
@@ -1026,6 +1051,8 @@ model ScrapedJob {
   description      String?
   employmentType   String?
   workMode         String?
+  companySector    String?
+  address          String?
   publishedAt      DateTime?
   publishedText    String?
   contentHash      String
@@ -1072,4 +1099,79 @@ model ScraperRun {
 
   @@index([source, queuedAt])
   @@index([state])
+}
+
+// ───────────────────────────── Toplu firma araştırması ─────────────────────────────
+
+model ResearchBatch {
+  id          String    @id @default(cuid())
+  workspaceId String
+  createdById String?
+  origin      String    @default("user") // user | autopilot
+  force       Boolean   @default(false)
+  status      String    @default("running") // running | done | cancelled
+  createdAt   DateTime  @default(now())
+  finishedAt  DateTime?
+
+  items ResearchBatchItem[]
+
+  @@index([workspaceId, status])
+}
+
+model ResearchBatchItem {
+  id         String    @id @default(cuid())
+  batchId    String
+  companyId  String
+  state      String    @default("queued") // queued | running | done | no_result | skipped | deferred | failed
+  found      String[]  @default([]) // email | office | employees | phone | work_policy | linkedin | website
+  note       String?
+  attempts   Int       @default(0)
+  context    Json      @default("{}")
+  startedAt  DateTime?
+  finishedAt DateTime?
+  updatedAt  DateTime  @updatedAt
+
+  batch ResearchBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@unique([batchId, companyId])
+  @@index([state])
+  @@index([companyId])
+}
+
+// ───────────────────────────── Başvuru süreci ve mülâkatlar ─────────────────────────────
+
+model ApplicationStage {
+  id          String   @id @default(cuid())
+  workspaceId String
+  attemptId   String
+  stage       String // replied | interview | offer | rejected | ghosted | withdrawn (domain/pipeline.ts)
+  at          DateTime
+  note        String?
+  source      String   @default("manual") // manual | inbox
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@index([attemptId])
+}
+
+model Interview {
+  id               String    @id @default(cuid())
+  workspaceId      String
+  attemptId        String
+  startsAt         DateTime
+  durationMin      Int       @default(60)
+  kind             String    @default("video") // phone | video | onsite
+  link             String?
+  location         String?
+  notes            String?
+  status           String    @default("scheduled") // proposed | scheduled | done | cancelled
+  source           String    @default("manual") // manual | inbox
+  inboundMessageId String?
+  remindedDayAt    DateTime?
+  remindedHourAt   DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([workspaceId, startsAt])
+  @@index([attemptId])
 }

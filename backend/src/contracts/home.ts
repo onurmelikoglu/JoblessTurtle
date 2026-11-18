@@ -124,6 +124,8 @@ export interface HomeDraftSummary {
   body: string;
   toEmail: string | null;
   problems: string[];
+  /** Yazının dili. */
+  language: 'tr' | 'en';
 }
 
 export interface HomeOpportunity {
@@ -138,6 +140,18 @@ export interface HomeOpportunity {
   location: string | null;
   /** İlanın kapsamı: Türkiye'de (local), uzaktan, yurt dışında ya da konumu bilinmiyor. Firmaya genel başvuruda local. */
   scope: WorkScope;
+  /** İlanın çalışma şekli; ilanda yazmıyorsa tahmin (workModeEstimated). Firmaya genel başvuruda null. */
+  workMode: 'onsite' | 'hybrid' | 'remote' | null;
+  workModeEstimated: boolean;
+  /** İlan konumunun düştüğü profil şehir seçimleri (ör. "İstanbul (Avrupa Yakası)"); konum yoksa ya da eşleşmezse boş. */
+  regions: string[];
+  /** Bölgenin kaynağı: ilanın kendi konumu, (ilan konumu tanınmadığında) firmanın ofisleri ya da hiçbiri. */
+  regionSource: 'job' | 'office' | 'none';
+  /** Bu firmaya/ilana yazılması gereken dil ve gerekçesi (ör. "İlan metninin dili"). */
+  language: 'tr' | 'en';
+  languageReason: string;
+  /** İl ve ilçeden ayrıntılı iş yeri adresi (mahalle, cadde); ilanda yoksa null. */
+  address: string | null;
   applyUrl: string | null;
   formOnly: boolean;
   canEmail: boolean;
@@ -178,6 +192,14 @@ export interface HomeCompany {
   analysis: HomeAnalysis | null;
   offices: HomeOffice[];
   regionMatch: 'yes' | 'no' | 'unknown';
+  /** Firmanın ofislerinin düştüğü profil şehir seçimleri. */
+  officeRegions: string[];
+  /** Firma için elle seçilen başvuru dili; null = otomatik. */
+  languageChoice: 'tr' | 'en' | null;
+  /** Firmanın yayımladığı merkez telefonu (araştırmadan). */
+  phone: string | null;
+  /** Firmanın genel çalışma düzeni; kaynakta açıkça yazıyorsa. */
+  workPolicy: 'remote' | 'hybrid' | 'onsite' | null;
   opportunities: HomeOpportunity[];
   matchingJobs: number;
   researching: boolean;
@@ -187,7 +209,65 @@ export interface HomeCompany {
 
 export interface HomeCompanies {
   companies: HomeCompany[];
-  totals: { companies: number; applied: number; matchingJobs: number; byClass: Record<CompanyClass, number>; sizeUnknown: number };
+  /** Bölge filtresinin çipleri: profildeki şehir seçimleri sırasıyla (yaka seçiliyse "yaka belirsiz" dahil). */
+  regionFilters: string[];
+  /** truncated: fırsat sayısı liste sınırını aştı; en düşük sıradaki fırsatlar ve yalnız onlara sahip firmalar listede yok. */
+  totals: { companies: number; applied: number; matchingJobs: number; byClass: Record<CompanyClass, number>; sizeUnknown: number; truncated: boolean };
+}
+
+/** Toplu firma araştırmasının ilerlemesi; sürmekte olan ya da son bir saatte biten iş. */
+export interface ResearchBatchStatus {
+  id: string;
+  status: 'running' | 'done' | 'cancelled';
+  startedAt: IsoDate;
+  finishedAt: IsoDate | null;
+  total: number;
+  finished: number;
+  queued: number;
+  running: number;
+  deferred: number;
+  done: number;
+  noResult: number;
+  skipped: number;
+  failed: number;
+  found: { email: number; person: number; office: number; employees: number; phone: number; workPolicy: number; linkedin: number };
+  activeCompanyIds: string[];
+  /** Ertelenen öğelerin nedeni (ör. günlük kota doldu). */
+  deferredNote: string | null;
+}
+
+export interface ResearchBatchStart {
+  /** Yeni iş açılmadıysa (firmaların hepsi zaten araştırılıyorsa) null. */
+  batchId: string | null;
+  queued: number;
+  alreadyQueued: number;
+  companyIds: string[];
+}
+
+export type StatsRange = '30d' | '90d' | 'all';
+
+/** Kişisel istatistikler; hesaplamalar domain/stats.ts. */
+export interface StatsOverview {
+  range: StatsRange;
+  funnel: { key: 'sent' | 'delivered' | 'replied' | 'interview' | 'offer'; label: string; count: number }[];
+  rates: { title: string; rows: { key: string; label: string; sent: number; replied: number; rate: number }[] }[];
+  weekly: { week: string; sent: number; failed: number; replied: number }[];
+  sendTime: {
+    grid: { weekday: number; hour: number; sent: number; replied: number }[];
+    suggestion: { weekday: number; fromHour: number; toHour: number; rate: number; sent: number } | null;
+    /** Öneri için gereken ve şu ana kadar biriken yanıt sayısı. */
+    repliesNeeded: number;
+    replies: number;
+  };
+  ai: { tasks: number; costUsd: number };
+}
+
+/** Aynı firmanın olası iki kaydı. certain: kanıtlı, kısa süre içinde kendiliğinden birleştirilir. */
+export interface CompanyTwin {
+  a: { id: string; name: string };
+  b: { id: string; name: string };
+  level: 'certain' | 'likely';
+  reasons: string[];
 }
 
 export interface SizeSearchResult {
@@ -233,11 +313,66 @@ export interface HomeApplication {
   retryOfId: string | null;
   retried: boolean;
   links: ApplyLink[];
+  /** Süreçteki en son aşama (domain/pipeline.ts); henüz yoksa null. */
+  stage: string | null;
+  /** Sıradaki planlanmış ya da önerilen mülâkat. */
+  nextInterviewAt: IsoDate | null;
+  /** 21 gün yanıt gelmedi ve sonuç girilmedi: "yanıt yok" olarak işaretlemek önerilir. */
+  ghosted: boolean;
+}
+
+export interface InterviewItem {
+  id: string;
+  attemptId: string;
+  company: string;
+  title: string | null;
+  startsAt: IsoDate;
+  durationMin: number;
+  kind: 'phone' | 'video' | 'onsite';
+  link: string | null;
+  location: string | null;
+  notes: string | null;
+  /** proposed: mailden çıkarıldı, onay bekliyor. */
+  status: 'proposed' | 'scheduled' | 'done' | 'cancelled';
+  source: 'manual' | 'inbox';
+}
+
+export interface StageItem {
+  id: string;
+  stage: string;
+  label: string;
+  at: IsoDate;
+  note: string | null;
+  source: 'manual' | 'inbox';
 }
 
 export interface HomeApplications {
   queue: SendQueueSummary | null;
+  /** Gizlenmemiş başvuruların toplamı; liste en yeni ilk binle sınırlıdır. */
+  total: number;
   items: HomeApplication[];
+}
+
+export type FollowUpState = 'pending' | 'drafted' | 'sent' | 'cancelled';
+
+export interface FollowUpItem {
+  id: string;
+  attemptId: string;
+  company: string;
+  title: string | null;
+  toEmail: string | null;
+  sentAt: IsoDate | null;
+  dueAt: IsoDate;
+  state: FollowUpState;
+  draft: { id: string; revision: number; status: string; subject: string; body: string; toEmail: string | null; problems: string[]; language: 'tr' | 'en' } | null;
+  /** İptal nedeni ya da son hata. */
+  note: string | null;
+}
+
+export interface FollowUpList {
+  items: FollowUpItem[];
+  /** hasPolicy: otomatik başvuru ayarı yoksa takip ayarları değiştirilemez (varsayılan 7 iş günü, elle). */
+  settings: { delayDays: number; auto: boolean; hasPolicy: boolean };
 }
 
 export interface HomeDocument {
@@ -268,6 +403,8 @@ export interface HomeApplicationDetail {
   documents: HomeDocument[];
   currentDocuments: HomeDocument[];
   replies: { id: string; fromEmail: string | null; subject: string | null; snippet: string | null; classification: string; receivedAt: IsoDate }[];
+  stages: StageItem[];
+  interviews: InterviewItem[];
 }
 
 export interface RecipientOption {
@@ -298,6 +435,7 @@ export interface HomePreviewDraft {
   documents: (HomeDocument & { createdAt: IsoDate })[];
   availableDocuments: (HomeDocument & { createdAt: IsoDate })[];
   problems: string[];
+  language: 'tr' | 'en';
 }
 
 export interface HomePreview {
@@ -310,6 +448,9 @@ export interface HomePreview {
   recipientOptions: RecipientOption[];
   groupSuggestion: RecipientSuggestion | null;
   recipientSuggestions: RecipientSuggestion[];
+  /** Firmaya/ilana göre önerilen yazı dili ve gerekçesi. */
+  language: 'tr' | 'en';
+  languageReason: string;
   status: 'preparing' | 'ready' | 'sent';
   draft: HomePreviewDraft | null;
 }

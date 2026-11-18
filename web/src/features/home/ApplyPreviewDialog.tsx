@@ -19,8 +19,9 @@ const PREVIEW_POLL_MS = 3000;
 const RESEARCH_POLL_MS = 5000;
 const PREVIEW_TIMEOUT_MS = 4 * 60_000;
 const TRANSLATE_TIMEOUT_MS = 3 * 60_000;
-const TURKISH_LETTERS = /[ğüşıöçĞÜŞİÖÇ]/;
 const RECIPIENT_PROBLEM_PREFIX = 'Alıcı adresi';
+
+const LANGUAGE_NAME: Record<HomePreview['language'], string> = { tr: 'Türkçe', en: 'İngilizce' };
 
 const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 const revisionKey = (draft: HomePreviewDraft) => `${draft.id}:${draft.revision}`;
@@ -85,8 +86,9 @@ export function ApplyPreviewDialog({ opportunityId, onClose }: ApplyPreviewDialo
   const draftDocs = draft?.documents.map((d) => d.id) ?? [];
   const docsChanged = selectedDocs.length !== draftDocs.length || selectedDocs.some((id) => !draftDocs.includes(id));
   const changed = !!draft && (docsChanged || to !== (draft.toEmail ?? '') || form.subject !== draft.subject || form.body !== draft.body);
-  const isTurkish = TURKISH_LETTERS.test(form.body) || TURKISH_LETTERS.test(form.subject);
+  const isTurkish = draft?.language !== 'en';
   const translateTarget = isTurkish ? 'en' : 'tr';
+  const languageMismatch = !!draft && !!data && data.language !== draft.language;
   const chosenSuggestion = data?.recipientSuggestions.find((s) => s.email.toLowerCase() === to.toLowerCase());
   const problems = [...new Set(draft?.problems ?? [])].filter((p) => !(to && p.startsWith(RECIPIENT_PROBLEM_PREFIX)));
   const documents = draft ? (draft.availableDocuments.length ? draft.availableDocuments : draft.documents) : [];
@@ -222,6 +224,21 @@ export function ApplyPreviewDialog({ opportunityId, onClose }: ApplyPreviewDialo
       ) : (
         <div className="flex flex-col gap-4">
           {translating && <InlineBusy>Mail çevriliyor…</InlineBusy>}
+          {languageMismatch ? (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-warn-soft px-3 py-2 text-sm">
+              <span>
+                Bu firmaya {LANGUAGE_NAME[data.language]} yazılması öneriliyor ({data.languageReason}); yazı şu an {LANGUAGE_NAME[draft.language]}.
+              </span>
+              <Button variant="outline" size="sm" disabled={busy} icon={<Languages className="size-4" aria-hidden />} onClick={translate}>
+                {LANGUAGE_NAME[data.language]}ye çevir
+              </Button>
+            </div>
+          ) : (
+            <p className="flex items-center gap-1.5 text-xs text-ink-soft">
+              <Languages className="size-3.5" aria-hidden />
+              Yazı dili: {LANGUAGE_NAME[draft.language]} · {data.languageReason}
+            </p>
+          )}
           {problems.length > 0 && (
             <p role="alert" className="rounded-lg bg-bad-soft px-3 py-2 text-sm text-bad">
               Göndermeden önce kontrol et: {problems.join(' · ')}

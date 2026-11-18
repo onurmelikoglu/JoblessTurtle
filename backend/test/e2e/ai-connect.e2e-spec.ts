@@ -58,6 +58,24 @@ describe('arayüzden yapay zekâ hesabı bağlama', () => {
   });
 });
 
+describe('kalıcı Claude belirteci', () => {
+  const TOKEN = 'sk-ant-oat01-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789';
+
+  it('yalnızca yönetici kaydeder; şifreli saklanır, CLI ortamına verilir ve kaldırılabilir', async () => {
+    await h.http().put('/api/v1/ai/connect/cli_claude/token').set(invitee.auth).send({ token: TOKEN }).expect(403);
+    await h.http().put('/api/v1/ai/connect/cli_claude/token').set(admin.auth).send({ token: 'sk-ant-api03-yanlis-anahtar-turu-1234567890' }).expect(422);
+    const saved = (await h.http().put('/api/v1/ai/connect/cli_claude/token').set(admin.auth).send({ token: TOKEN }).expect(200)).body;
+    expect(saved).toMatchObject({ provider: 'cli_claude', longLived: { last4: '6789' } });
+    expect(new Date(saved.longLived.expiresAt).getTime() - Date.now()).toBeGreaterThan(360 * 86_400_000);
+    const stored = await h.prisma.keyValue.findUniqueOrThrow({ where: { key: 'ai:claude-oauth-token' } });
+    expect(JSON.stringify(stored.value)).not.toContain(TOKEN);
+    expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe(TOKEN);
+    const removed = (await h.http().delete('/api/v1/ai/connect/cli_claude/token').set(admin.auth).expect(200)).body;
+    expect(removed.longLived).toBeNull();
+    expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+  });
+});
+
 describe('kurulum listesinin yapay zekâ adımı', () => {
   const ANTHROPIC_KEY = 'sk-ant-api03-ornek-anahtar-0000000000000000-abcd';
   const setup = (u: User) => h.http().get('/api/v1/ai/setup').set(u.auth).expect(200).then((r) => r.body);

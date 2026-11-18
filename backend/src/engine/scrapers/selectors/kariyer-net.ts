@@ -43,6 +43,8 @@ export const KARIYER_NET = {
     workModel: 'workmodeltext',
     dateStatus: 'jobdatestatus',
     position: 'positionname',
+    /** Firmanın sektörü ("E-ticaret", "Ev Mobilyaları"); 26 Ekim 2026'da gerçek kartlarda görüldü. */
+    sector: 'sectorname',
   },
   updatedDateStatus: 'Updated',
   blockMarkers: ['px-captcha', 'window._pxAppId', 'Access to this page has been denied'],

@@ -1,3 +1,4 @@
+import { fmtDate } from '@/lib/format';
 import type { AiSetupStatus, ConnectProvider, ConnectStatus, ExtensionKeyStatus, HomeSetup, LoginSession } from '@/api/types';
 
 export type SetupStepId = 'profile' | 'ai' | 'mail' | 'extension';
@@ -77,7 +78,11 @@ export function anyLoginInProgress(connections: ConnectStatus[] | null | undefin
 /** Bağlantı kartının tek satırlık durumu. */
 export function connectionSummary(connection: ConnectStatus): string {
   if (!connection.installed) return 'Bu sunucuda kurulu değil.';
-  if (connection.connected) return [connection.account, connection.plan].filter(Boolean).join(' · ') || 'Bağlı';
+  if (connection.longLived) return `Kalıcı belirteç ••••${connection.longLived.last4} · ${fmtDate(connection.longLived.expiresAt)} tarihine kadar geçerli`;
+  if (connection.connected) {
+    const until = connection.sessionExpiresAt ? `oturum ${fmtDate(connection.sessionExpiresAt)} tarihinde düşer` : null;
+    return [connection.account, connection.plan, until].filter(Boolean).join(' · ') || 'Bağlı';
+  }
   const phase = connection.login?.phase;
   if (phase === 'starting') return 'Giriş başlatılıyor…';
   if (phase === 'waiting') return connection.login?.needsCode ? 'Giriş sayfasındaki kodu bekliyor.' : 'Tarayıcıda onay bekleniyor.';

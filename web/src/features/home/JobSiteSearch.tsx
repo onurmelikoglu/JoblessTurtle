@@ -45,6 +45,11 @@ export function JobSiteSearch() {
   return (
     <div className="flex flex-wrap items-center gap-2 text-sm text-ink-soft">
       <span title="Tarayıcı eklentisi kuruluysa açılan sekmedeki ilanlar buraya aktarılır (Profilim → Tarayıcı eklentisi)">İlan sitelerinde ara:</span>
+      {all.length > 1 && (
+        <Button variant="tonal" size="sm" icon={<Layers className="size-4" aria-hidden />} onClick={() => openAll(all)} title="Bütün pozisyon ve şehir aramaları ayrı sekmelerde açılır">
+          Hepsini aç ({all.length} sekme)
+        </Button>
+      )}
       {SEARCH_SOURCES.map(({ source, button }) => {
         const items = searchesOf(searches.data.searches, source);
         if (!items.length) return null;
@@ -53,13 +58,21 @@ export function JobSiteSearch() {
             {button}
           </Button>
         );
-        return items.length === 1 ? <span key={source}>{trigger}</span> : <Menu key={source} align="start" trigger={trigger} items={items.map((search) => ({ label: searchLabel(search), onSelect: () => open(search) }))} />;
+        if (items.length === 1) return <span key={source}>{trigger}</span>;
+        const siteUrls = openAllUrls(items);
+        return (
+          <Menu
+            key={source}
+            align="start"
+            trigger={trigger}
+            items={[
+              { label: `Tümünü aç (${siteUrls.length} sekme)`, icon: <Layers className="size-4" aria-hidden />, onSelect: () => openAll(siteUrls) },
+              'separator',
+              ...items.map((search) => ({ label: searchLabel(search), onSelect: () => open(search) })),
+            ]}
+          />
+        );
       })}
-      {all.length > 1 && (
-        <Button variant="tonal" size="sm" icon={<Layers className="size-4" aria-hidden />} onClick={() => openAll(all)} title="Bütün pozisyon ve şehir aramaları ayrı sekmelerde açılır">
-          Hepsini aç ({all.length} sekme)
-        </Button>
-      )}
     </div>
   );
 }

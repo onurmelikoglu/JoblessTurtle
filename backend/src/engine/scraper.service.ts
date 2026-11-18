@@ -9,7 +9,8 @@ import { AppError, errorMessage } from '../common/errors';
 import { OutboxService } from '../common/outbox.service';
 import { PrismaService } from '../common/prisma.service';
 import { listingExternalId, normalizeListingUrl } from '../domain/job-search';
-import { CardRejection, cityKeysOf, isConfidentialCompany, listingInCities, ScrapedListing } from '../domain/scraped-jobs';
+import { visibleCompanyName } from '../domain/hidden-company';
+import { CardRejection, cityKeysOf, listingInCities, ScrapedListing } from '../domain/scraped-jobs';
 import {
   applyScraperConfigPatch,
   EXTENSION_IMPORT_HASH,
@@ -440,7 +441,10 @@ export class ScraperService {
    */
   private async forward(run: ScraperRun, source: ScraperSource, fresh: ScrapedListing[], seen: ScrapedListing[], now: Date, workspaceIds: string[] | null): Promise<number> {
     const kind = WORKSPACE_SOURCE_KIND[source];
-    fresh = fresh.filter((l) => !isConfidentialCompany(l.companyName));
+    fresh = fresh.flatMap((l) => {
+      const companyName = visibleCompanyName(l.companyName);
+      return companyName ? [{ ...l, companyName }] : [];
+    });
     const seenIds = seen.map((l) => normalizeListingUrl(l.jobUrl)).filter((u): u is string => !!u).map(listingExternalId);
     if (seenIds.length) await this.prisma.jobListing.updateMany({ where: { source: { kind }, externalId: { in: seenIds }, status: { in: ['open', 'unknown'] } }, data: { lastSeenAt: now } });
     if (!fresh.length) return 0;
@@ -582,7 +586,10 @@ function toFoundListing(l: ScrapedListing): FoundListing {
     title: l.jobTitle,
     company: l.companyName,
     location: l.district ? `${l.city} - ${l.district}` : l.city,
+    address: l.address,
     workMode: l.workMode ?? 'unknown',
+    description: l.description,
+    sector: l.companySector,
     url: l.jobUrl,
     platform: SCRAPER_LABELS[l.source],
     postedAt: l.publishedAt?.toISOString() ?? null,

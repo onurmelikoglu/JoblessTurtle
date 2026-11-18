@@ -8,12 +8,14 @@ import { indeedLocation } from './indeed.parser';
  * Indeed sonuç sayfasını kullanıcının tarayıcısında okuyan betik. Önce sayfaya gömülü ilan verisini
  * (mosaic-provider-jobcards) sunucudaki ayrıştırıcıyla aynı yöntemle okur, yoksa kartlara düşer (sayfadaki görünmez boş
  * kart unvansız olduğu için atlanır; 23 Ekim 2026'da gerçek sayfada görüldü). Kartlar kısa dizilerdir:
- * [ilan anahtarı, unvan, firma, konum, il kodu, uzaktan (1/0), çalışma türleri, yayın zamanı (ms), göreli tarih, firma sayfası].
+ * [ilan anahtarı, unvan, firma, konum, il kodu, uzaktan (1/0), çalışma türleri, yayın zamanı (ms), göreli tarih, firma sayfası,
+ * çalışma şekli etiketleri].
  */
 export const INDEED_BROWSER_SCRIPT = `(() => {
   const S = ${JSON.stringify(INDEED.selectors)};
   const MARKERS = ${JSON.stringify(INDEED.blockMarkers)};
   const EMBEDDED = ${JSON.stringify(INDEED.embeddedData)};
+  const REMOTE = ${JSON.stringify(INDEED.remoteAttribute)};
   const html = document.documentElement.outerHTML;
   const marker = MARKERS.find((m) => html.includes(m)) || null;
   const objectAt = (src, start) => {
@@ -37,7 +39,7 @@ export const INDEED_BROWSER_SCRIPT = `(() => {
   }
   const text = (el) => (el ? el.textContent.replace(/\\s+/g, ' ').trim() : '') || null;
   const cards = Array.isArray(results)
-    ? results.map((r) => [r.jobkey || null, r.displayTitle || r.title || null, r.company || null, r.formattedLocation || r.jobLocationCity || null, r.jobLocationState || null, r.remoteLocation ? 1 : 0, (r.jobTypes || []).join(', ') || null, r.pubDate || null, r.formattedRelativeTime || null, r.companyOverviewLink || null])
+    ? results.map((r) => [r.jobkey || null, r.displayTitle || r.title || null, r.company || null, r.formattedLocation || r.jobLocationCity || null, r.jobLocationState || null, r.remoteLocation ? 1 : 0, (r.jobTypes || []).join(', ') || null, r.pubDate || null, r.formattedRelativeTime || null, r.companyOverviewLink || null, ((r.taxonomyAttributes || []).find((t) => t.label === REMOTE) || { attributes: [] }).attributes.map((a) => a.label).filter(Boolean).join(', ') || null])
     : [...document.querySelectorAll(S.card)].map((a) => {
         const root = a.closest(S.cardRoot);
         return [a.getAttribute('data-jk'), text(a.querySelector(S.title)) || text(a), root ? text(root.querySelector(S.company)) : null, root ? text(root.querySelector(S.location)) : null, null, 0, null, null, null, null];
@@ -52,7 +54,7 @@ export function indeedFromBrowser(payload: unknown, url: string): ParsedPage {
   const data = readBrowserPayload(payload, 'indeed', url);
   assertReadable(data, url, `İlan verisi bulunamadı (gömülü veri ve ${INDEED.selectors.card} yok); sayfa düzeni değişmiş olabilir`);
   const cards: RawCard[] = data.cards.map((row) => {
-    const [jobKey, title, company, location, state, remote, jobTypes, pubDate, relative, companyUrl] = row;
+    const [jobKey, title, company, location, state, remote, jobTypes, pubDate, relative, companyUrl, workModes] = row;
     const at = typeof pubDate === 'number' && pubDate > 0 ? new Date(pubDate) : null;
     return {
       platformId: str(jobKey),
@@ -62,7 +64,7 @@ export function indeedFromBrowser(payload: unknown, url: string): ParsedPage {
       url: str(jobKey) ? INDEED.viewJobPath(String(jobKey)) : null,
       companyUrl: str(companyUrl),
       employmentType: str(jobTypes),
-      workModeText: remote === 1 ? 'Uzaktan' : null,
+      workModeText: str(workModes) ?? (remote === 1 ? 'Uzaktan' : null),
       publishedAt: at && !Number.isNaN(at.getTime()) ? at : null,
       publishedText: str(relative),
     };

@@ -60,7 +60,7 @@ Sitenin sayfa düzeni değişirse önce `backend/src/engine/scrapers/selectors/`
 
 ## Güncelleme
 
-Eklenti güncellendiğinde (`manifest.json` sürümü değişir; şu an 1.4.0) `chrome://extensions` sayfasında Jobless Turtle
+Eklenti güncellendiğinde (`manifest.json` sürümü değişir; şu an 1.5.0) `chrome://extensions` sayfasında Jobless Turtle
 kartındaki yenile düğmesine bas; açık site sekmelerini de yenile. Yenibiriş sunucudan taranamadığı için (Cloudflare)
 ilanları yalnızca bu eklentiyle gelir.
 

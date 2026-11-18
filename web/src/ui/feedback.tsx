@@ -21,6 +21,18 @@ export function LoadingBlock({ label = 'Yükleniyor…' }: { label?: string }) {
   );
 }
 
+/** Liste yüklenemedi: sonsuz yükleme yerine hata ve yeniden deneme. */
+export function LoadError({ label, onRetry }: { label: string; onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-center gap-3 px-4 py-12 text-center text-sm" role="alert">
+      <p className="text-bad">{label} yüklenemedi. Bağlantını kontrol edip yeniden dene.</p>
+      <button type="button" onClick={onRetry} className="rounded-lg border border-line-strong px-3 py-1.5 font-medium hover:bg-sunken">
+        Yeniden dene
+      </button>
+    </div>
+  );
+}
+
 export function InlineBusy({ children }: { children: ReactNode }) {
   return (
     <span className="inline-flex items-center gap-2 text-sm text-ink-soft" role="status">

@@ -13,6 +13,7 @@ export const INDEED = {
   pageSize: 10,
   viewJobPath: (jobKey: string) => `/viewjob?jk=${encodeURIComponent(jobKey)}`,
   embeddedData: 'window.mosaic.providerData["mosaic-provider-jobcards"]=',
+  remoteAttribute: 'remote',
   selectors: {
     card: 'a[data-jk]',
     title: 'span[id^="jobTitle-"]',

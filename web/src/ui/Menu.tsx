@@ -18,7 +18,7 @@ export function Menu({ trigger, items, align = 'end' }: { trigger: ReactNode; it
     <Dropdown.Root>
       <Dropdown.Trigger asChild>{trigger}</Dropdown.Trigger>
       <Dropdown.Portal>
-        <Dropdown.Content align={align} sideOffset={6} collisionPadding={8} className="z-[60] min-w-52 animate-pop-in rounded-xl border border-line bg-surface p-1.5 shadow-xl">
+        <Dropdown.Content align={align} sideOffset={6} collisionPadding={8} className="z-[60] max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-52 animate-pop-in overflow-y-auto overscroll-contain rounded-xl border border-line bg-surface p-1.5 shadow-xl">
           {entries.map((item, index) => {
             if (item === 'separator') return <Dropdown.Separator key={index} className="my-1 h-px bg-line" />;
             if ('heading' in item) {

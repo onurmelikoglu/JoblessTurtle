@@ -1,6 +1,6 @@
 import type { CompanyClass, EmployeeRange, EmployeeSize, HomeCompany, HomeOpportunity, WorkScope } from '@/api/types';
 import { hostOf } from '@/lib/format';
-import { haystack, matchesAll, tokensOf } from '@/lib/text';
+import { fold, haystack, matchesAll, tokensOf } from '@/lib/text';
 import { CATEGORY_INFO, CLASS_INFO, COMPANY_CLASS_ORDER, draftReady, hasEmail } from './model';
 
 export type EmailFilter = 'any' | 'has' | 'missing';
@@ -45,18 +45,61 @@ export function scopeCounts(companies: HomeCompany[]): Record<ScopeFilter, numbe
   return counts;
 }
 
+/** Çalışma şekli filtresi; tahmini değer de sayılır. Firmaya genel başvuru ve şekli bilinmeyen ilan "belirtilmemis"tir. */
+export const WORK_MODE_FILTERS = ['yerinde', 'hibrit', 'uzaktan', 'belirtilmemis'] as const;
+export type WorkModeFilter = (typeof WORK_MODE_FILTERS)[number];
+
+const FILTER_OF_WORK_MODE: Record<NonNullable<HomeOpportunity['workMode']>, WorkModeFilter> = { onsite: 'yerinde', hybrid: 'hibrit', remote: 'uzaktan' };
+
+export const workModeFilterOf = (opportunity: Pick<HomeOpportunity, 'workMode'>): WorkModeFilter => (opportunity.workMode ? FILTER_OF_WORK_MODE[opportunity.workMode] : 'belirtilmemis');
+
+export function workModeCounts(companies: HomeCompany[]): Record<WorkModeFilter, number> {
+  const counts = Object.fromEntries(WORK_MODE_FILTERS.map((mode) => [mode, 0])) as Record<WorkModeFilter, number>;
+  for (const company of companies) for (const mode of new Set(company.opportunities.map(workModeFilterOf))) counts[mode]++;
+  return counts;
+}
+
+/**
+ * Bölge filtresi profildeki şehir seçimlerinin kısa adlarını (slug) taşır: "İstanbul (Avrupa Yakası)" → istanbul-avrupa-yakasi.
+ * REGION_OTHER hiçbir seçime düşmeyenleri (başka şehir ya da konumu bilinmeyen), REGION_ANY eski "Bölgemde" bağlantısını karşılar.
+ */
+export const REGION_OTHER = 'diger';
+export const REGION_ANY = 'bolgem';
+
+export const regionSlug = (label: string) =>
+  fold(label)
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+function regionSlugsOf(company: HomeCompany, opportunity: HomeOpportunity | null): string[] {
+  const labels = opportunity ? opportunity.regions : company.officeRegions;
+  return labels.length ? labels.map(regionSlug) : [REGION_OTHER];
+}
+
+const matchesRegion = (wanted: string[], slugs: string[]) => wanted.some((w) => (w === REGION_ANY ? !slugs.includes(REGION_OTHER) : slugs.includes(w)));
+
+export function regionCounts(companies: HomeCompany[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const company of companies) {
+    const slugs = company.opportunities.length ? company.opportunities.flatMap((o) => regionSlugsOf(company, o)) : regionSlugsOf(company, null);
+    for (const slug of new Set(slugs)) counts[slug] = (counts[slug] ?? 0) + 1;
+  }
+  return counts;
+}
+
 export interface CompanyFilters {
   query: string;
   classes: CompanyClass[];
   sizes: SizeBucket[];
   scopes: ScopeFilter[];
-  inRegion: boolean;
+  regions: string[];
+  workModes: WorkModeFilter[];
   email: EmailFilter;
   ready: boolean;
   sort: CompanySort;
 }
 
-export const DEFAULT_FILTERS: CompanyFilters = { query: '', classes: [], sizes: [], scopes: [], inRegion: false, email: 'any', ready: false, sort: 'recommended' };
+export const DEFAULT_FILTERS: CompanyFilters = { query: '', classes: [], sizes: [], scopes: [], regions: [], workModes: [], email: 'any', ready: false, sort: 'recommended' };
 
 const EMAIL_PARAM: Record<string, EmailFilter> = { var: 'has', yok: 'missing' };
 const SORT_PARAM: Record<string, CompanySort> = { yeni: 'newest', ad: 'name' };
@@ -66,12 +109,16 @@ export function parseFilters(params: URLSearchParams): CompanyFilters {
   const classes = (params.get('sinif') ?? '').split(',').filter((c): c is CompanyClass => (COMPANY_CLASS_ORDER as string[]).includes(c));
   const sizes = (params.get('boyut') ?? '').split(',').filter((s): s is SizeBucket => (SIZE_BUCKETS as readonly string[]).includes(s));
   const scopes = (params.get('kapsam') ?? '').split(',').filter((s): s is ScopeFilter => (SCOPE_FILTERS as readonly string[]).includes(s));
+  const workModes = (params.get('sekil') ?? '').split(',').filter((s): s is WorkModeFilter => (WORK_MODE_FILTERS as readonly string[]).includes(s));
+  const region = params.get('bolge') ?? '';
+  const regions = region === '1' ? [REGION_ANY] : region.split(',').map(regionSlug).filter(Boolean);
   return {
     query: params.get('q') ?? '',
     classes,
     sizes,
     scopes,
-    inRegion: params.get('bolge') === '1',
+    regions: [...new Set(regions)],
+    workModes,
     email: EMAIL_PARAM[params.get('mail') ?? ''] ?? 'any',
     ready: params.get('yazi') === '1',
     sort: SORT_PARAM[params.get('sira') ?? ''] ?? 'recommended',
@@ -86,7 +133,8 @@ export function writeFilters(params: URLSearchParams, filters: CompanyFilters): 
   set('sinif', filters.classes.join(',') || undefined);
   set('boyut', filters.sizes.join(',') || undefined);
   set('kapsam', filters.scopes.join(',') || undefined);
-  set('bolge', filters.inRegion ? '1' : undefined);
+  set('bolge', filters.regions.join(',') || undefined);
+  set('sekil', filters.workModes.join(',') || undefined);
   set('mail', paramOf(EMAIL_PARAM, filters.email));
   set('yazi', filters.ready ? '1' : undefined);
   set('sira', paramOf(SORT_PARAM, filters.sort));
@@ -94,7 +142,8 @@ export function writeFilters(params: URLSearchParams, filters: CompanyFilters): 
 }
 
 export function activeFilterCount(filters: CompanyFilters): number {
-  return Number(!!filters.query.trim()) + Number(filters.classes.length > 0) + Number(filters.sizes.length > 0) + Number(filters.scopes.length > 0) + Number(filters.inRegion) + Number(filters.email !== 'any') + Number(filters.ready);
+  const lists = [filters.classes, filters.sizes, filters.scopes, filters.regions, filters.workModes];
+  return Number(!!filters.query.trim()) + lists.filter((list) => list.length > 0).length + Number(filters.email !== 'any') + Number(filters.ready);
 }
 
 const haystacks = new WeakMap<HomeCompany, string>();
@@ -117,15 +166,24 @@ function haystackOf(company: HomeCompany): string {
   return built;
 }
 
-function opportunityFilter(filters: CompanyFilters): ((o: HomeOpportunity) => boolean) | null {
-  if (filters.email === 'any' && !filters.ready && !filters.scopes.length) return null;
-  return (o) => (filters.email === 'any' || (filters.email === 'has') === hasEmail(o)) && (!filters.ready || draftReady(o)) && (!filters.scopes.length || filters.scopes.includes(scopeFilterOf(o)));
+function opportunityFilter(filters: CompanyFilters): ((company: HomeCompany, o: HomeOpportunity) => boolean) | null {
+  if (filters.email === 'any' && !filters.ready && !filters.scopes.length && !filters.regions.length && !filters.workModes.length) return null;
+  return (company, o) =>
+    (filters.email === 'any' || (filters.email === 'has') === hasEmail(o)) &&
+    (!filters.ready || draftReady(o)) &&
+    (!filters.scopes.length || filters.scopes.includes(scopeFilterOf(o))) &&
+    (!filters.workModes.length || filters.workModes.includes(workModeFilterOf(o))) &&
+    (!filters.regions.length || matchesRegion(filters.regions, regionSlugsOf(company, o)));
 }
+
+/** Görünür fırsatı olmayan (ilk araştırması süren) firma yalnızca bölge filtresinde, ofisine göre kalır. */
+const keepsWithoutOpportunities = (company: HomeCompany, filters: CompanyFilters) =>
+  filters.email === 'any' && !filters.ready && !filters.scopes.length && !filters.workModes.length && matchesRegion(filters.regions, regionSlugsOf(company, null));
 
 const newestAt = (company: HomeCompany) => [company.foundAt, ...company.opportunities.map((o) => o.foundAt)].reduce((latest, at) => (at > latest ? at : latest));
 
 /**
- * Filtreler birlikte uygulanır (VE). Mail, yazı ve kapsam filtreleri fırsat düzeyindedir: firma, koşulu sağlayan
+ * Filtreler birlikte uygulanır (VE). Mail, yazı, kapsam, bölge ve çalışma şekli filtreleri fırsat düzeyindedir: firma, koşulu sağlayan
  * en az bir fırsatı varsa kalır ve yalnızca o fırsatlarıyla listelenir.
  */
 export function filterCompanies(companies: HomeCompany[], filters: CompanyFilters): HomeCompany[] {
@@ -135,13 +193,16 @@ export function filterCompanies(companies: HomeCompany[], filters: CompanyFilter
   for (const company of companies) {
     if (filters.classes.length && !filters.classes.includes(company.class)) continue;
     if (filters.sizes.length && !filters.sizes.includes(sizeBucketOf(company.employees))) continue;
-    if (filters.inRegion && company.regionMatch !== 'yes') continue;
     if (tokens.length && !matchesAll(tokens, haystackOf(company))) continue;
     if (!keepOpportunity) {
       result.push(company);
       continue;
     }
-    const opportunities = company.opportunities.filter(keepOpportunity);
+    if (!company.opportunities.length) {
+      if (keepsWithoutOpportunities(company, filters)) result.push(company);
+      continue;
+    }
+    const opportunities = company.opportunities.filter((o) => keepOpportunity(company, o));
     if (opportunities.length) result.push(opportunities.length === company.opportunities.length ? company : { ...company, opportunities });
   }
   if (filters.sort === 'newest') return result.sort((a, b) => (newestAt(a) < newestAt(b) ? 1 : -1));

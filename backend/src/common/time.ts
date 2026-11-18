@@ -51,3 +51,8 @@ export function addBusinessDays(from: Date, days: number): Date {
   }
   return dt.toJSDate();
 }
+
+/** Kullanıcıya gösterilen tarih-saat, Türkiye saatiyle (ör. "12 Kas 2026 14:00"). */
+export function fmtIstanbul(date: Date): string {
+  return DateTime.fromJSDate(date).setZone(TZ).setLocale('tr').toFormat('d LLL yyyy HH:mm');
+}

@@ -303,4 +303,27 @@ describe('yeni siteler', () => {
     expect(await h.prisma.scrapedJob.findFirstOrThrow({ where: { source: 'isinolsun' } })).toMatchObject({ externalId: '99998888777766665555444433332222', city: 'İstanbul', district: 'Kadıköy' });
     await send(key, { source: 'secretcv', url: 'https://www.eleman.net/is-ilanlari/istanbul', payload: payload('secretcv', []) }).expect(400);
   });
+  it('çalışma şekli, sektör ve adres: ilanda yazan ya da tahmini çalışma şekli, firmaya sektör, ilana mahalle', async () => {
+    const key = await keyOf(member);
+    const kariyer = [`/is-ilani/ilan-5200001`, 'Kreatif Direktör', 'Sepya Ajans', 'İstanbul(Avr.)', 'Tam zamanlı', 'Hibrit', 'Bugün', 'Default', 'Reklam Ajansları'];
+    await send(key, { source: 'kariyer_net', url: KARIYER_PAGE, payload: payload('kariyer_net', [kariyer]) }).expect(200);
+    const isinolsun = ['https://isinolsun.com/is-ilani/kreatif-direktor-lagun-0ioj11112222333344445555666677778888', 'Kreatif Direktör', 'Lagün Reklam', 'Moda Mah., Kadıköy, İstanbul', 'Tam Zamanlı'];
+    await send(key, { source: 'isinolsun', url: 'https://isinolsun.com/is-ilanlari?kw=kreatif&lc=%C4%B0stanbul', payload: payload('isinolsun', [isinolsun]) }).expect(200);
+
+    const scraped = (await h.http().get('/api/v1/scrapers/jobs?title=Kreatif').set(member.auth).expect(200)).body.items;
+    expect(scraped.map((j: any) => [j.company_name, j.work_mode, j.work_mode_estimate, j.company_sector, j.address]).sort()).toEqual([
+      ['Lagün Reklam', null, 'onsite', null, 'Moda Mah.'],
+      ['Sepya Ajans', 'hybrid', null, 'Reklam Ajansları', null],
+    ]);
+    const jobs = await h.prisma.job.findMany({ where: { workspaceId: workspaceOf(member), company: { name: { in: ['Sepya Ajans', 'Lagün Reklam'] } } }, include: { company: true }, orderBy: { createdAt: 'asc' } });
+    expect(jobs.map((j) => [j.company.name, j.workMode, j.address, j.company.sectors])).toEqual([
+      ['Sepya Ajans', 'hybrid', null, ['Reklam Ajansları']],
+      ['Lagün Reklam', 'unknown', 'Moda Mah.', []],
+    ]);
+
+    await h.worker.drain();
+    const feed = (await h.http().get('/api/v1/home/opportunities').set(member.auth).expect(200)).body.items;
+    const byCompany = Object.fromEntries(feed.filter((o: any) => ['Sepya Ajans', 'Lagün Reklam'].includes(o.company)).map((o: any) => [o.company, [o.workMode, o.workModeEstimated, o.address]]));
+    expect(byCompany).toEqual({ 'Sepya Ajans': ['hybrid', false, null], 'Lagün Reklam': ['onsite', true, 'Moda Mah.'] });
+  });
 });

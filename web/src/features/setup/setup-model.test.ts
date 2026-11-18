@@ -14,7 +14,7 @@ const input = (patch: Partial<SetupInput> = {}): SetupInput => ({
   ...patch,
 });
 
-const connection = (patch: Partial<ConnectStatus> = {}): ConnectStatus => ({ provider: 'cli_claude', installed: true, connected: false, account: null, plan: null, login: null, ...patch });
+const connection = (patch: Partial<ConnectStatus> = {}): ConnectStatus => ({ provider: 'cli_claude', installed: true, connected: false, account: null, plan: null, sessionExpiresAt: null, longLived: null, login: null, ...patch });
 
 describe('kurulum listesi', () => {
   it('her şey hazırsa yalnızca isteğe bağlı eklenti eksik kalır', () => {
@@ -54,7 +54,9 @@ describe('hesap bağlama durumu', () => {
     expect(connectionSummary(connection({ installed: false }))).toBe('Bu sunucuda kurulu değil.');
     expect(connectionSummary(connection({ connected: true, account: 'deniz@ornek.test', plan: 'max' }))).toBe('deniz@ornek.test · max');
     expect(connectionSummary(connection({ provider: 'cli_codex', connected: true, plan: 'ChatGPT' }))).toBe('ChatGPT');
-    const login = { phase: 'waiting' as const, url: 'https://claude.com/cai/oauth/authorize', userCode: null, needsCode: true, message: null, expiresAt: iso('2026-10-23T12:00:00Z') };
+    expect(connectionSummary(connection({ connected: true, longLived: { last4: 'ab12', savedAt: iso('2026-11-09T10:00:00Z'), expiresAt: iso('2027-11-09T10:00:00Z') } }))).toMatch(/^Kalıcı belirteç ••••ab12 · .*2027 tarihine kadar geçerli$/);
+    expect(connectionSummary(connection({ connected: true, account: 'deniz@ornek.test', sessionExpiresAt: iso('2026-12-01T10:00:00Z') }))).toMatch(/^deniz@ornek\.test · oturum .*2026 tarihinde düşer$/);
+    const login = { phase: 'waiting' as const, url: 'https://claude.com/cai/oauth/authorize', userCode: null, needsCode: true, message: null, expiresAt: iso('2026-10-23T12:00:00Z'), mode: 'session' as const };
     expect(connectionSummary(connection({ login }))).toBe('Giriş sayfasındaki kodu bekliyor.');
     expect(connectionSummary(connection({ login: { ...login, needsCode: false } }))).toBe('Tarayıcıda onay bekleniyor.');
     expect(anyLoginInProgress([connection(), connection({ login })])).toBe(true);

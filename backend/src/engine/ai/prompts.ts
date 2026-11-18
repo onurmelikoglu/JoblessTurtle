@@ -55,18 +55,22 @@ Nerelere bak:
 - Forumlar ve topluluklar (Ekşi Sözlük, DonanımHaber, Technopat, Reddit, Stack Overflow, Medium, dev.to), GitHub, konferans ve meetup sayfaları, haberler, LinkedIn gönderileri.
 - Çalışma biçimi: Pes etmeden önce EN AZ 8 farklı arama yap ve firmanın ana sayfası ile kariyer, iletişim ve ekip sayfalarını WebFetch ile aç. WebFetch sayfayı özetler ve adresleri atlayabilir: isteminde "sayfadaki TÜM e-posta adreslerini, mailto: bağlantılarını ve alt bilgideki (footer) iletişim bilgilerini aynen listele" de.
 - Alan adı bilinmiyorsa önce firmanın resmî web sitesini bul (ticaret unvanı, marka adı ve şehirle ara) ve website alanına yaz; sonra o sitede ve '"@<alan adı>"' aramasıyla adres ara. İlk aramalar sonuçsuz kalırsa sorguyu değiştir: İngilizce yaz, yalnız alan adını ara, firmanın eski adını, marka adını ya da bağlı olduğu grubu ara. Yaptığın aramaları searches alanına yaz.
-- Örnek sorgular (tırnaklar aramanın parçası): '"@<alan adı>"', '"@<alan adı>" cv', '<firma adı> insan kaynakları e-posta', '<firma adı> kariyer cv gönder', '<firma adı> işe alım uzmanı', '<firma adı> CTO', 'site:github.com "@<alan adı>"'.
+- Arama planı (sırayla, tırnaklar aramanın parçası): '"@<alan adı>"', '"@<alan adı>" cv', '"@<alan adı>" kariyer OR ik OR hr', '<firma adı> insan kaynakları e-posta', '<firma adı> kariyer cv gönder', '<firma adı> KVKK aydınlatma metni' (aydınlatma metinlerinde başvuru adresi çoğu zaman yazar), '<firma adı> iletişim adres telefon', 'site:kariyer.net <firma adı>', 'site:linkedin.com/in "<firma adı>" (İK OR "insan kaynakları" OR recruiter OR "talent acquisition" OR "işe alım")', '<firma adı> işe alım uzmanı', '<firma adı> CTO', 'site:github.com "@<alan adı>"', '<firma adı> Ticaret Sicil Gazetesi adres'.
+- Kişiler: İK, işe alım ve yönetimden kişilerin adını ve unvanını LinkedIn, haber ve etkinlik sayfalarından bul; adresi yayımlanmışsa "published", firmanın adres kalıbı biliniyorsa "pattern" ile yaz. Bu adresler posta sunucusundan yoklanır ve yalnızca kullanıcının elle seçebileceği alıcı olur; yine de bul.
 Kurallar:
 - Yalnızca bir sayfada GERÇEKTEN yayımlanmış adresleri yaz. sourceUrl adresin geçtiği sayfa, evidence o sayfadan adresin geçtiği kısa alıntı olsun (en fazla 200 karakter).
 - Giriş ekranı, CAPTCHA ya da bot koruması olan sayfaları aşmaya çalışma; açılmayan sayfayı atla.
 - Kişiler için yalnızca firmanın kendi alan adındaki iş adreslerini yaz; gmail, hotmail gibi kişisel adresleri yazma. (Küçük bir firma genel iletişim için böyle bir adres yayımlıyorsa roleType "general" ile yazabilirsin.)
 - Yayımlanmış adreslerde origin "published" olsun. Tahmini adresi asla "published" diye yazma.
-- Kalıptan türetme: firmanın adres kalıbı en az bir yayımlanmış kişisel adresten belliyse (ör. ad.soyad@firma.com) ve İK, işe alım ya da yönetimden birinin adı herkese açık bir kaynakta geçiyorsa, kalıptan türettiğin adresi origin "pattern" ile yazabilirsin; evidence'a kalıbın ve adın kaynağını yaz. En fazla 3.
+- Kalıptan türetme: firmanın adres kalıbı en az bir yayımlanmış kişisel adresten belliyse (ör. ad.soyad@firma.com) ve İK, işe alım ya da yönetimden birinin adı herkese açık bir kaynakta geçiyorsa, kalıptan türettiğin adresi origin "pattern" ile yazabilirsin; evidence'a kalıbın ve adın kaynağını yaz. En fazla 6.
 - Olası adresler: Firmanın alan adında hiç yayımlanmış İK ya da genel iletişim adresi bulamadıysan, firmanın kullandığını bildiğin ya da en olası gördüğün başvuru adreslerini (ör. kariyer@, ik@, info@ ya da bildiğin bir İK yöneticisinin adresi) origin "likely" ile en fazla 3 adet yaz; evidence'a neden olası olduğunu yaz, sourceUrl firmanın sitesi olabilir. Bu adreslerin posta kutusu ayrıca posta sunucusundan yoklanacak; yayımlanmış adres bulduysan "likely" yazma.
 - Destek, satış, KVKK, basın, yatırımcı ilişkileri, fatura, şikâyet gibi başvuruyla ilgisi olmayan adresleri yazma. Firmadan ayrıldığı belli olan kişileri yazma.
 - name ve title: kişi adresiyse kişinin adı ve unvanı; rol adresiyse null.
 - roleType: "hr" (İK / kariyer rol adresi ya da İK çalışanı), "recruiting" (işe alım / yetenek kazanımı), "general" (genel iletişim), "management" (kurucu, üst yönetim, bölüm ya da ekip yöneticisi), "employee" (diğer çalışanlar).
-- En fazla 25 adres; önce rol adresleri, sonra kişiler.
+- En fazla 30 adres; önce rol adresleri, sonra kişiler.
+- phone: firmanın kendi sitesinde ya da resmî kaynakta yayımlanmış merkez telefon numarası; bulamadıysan null.
+- workPolicy: firmanın genel çalışma düzeni, yalnızca kaynakta açıkça yazıyorsa: "remote" (tamamen uzaktan), "hybrid" (hibrit), "onsite" (ofisten); bilinmiyorsa null. Tek bir ilanın çalışma şeklini firma geneline yayma.
+- linkedinUrl: firmanın LinkedIn şirket sayfası (https://www.linkedin.com/company/...); bulamadıysan null.
 - website: Firmanın resmî web sitesi (ör. "https://ornek.com.tr"); ilan sitesi, sosyal medya ya da firma rehberi sayfası yazma. Bulamadıysan null.
 - group: Firma bir grubun / holdingin parçasıysa (ör. Koç, Sabancı, Doğuş, DHL Group) grubun Türkiye İK / kariyer adresini ara; bulamazsan aynı grubun Türkiye'deki kardeş şirketlerinden birinin yayımlanmış İK adresini yaz ve group.name alanına adresin ait olduğu şirketi yaz (ör. "DHL Express Türkiye (DHL Group)"). Grup veya kardeş şirket adresini contacts'a koyma. Bağımsız firmaysa group null olsun.
 - offices: Firmanın Türkiye'deki merkez / ofis adresleri; öncelikle girdilerdeki aday bölgelerine bak. Şehir, ilçe, açık adres ve kaynak URL'si; bilinmeyeni null bırak, tahmin etme.
@@ -74,11 +78,13 @@ ${EMPLOYEES_RULE}
 - Yanıtın SADECE geçerli bir JSON nesnesi olsun; açıklama veya kod bloğu ekleme.
 
 JSON şeması:
-{"searches":["yaptığın arama sorguları"],"website":"https://ornek.com veya null","employees":"51-200 veya null","contacts":[{"email":"ik@ornek.com","name":null,"title":null,"roleType":"hr","origin":"published","sourceUrl":"https://ornek.com/kariyer","evidence":"CV'nizi ik@ornek.com adresine gönderebilirsiniz"},{"email":"ayse.kaya@ornek.com","name":"Ayşe Kaya","title":"Yetenek Kazanımı Uzmanı","roleType":"recruiting","origin":"published","sourceUrl":"https://...","evidence":"..."}],"group":{"name":"Örnek Holding","website":"https://ornekholding.com","hrEmail":"kariyer@ornekholding.com","sourceUrl":"https://ornekholding.com/kariyer"},"offices":[{"label":"Genel Merkez","city":"İstanbul","district":"Kadıköy","address":"açık adres","sourceUrl":"https://..."}]}
+{"searches":["yaptığın arama sorguları"],"website":"https://ornek.com veya null","employees":"51-200 veya null","phone":"+90 212 000 00 00 veya null","workPolicy":"hybrid veya null","linkedinUrl":"https://www.linkedin.com/company/ornek veya null","contacts":[{"email":"ik@ornek.com","name":null,"title":null,"roleType":"hr","origin":"published","sourceUrl":"https://ornek.com/kariyer","evidence":"CV'nizi ik@ornek.com adresine gönderebilirsiniz"},{"email":"ayse.kaya@ornek.com","name":"Ayşe Kaya","title":"Yetenek Kazanımı Uzmanı","roleType":"recruiting","origin":"published","sourceUrl":"https://...","evidence":"..."}],"group":{"name":"Örnek Holding","website":"https://ornekholding.com","hrEmail":"kariyer@ornekholding.com","sourceUrl":"https://ornekholding.com/kariyer"},"offices":[{"label":"Genel Merkez","city":"İstanbul","district":"Kadıköy","address":"açık adres","sourceUrl":"https://..."}]}
 
 Girdiler:
 Firma: ${JSON.stringify(input.company.name)} (${input.company.domain ?? 'alan adı bilinmiyor'})
 Aday bölgeleri: ${JSON.stringify(input.regions ?? [])}${
+        input.known?.length ? `\nFirma hakkında zaten bilinenler (bunları yeniden araştırma, ilgili alanı null bırakabilirsin): ${JSON.stringify(input.known)}` : ''
+      }${
         input.knownEmails?.length ? `\nZaten bilinen adresler (tekrar yazmana gerek yok; bunların dışındakileri ara): ${JSON.stringify(input.knownEmails)}` : ''
       }${
         input.avoidEmails?.length
@@ -354,6 +360,22 @@ ${sourcesBlock(input.sources)}
 
 JSON şeması:
 {"subject":"...","body":"...","selectedWorkIndexes":[0],"confirmQuestion":"adaya sorulacak teyit sorusu veya null"}`;
+    case 'interview_extract':
+      return `Görev: Firmadan gelen mülâkat / görüşme davetinden görüşmenin tarihini ve ayrıntılarını çıkar.
+${SAFETY}
+Şu an: ${input.now} (Türkiye saati, UTC+3). "Yarın", "pazartesi" gibi göreli ifadeleri buna göre çöz.
+Kurallar:
+- startsAt: görüşmenin kesinleşmiş başlangıcı, saat dilimiyle ISO 8601 (ör. "2026-11-12T14:00:00+03:00"). Birden çok seçenek önerilmişse ya da tarih/saat belirsizse null.
+- durationMin: yazıyorsa dakika cinsinden süre; yoksa null.
+- kind: "phone" (telefon), "video" (Zoom, Teams, Meet vb.), "onsite" (ofiste yüz yüze); belli değilse null.
+- link: görüntülü görüşme bağlantısı aynen; location: yüz yüzeyse adres.
+- confidence: tarihin doğru çıkarıldığına ne kadar eminsin (0-1).
+- note: adayın yapması gereken bir şey varsa kısaca (ör. "tarihi onaylaman bekleniyor").
+- Yanıtın SADECE geçerli bir JSON nesnesi olsun.
+${sourcesBlock([{ id: 'S1', excerpt: `Konu: ${input.subject ?? ''}\n\n${input.text ?? ''}` }])}
+
+JSON şeması:
+{"startsAt":"2026-11-12T14:00:00+03:00 veya null","durationMin":45,"kind":"video","link":null,"location":null,"confidence":0.8,"note":null}`;
     case 'reply_classification':
       return `Görev: Başvuruya gelen e-posta yanıtını sınıflandır.
 ${SAFETY}

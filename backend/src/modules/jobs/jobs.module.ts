@@ -1,6 +1,8 @@
 import { Body, Controller, Get, Injectable, Module, Param, Patch, Post, Query } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
+import { followMerged } from '../../engine/company-merge.service';
+import { visibleCompanyName } from '../../domain/hidden-company';
 import { AuditService } from '../../common/audit.service';
 import { Ctx, RequestContext } from '../../common/auth';
 import { sha256 } from '../../common/crypto';
@@ -110,12 +112,15 @@ export class JobsService {
     if (companyId) await this.scope.company(ctx, companyId);
     else {
       if (!input.companyName) throw new AppError(400, 'COMPANY_REQUIRED', 'Firma seçin veya firma adı girin');
+      const visibleName = visibleCompanyName(input.companyName);
+      if (!visibleName) throw new AppError(422, 'HIDDEN_COMPANY', 'Adı gizli firmanın ilanı eklenmez; firmanın gerçek adını yaz');
+      input = { ...input, companyName: visibleName };
       const domain = normalizeDomain(input.companyWebsite);
-      const normalizedName = normalizeCompanyName(input.companyName);
-      const existing = await this.prisma.company.findFirst({ where: { workspaceId: ctx.workspaceId, OR: [...(domain ? [{ canonicalDomain: domain }] : []), { normalizedName }] } });
+      const normalizedName = normalizeCompanyName(visibleName);
+      const existing = await followMerged(this.prisma, await this.prisma.company.findFirst({ where: { workspaceId: ctx.workspaceId, OR: [...(domain ? [{ canonicalDomain: domain }] : []), { normalizedName }] } }));
       companyId =
         existing?.id ??
-        (await this.prisma.company.create({ data: { workspaceId: ctx.workspaceId, name: input.companyName, normalizedName, canonicalDomain: domain, website: domain ? `https://${domain}` : null, origin: 'manual' } })).id;
+        (await this.prisma.company.create({ data: { workspaceId: ctx.workspaceId, name: visibleName, normalizedName, canonicalDomain: domain, website: domain ? `https://${domain}` : null, origin: 'manual' } })).id;
     }
     let source = await this.prisma.sourceConnector.findFirst({ where: { workspaceId: ctx.workspaceId, kind: input.platform, companyId: null } });
     if (!source) {

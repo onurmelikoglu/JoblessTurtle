@@ -1,13 +1,53 @@
-import { ChevronDown, ChevronUp, CircleHelp, EllipsisVertical, ExternalLink, Lightbulb, MapPin, Users } from 'lucide-react';
+import { Briefcase, Check, ChevronDown, ChevronUp, CircleHelp, EllipsisVertical, ExternalLink, Languages, Lightbulb, MapPin, Phone, Users } from 'lucide-react';
 import type { ApplyLink, HomeAnalysis, HomeCompany, HomeOpportunity } from '@/api/types';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/ui/Badge';
 import { Button, IconButton, LinkButton } from '@/ui/Button';
 import { InlineBusy, Skeleton } from '@/ui/feedback';
 import { Checkbox } from '@/ui/fields';
-import { Menu } from '@/ui/Menu';
+import { Menu, type MenuEntry } from '@/ui/Menu';
 import { Panel } from '@/ui/Panel';
-import { CATEGORY_INFO, CLASS_INFO, employeesHint, employeesLabel, hasEmail } from './model';
+import { CATEGORY_INFO, CLASS_INFO, employeesHint, employeesLabel, hasEmail, workModeBadge } from './model';
+
+const WORK_POLICY_TEXT: Record<NonNullable<HomeCompany['workPolicy']>, string> = { remote: 'Firma geneli uzaktan', hybrid: 'Firma geneli hibrit', onsite: 'Firma geneli ofisten' };
+
+function CompanyFacts({ company }: { company: HomeCompany }) {
+  if (!company.phone && !company.workPolicy) return null;
+  return (
+    <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-soft">
+      {company.phone && (
+        <a href={`tel:${company.phone.replace(/[^\d+]/g, '')}`} className="inline-flex items-center gap-1 hover:text-ink hover:underline">
+          <Phone className="size-3" aria-hidden />
+          {company.phone}
+        </a>
+      )}
+      {company.workPolicy && (
+        <span className="inline-flex items-center gap-1" title="Firmanın sitesinde ya da resmî kaynakta yazan genel çalışma düzeni">
+          <Briefcase className="size-3" aria-hidden />
+          {WORK_POLICY_TEXT[company.workPolicy]}
+        </span>
+      )}
+    </p>
+  );
+}
+
+const LANGUAGE_CHOICES: { value: HomeCompany['languageChoice']; label: string }[] = [
+  { value: null, label: 'Otomatik (firmaya göre)' },
+  { value: 'tr', label: 'Türkçe' },
+  { value: 'en', label: 'İngilizce' },
+];
+
+function languageMenu(companyId: string, choice: HomeCompany['languageChoice'], onSetLanguage: CompanyCardActions['onSetLanguage']): MenuEntry[] {
+  return [
+    'separator',
+    { heading: 'Başvuru yazısının dili' },
+    ...LANGUAGE_CHOICES.map((option) => ({
+      label: option.label,
+      icon: option.value === choice ? <Check className="size-4" aria-hidden /> : <span className="size-4" aria-hidden />,
+      onSelect: () => onSetLanguage(companyId, option.value),
+    })),
+  ];
+}
 
 const ADDRESS_SOURCE_NOTE = /\s*\((kaynak|source):[^)]*\)/gi;
 const MAX_OFFICES_SHOWN = 3;
@@ -18,6 +58,8 @@ export interface CompanyCardActions {
   onMarkApplied: (opportunity: HomeOpportunity) => void;
   onDismiss: (opportunity: HomeOpportunity) => void;
   onResearch: (companyId: string) => void;
+  onSetLanguage: (companyId: string, language: HomeCompany['languageChoice']) => void;
+  onMergeWith: (companyId: string) => void;
   onToggleAnalysis: (companyId: string) => void;
 }
 
@@ -129,15 +171,17 @@ interface OpportunityRowProps {
   sending: boolean;
   emailSearching: boolean;
   busy: boolean;
+  languageChoice: HomeCompany['languageChoice'];
   actions: CompanyCardActions;
 }
 
-function OpportunityRow({ opportunity: o, fallbackLinks, selected, sending, emailSearching, busy, actions }: OpportunityRowProps) {
+function OpportunityRow({ opportunity: o, fallbackLinks, selected, sending, emailSearching, busy, languageChoice, actions }: OpportunityRowProps) {
   const noEmail = !hasEmail(o);
   const channels = o.links.length ? o.links : noEmail ? fallbackLinks.filter((l) => l.kind === 'careers') : [];
   const status = statusText(o, { sending, emailSearching, hasChannel: channels.length > 0 });
   const category = CATEGORY_INFO[o.category];
   const name = o.title ?? 'Firmaya genel başvuru';
+  const workMode = workModeBadge(o);
   return (
     <div className="flex flex-wrap items-start gap-x-3 gap-y-2 border-t border-line px-3 py-3 sm:px-4">
       <Checkbox className="mt-0.5" checked={selected} disabled={sending || noEmail} onChange={() => actions.onToggleSelect(o.id)} aria-label={`${o.company} · ${name} seç`} title={noEmail ? 'Mail adresi olmayan fırsat toplu başvuruya eklenemez' : undefined} />
@@ -145,11 +189,26 @@ function OpportunityRow({ opportunity: o, fallbackLinks, selected, sending, emai
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <h4 className="font-medium">{name}</h4>
           {o.title && category && <Badge tone={category.tone}>{category.tag}</Badge>}
-          {o.scope === 'remote' && <Badge tone="info">Uzaktan</Badge>}
+          {workMode && (
+            <Badge tone={workMode.tone} title={workMode.hint}>
+              {workMode.text}
+            </Badge>
+          )}
           {o.scope === 'abroad' && <Badge tone="info">Yurt dışı</Badge>}
+          {o.language === 'en' && (
+            <Badge tone="info" icon={<Languages className="size-3" aria-hidden />} title={`İngilizce yazılır: ${o.languageReason}`}>
+              İngilizce
+            </Badge>
+          )}
           {o.fit === 'strong' && <Badge tone="good">Çok uygun</Badge>}
         </div>
         <p className="mt-0.5 text-sm text-ink-soft">{o.summary}</p>
+        {o.address && (
+          <p className="mt-0.5 flex items-start gap-1 text-xs text-ink-soft">
+            <MapPin className="mt-px size-3 shrink-0" aria-hidden />
+            <span className="min-w-0 break-words">{[o.location, o.address].filter(Boolean).join(', ')}</span>
+          </p>
+        )}
         <p className={cn('mt-1.5 text-[13px]', status.problem ? 'text-bad' : 'text-ink-soft')}>{status.text}</p>
         {(channels.length > 0 || noEmail) && (
           <div className="mt-2 flex flex-wrap gap-2">
@@ -178,6 +237,9 @@ function OpportunityRow({ opportunity: o, fallbackLinks, selected, sending, emai
             noEmail && !emailSearching && { label: 'Mail adresini ara', onSelect: () => actions.onResearch(o.companyId) },
             !noEmail && channels.length === 0 && { label: 'Kendim başvurdum, işaretle', onSelect: () => actions.onMarkApplied(o) },
             { label: 'İlgilenmiyorum, gizle', onSelect: () => actions.onDismiss(o), danger: true },
+            ...languageMenu(o.companyId, languageChoice, actions.onSetLanguage),
+            'separator',
+            { label: 'Başka bir kayıtla birleştir…', onSelect: () => actions.onMergeWith(o.companyId) },
           ]}
         />
       </div>
@@ -215,6 +277,7 @@ export function CompanyCard({ company, showClass, selected, applying, researchin
           </div>
         </div>
         {company.sectors.length > 0 && <p className="text-xs text-ink-soft">{company.sectors.slice(0, 4).join(' · ')}</p>}
+        <CompanyFacts company={company} />
         <Offices company={company} researching={researching} onResearch={() => actions.onResearch(company.id)} />
         {analysisOpen && company.analysis && <Analysis analysis={company.analysis} />}
       </div>
@@ -228,6 +291,7 @@ export function CompanyCard({ company, showClass, selected, applying, researchin
           sending={applying.has(opportunity.id)}
           emailSearching={researching && !hasEmail(opportunity)}
           busy={busy}
+          languageChoice={company.languageChoice}
           actions={actions}
         />
       ))}

@@ -5,6 +5,9 @@ import { ParsedPage, ScrapeError } from '../types';
 
 export const secretcvDate = (text: string | null | undefined) => text?.replace(SECRETCV.datePrefix, '').trim() || null;
 
+/** Kartın konum satırları: il ("İstanbul Avrupa") ve varsa ilçe ("Beyoğlu") → "İstanbul Avrupa - Beyoğlu". */
+export const secretcvLocation = (city: string | null | undefined, district: string | null | undefined) => [city?.trim(), district?.trim()].filter(Boolean).join(' - ') || null;
+
 /**
  * Sunucudaki sayfa: kartlar. Sonraki sayfa robots.txt'e göre okunamadığı için hasNextPage her zaman false; ilan
  * listesinin yapısı hiç yoksa selector hatası.
@@ -22,7 +25,7 @@ export function parseSecretcvPage(html: string): ParsedPage {
       platformId: href?.split(/[?#]/)[0].match(SECRETCV.listingId)?.[1] ?? null,
       title: link.text().trim() || null,
       company: card.find(s.company).first().text().trim() || null,
-      location: card.find(s.location).first().text().trim() || null,
+      location: secretcvLocation(card.find(s.location).first().text(), card.find(s.district).first().text()),
       url: href,
       publishedText: secretcvDate(card.find(s.date).first().text()),
     };

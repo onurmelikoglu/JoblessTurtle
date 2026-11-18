@@ -38,6 +38,7 @@ export interface QueueSendInput {
   overrideCooldown?: boolean;
 }
 
+const DEFAULT_FOLLOW_UP_DAYS = 7;
 const ACTIVE_STATES = ['queued', 'sending', 'provider_accepted', 'submission_unknown', 'replied', 'bounced', 'outcome_recorded'];
 const NOT_SENT_STATES = ['cancelled', 'blocked', 'failed_confirmed'];
 
@@ -475,9 +476,10 @@ export class SendingService {
         const draft = await tx.applicationDraft.findUniqueOrThrow({ where: { id: attempt.draftId } });
         if (draft.opportunityId) await tx.opportunity.updateMany({ where: { id: draft.opportunityId }, data: { status: 'applied' } });
         if (attempt.intentType !== 'follow_up') {
+          const policy = await tx.automationPolicy.findFirst({ where: { workspaceId: attempt.workspaceId }, orderBy: [{ active: 'desc' }, { createdAt: 'desc' }], select: { followUpDelayDays: true } });
           await tx.followUp.upsert({
             where: { attemptId: attempt.id },
-            create: { workspaceId: attempt.workspaceId, attemptId: attempt.id, dueAt: addBusinessDays(new Date(), 7) },
+            create: { workspaceId: attempt.workspaceId, attemptId: attempt.id, dueAt: addBusinessDays(new Date(), policy?.followUpDelayDays ?? DEFAULT_FOLLOW_UP_DAYS) },
             update: {},
           });
         }

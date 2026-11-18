@@ -166,6 +166,17 @@ export function claudeLoggedIn(stdout: string): boolean | null {
   }
 }
 
+/** Tarayıcı girişinin bitiş anı (`loginExpiresAt`); bildirmiyorsa null. */
+export function claudeSessionExpiry(stdout: string): Date | null {
+  try {
+    const value = (JSON.parse(stdout) as { loginExpiresAt?: string | number | null }).loginExpiresAt;
+    const at = value ? new Date(value) : null;
+    return at && !Number.isNaN(at.getTime()) ? at : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Claude Code CLI: `claude -p` başsız mod. Giriş host üzerinde `claude` ile bir kez yapılır. */
 export const cliClaudeProvider: TextProvider = {
   name: 'cli_claude',
@@ -174,6 +185,7 @@ export const cliClaudeProvider: TextProvider = {
     cached('cli_claude', async () => {
       const r = await runProcess(env().CLAUDE_CLI_PATH, ['--version'], '', 15000);
       if (r.code !== 0) return { ok: false, installed: false, detail: r.stderr.trim() || 'claude bulunamadı' };
+      if (hasClaudeToken()) return { ok: true, installed: true, detail: `${r.stdout.trim()} · uzun süreli belirteç` };
       const status = await runProcess(env().CLAUDE_CLI_PATH, ['auth', 'status', '--json'], '', 15000);
       return claudeLoggedIn(status.stdout) === false ? { ok: false, installed: true, detail: 'Claude hesabı bağlı değil' } : { ok: true, installed: true, detail: r.stdout.trim() };
     }),
@@ -314,6 +326,22 @@ export const API_KEY_PROVIDERS: ApiKeyProvider[] = ['anthropic_api', 'openai_api
 
 /** Arayüzden girilip veritabanında şifreli saklanan anahtarlar (çözülmüş hâli yalnızca bellekte); yoksa ortam değişkeni kullanılır. */
 let storedApiKeys: Partial<Record<ApiKeyProvider, string>> = {};
+
+/**
+ * `claude setup-token` ile üretilen uzun süreli (bir yıllık) belirteç. Varsa Claude CLI süreçlerine
+ * CLAUDE_CODE_OAUTH_TOKEN olarak verilir; tarayıcı girişinin kısa ömürlü oturumuna bağlı kalınmaz.
+ */
+const CLAUDE_TOKEN_ENV = 'CLAUDE_CODE_OAUTH_TOKEN';
+export const CLAUDE_TOKEN_PATTERN = /^sk-ant-oat\d{0,3}-[A-Za-z0-9_-]{20,}$/;
+
+export function setClaudeToken(token: string | null) {
+  if ((process.env[CLAUDE_TOKEN_ENV] ?? null) === token) return;
+  if (token) process.env[CLAUDE_TOKEN_ENV] = token;
+  else delete process.env[CLAUDE_TOKEN_ENV];
+  resetProviderCache();
+}
+
+export const hasClaudeToken = () => !!process.env[CLAUDE_TOKEN_ENV];
 
 export function setStoredApiKeys(keys: Partial<Record<ApiKeyProvider, string>>) {
   if (keys.anthropic_api !== storedApiKeys.anthropic_api) anthropicClient = null;

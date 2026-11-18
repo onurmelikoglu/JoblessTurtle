@@ -52,6 +52,7 @@ const schema = z.object({
   ALLOW_PRIVATE_FETCH: bool.default(false),
   // Derin adres aramasında tahmini adresler alan adının posta sunucusuna "bu kutu var mı" diye sorulur (mail gönderilmez).
   CONTACT_SMTP_PROBE: bool.default(true),
+  ENRICH_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(3),
   // Yoklamada EHLO ile tanıtılan ad; boşsa APP_PUBLIC_URL'nin alan adı kullanılır.
   SMTP_PROBE_HELO: z.string().optional(),
   // Worker

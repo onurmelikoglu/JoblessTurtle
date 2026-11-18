@@ -9,6 +9,7 @@ interface IsinolsunJob {
   companyName?: string;
   cityName?: string | null;
   townName?: string | null;
+  neighbourhood?: string | null;
   shareUrl?: string;
   workType?: number;
   durationDayText?: string | null;
@@ -23,15 +24,25 @@ export function isinolsunAge(text: string | null | undefined): string | null {
   return `${short[1]} ${short[2].toLowerCase() === 's' ? 'saat' : 'gün'}`;
 }
 
-/** Kart adresinden il ve ilçe: "Cumhuriyet Mah., Şişli, İstanbul" → "İstanbul - Şişli" (mahalle atılır). */
-export function isinolsunLocation(address: string | null | undefined): string | null {
-  const parts = (address ?? '')
+const NEIGHBOURHOOD = /\bmah(\.|alle(si)?)?$/i;
+
+const addressParts = (address: string | null | undefined) =>
+  (address ?? '')
     .split(',')
     .map((p) => p.trim())
-    .filter((p) => p && !/\bmah(\.|alle(si)?)?$/i.test(p));
+    .filter(Boolean);
+
+/** Kart adresinden il ve ilçe: "Cumhuriyet Mah., Şişli, İstanbul" → "İstanbul - Şişli" (mahalle ayrı alandır). */
+export function isinolsunLocation(address: string | null | undefined): string | null {
+  const parts = addressParts(address).filter((p) => !NEIGHBOURHOOD.test(p));
   if (!parts.length) return null;
   const [city, ...rest] = parts.reverse();
   return rest.length ? `${city} - ${rest[0]}` : city;
+}
+
+/** Kart adresindeki mahalle: "Cumhuriyet Mah., Şişli, İstanbul" → "Cumhuriyet Mah.". */
+export function isinolsunNeighbourhood(address: string | null | undefined): string | null {
+  return addressParts(address).find((p) => NEIGHBOURHOOD.test(p)) ?? null;
 }
 
 function fromJob(job: IsinolsunJob): RawCard {
@@ -41,6 +52,7 @@ function fromJob(job: IsinolsunJob): RawCard {
     company: job.companyName ?? null,
     location: job.cityName ? (job.townName ? `${job.cityName} - ${job.townName}` : job.cityName) : null,
     url: job.shareUrl ?? null,
+    address: job.neighbourhood?.trim() || null,
     employmentType: (job.workType != null && ISINOLSUN.workTypes[job.workType]) || null,
     publishedText: isinolsunAge(job.durationDayText),
   };

@@ -30,6 +30,9 @@ import { detectLocation } from '../domain/geo';
 import { isTurkishUrl, normalizeCompanyName, normalizeDomain, stripHtml, truncate } from '../domain/text';
 import { AddressBookService } from './address-book.service';
 import { AiService } from './ai/ai.service';
+import { ProviderName } from './ai/providers';
+import { followMerged } from './company-merge.service';
+import { visibleCompanyName } from '../domain/hidden-company';
 import { CatalogService } from './catalog.service';
 import { CompanyScoringService } from './company-scoring.service';
 import { assertSafeUrl } from '../domain/ssrf';
@@ -168,6 +171,9 @@ type HarvestOutput = {
   group?: GroupInfo | null;
   offices: { label?: string | null; city?: string | null; district?: string | null; address?: string | null; sourceUrl?: string | null }[];
   employees?: string | null;
+  phone?: string | null;
+  workPolicy?: 'remote' | 'hybrid' | 'onsite' | null;
+  linkedinUrl?: string | null;
 };
 
 type FoundContact = { email: string; sourceUrl: string; purpose?: string | null };
@@ -186,7 +192,7 @@ function contactKindFor(email: string, purpose?: string | null) {
 
 type GroupInfo = { name: string; website?: string | null; hrEmail?: string | null; sourceUrl?: string | null };
 
-export type ResearchMeta = { reportAt?: string; contactsSearchedAt?: string; contactsDepth?: SearchDepth; contactsEscalated?: boolean; contactsVersion?: number; contactsFound?: boolean; officesSearchedAt?: string; officesFound?: boolean; sizeSearchedAt?: string };
+export type ResearchMeta = { siteLanguage?: string | null; reportAt?: string; contactsSearchedAt?: string; contactsDepth?: SearchDepth; contactsEscalated?: boolean; contactsVersion?: number; contactsFound?: boolean; officesSearchedAt?: string; officesFound?: boolean; sizeSearchedAt?: string };
 
 /** Derin arama yapıldı ve gönderilebilir adres çıkmadı: yeniden deneme süresi dolana kadar yalnızca diğer başvuru kanalları gösterilir. */
 export function addressSearchExhausted(meta: unknown, now = Date.now()) {
@@ -201,7 +207,15 @@ export function detailsNeeded(c: { researchMeta: unknown; hrContacts: number; kn
   const due = (at?: string) => !at || now - new Date(at).getTime() > DETAILS_RETRY_DAYS * DAY_MS;
   return (c.hrContacts === 0 && due(meta.contactsSearchedAt)) || (c.knownOffices === 0 && due(meta.officesSearchedAt));
 }
-const INTERESTING = /(about|hakk|biz-kim|kimiz|work|works|isler|işler|projeler|projects|portfolio|clients|musteri|müşteri|referans|awards|odul|ödül|team|ekip|kariyer|career|jobs|join|iletisim|iletişim|contact)/i;
+const INTERESTING = /(about|hakk|biz-kim|kimiz|work|works|isler|işler|projeler|projects|portfolio|clients|musteri|müşteri|referans|awards|odul|ödül|team|ekip|kariyer|career|jobs|join|iletisim|iletişim|contact|kvkk|aydinlatma|aydınlatma|gizlilik|privacy|impressum|legal|kunye|künye)/i;
+/** Türk firma sitelerinde başvuru ve iletişim adresinin en sık geçtiği sayfalar; ana sayfadan bağlantı olmasa da denenir. */
+const LIKELY_PATHS = ['iletisim', 'contact', 'kariyer', 'careers', 'kvkk', 'aydinlatma-metni', 'hakkimizda', 'about'];
+const MAX_CRAWL_PAGES = 12;
+const MAX_CRAWL_QUEUE = 30;
+const MAX_SITEMAP_LINKS = 8;
+const SOURCE_CHECK_CONCURRENCY = 5;
+const PHONE_DIGITS = /^\+?[\d\s().-]{7,24}$/;
+const WEB_CAPABLE_PROVIDERS: ProviderName[] = ['cli_claude', 'cli_codex'];
 const CAREERS = /(kariyer|career|careers|jobs|join-us|bize-katil|acik-pozisyon)/i;
 
 @Injectable()
@@ -244,6 +258,9 @@ export class ResearchService {
         );
       }
       pages.forEach((p) => p.emails.forEach((email) => contacts.push({ email, sourceUrl: p.url })));
+      await this.applyProfileFacts(company.id, { phone: pages.flatMap((p) => p.phones)[0] ?? null });
+      const siteLanguage = pages.find((p) => p.lang)?.lang;
+      if (siteLanguage) await this.recordSearch(company.id, { siteLanguage });
       await this.registerDiscoveredSources(company, pages.flatMap((p) => p.links));
     }
     if (contacts.length) {
@@ -278,7 +295,7 @@ export class ResearchService {
       await this.applyReport(company.id, result.output, sources, result.taskId, result.provider);
       const details = await this.findContactsIfMissing(company, actorId);
       const at = new Date().toISOString();
-      await this.recordSearch(company.id, details.status === 'exists' ? { reportAt: at } : { reportAt: at, contactsSearchedAt: at, officesSearchedAt: at });
+      await this.recordSearch(company.id, details.status === 'succeeded' ? { reportAt: at, contactsSearchedAt: at, officesSearchedAt: at } : { reportAt: at });
       return { status: 'succeeded', provider: result.provider, taskId: result.taskId };
     }
     await this.prisma.company.update({ where: { id: company.id }, data: { researchReport: { status: 'awaiting_user', taskId: result.taskId, at: new Date().toISOString() } } });
@@ -286,7 +303,7 @@ export class ResearchService {
   }
 
   private async crawlSite(company: Company, base: string, opts: { detectOffice?: boolean } = {}) {
-    const out: { url: string; text: string; emails: string[]; links: string[]; addresses: string[] }[] = [];
+    const out: { url: string; text: string; emails: string[]; links: string[]; addresses: string[]; phones: string[]; lang: string | null }[] = [];
     const visited = new Set<string>();
     const queue = [base];
     const host = (() => {
@@ -305,7 +322,9 @@ export class ResearchService {
       }
     })();
     if (!baseHost) return out;
-    while (queue.length && out.length < 6) {
+    const origin = new URL(base).origin;
+    queue.push(...LIKELY_PATHS.map((path) => `${origin}/${path}`), ...(await this.sitemapLinks(origin)));
+    while (queue.length && out.length < MAX_CRAWL_PAGES) {
       const url = queue.shift()!;
       if (visited.has(url)) continue;
       visited.add(url);
@@ -326,7 +345,7 @@ export class ResearchService {
           const abs = new URL(href, url).toString().split('#')[0];
           links.push(abs);
           const h = new URL(abs).hostname.replace(/^www\./, '');
-          if (h === baseHost && INTERESTING.test(abs) && !visited.has(abs) && queue.length < 12) queue.push(abs);
+          if (h === baseHost && INTERESTING.test(abs) && !visited.has(abs) && queue.length < MAX_CRAWL_QUEUE) queue.push(abs);
         } catch {
           /* geçersiz link */
         }
@@ -339,7 +358,14 @@ export class ResearchService {
       for (const m of stripHtml(html).matchAll(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi)) emails.add(m[0].toLowerCase());
       // İzinli kısa kanıt parçası; ham sayfa saklanmaz.
       const pageText = stripHtml($('main').html() ?? $('body').html() ?? html);
-      out.push({ url, text: truncate(pageText, 3500) ?? '', emails: [...emails], links, addresses: extractAddresses(html, stripHtml(html)) });
+      const phones = new Set<string>();
+      $('a[href^="tel:"]').each((_, el) => {
+        const tel = ($(el).attr('href') ?? '').replace(/^tel:/i, '').trim();
+        if (PHONE_DIGITS.test(tel)) phones.add(tel);
+      });
+      for (const m of html.matchAll(/"telephone"\s*:\s*"([^"]{7,30})"/g)) if (PHONE_DIGITS.test(m[1])) phones.add(m[1].trim());
+      const lang = $('html').attr('lang')?.trim().toLowerCase() || null;
+      out.push({ url, text: truncate(pageText, 3500) ?? '', emails: [...emails], links, addresses: extractAddresses(html, stripHtml(html)), phones: [...phones], lang });
       if (out.length === 1 && opts.detectOffice !== false) {
         const loc = detectLocation(stripHtml(html));
         const hasOffice = await this.prisma.office.count({ where: { companyId: company.id } });
@@ -349,6 +375,40 @@ export class ResearchService {
       }
     }
     return out;
+  }
+
+  /** Site haritasındaki iletişim, kariyer ve KVKK sayfaları; site haritası yoksa ya da robots izin vermiyorsa boş. */
+  private async sitemapLinks(origin: string): Promise<string[]> {
+    const url = `${origin}/sitemap.xml`;
+    try {
+      if (!(await robotsAllows(url))) return [];
+      const r = await fetchSource(url);
+      if (r.state !== 'ok' || !r.res) return [];
+      const locs = [...r.res.text().matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map((m) => m[1]);
+      return locs.filter((loc) => loc.startsWith(origin) && INTERESTING.test(loc) && !/\.xml$/i.test(loc)).slice(0, MAX_SITEMAP_LINKS);
+    } catch {
+      return [];
+    }
+  }
+
+  /** Bulunan telefon, firmanın genel çalışma düzeni ve LinkedIn sayfası yalnızca bilinmiyorsa yazılır. */
+  private async applyProfileFacts(companyId: string, facts: { phone?: string | null; workPolicy?: string | null; siteLanguage?: string | null }) {
+    const company = await this.prisma.company.findUnique({ where: { id: companyId }, select: { phone: true, workPolicy: true } });
+    if (!company) return;
+    const phone = facts.phone && PHONE_DIGITS.test(facts.phone.trim()) ? facts.phone.trim() : null;
+    const workPolicy = facts.workPolicy && ['remote', 'hybrid', 'onsite'].includes(facts.workPolicy) ? facts.workPolicy : null;
+    const data = { ...(phone && !company.phone ? { phone } : {}), ...(workPolicy && !company.workPolicy ? { workPolicy } : {}) };
+    if (Object.keys(data).length) await this.prisma.company.update({ where: { id: companyId }, data });
+  }
+
+  private knownFacts(company: Company, offices: number): string[] {
+    return [
+      offices > 0 && 'ofis adresleri',
+      company.employeeRange && `çalışan sayısı (${company.employeeRange})`,
+      company.phone && 'telefon',
+      company.workPolicy && 'çalışma düzeni',
+      company.linkedinUrl && 'LinkedIn sayfası',
+    ].filter((f): f is string => !!f);
   }
 
   /** Kariyer sayfası ve kamuya açık başvuru panoları (Greenhouse, Lever, Workable, Teamtailor…) otomatik kaynak olarak eklenir. */
@@ -418,6 +478,8 @@ export class ResearchService {
     const base = company.website ?? (company.canonicalDomain ? `https://${company.canonicalDomain}` : null);
     const sitePages = base && !opts.skipCrawl ? await this.crawlSite(company, base, { detectOffice: false }) : [];
     const knownEmails = stored.filter((c) => !c.suppressed && [...SENDABLE_CONTACT_KINDS, ...MANUAL_ONLY_KINDS].includes(c.kind)).map((c) => c.email);
+    const knownOfficeCount = await this.prisma.office.count({ where: { companyId: company.id, locationConfidence: { in: ['medium', 'high'] } } });
+    const knownFacts = this.knownFacts(company, knownOfficeCount);
     const harvest = await this.ai.run({
       workspaceId: company.workspaceId,
       kind: 'company_contacts',
@@ -425,6 +487,7 @@ export class ResearchService {
         company: { name: company.name, domain: company.canonicalDomain },
         regions: [...new Set([profile?.city, ...(profile?.districtsPrimary ?? [])].filter(Boolean))].slice(0, 40),
         ...(knownEmails.length ? { knownEmails: knownEmails.slice(0, MAX_KNOWN_IN_PROMPT) } : {}),
+        ...(knownFacts.length ? { known: knownFacts } : {}),
         ...(avoidEmails.length ? { avoidEmails } : {}),
         ...(hints.length ? { hints } : {}),
       },
@@ -434,8 +497,9 @@ export class ResearchService {
       allowManual: false,
       allowTemplate: false,
       useCache: false,
+      onlyProviders: WEB_CAPABLE_PROVIDERS,
     });
-    if (harvest.status !== 'succeeded') return { status: harvest.status };
+    if (harvest.status !== 'succeeded') return { status: harvest.status, reason: 'no_web_tools' };
     const found = harvest.output as HarvestOutput;
     const adopted = await this.adoptWebsite(company, found);
     const adoptedPages = adopted.canonicalDomain !== company.canonicalDomain && !opts.skipCrawl ? await this.crawlSite(adopted, adopted.website ?? `https://${adopted.canonicalDomain}`, { detectOffice: false }) : [];
@@ -474,13 +538,16 @@ export class ResearchService {
       );
     }
     await this.applyGroup(company, found.group ?? null);
-    await this.applySize(company.id, found.employees);
+    await this.applySize(company.id, found.employees, { linkedinUrl: found.linkedinUrl });
+    const sitePhone = [...sitePages, ...adoptedPages].flatMap((p) => p.phones)[0] ?? null;
+    await this.applyProfileFacts(company.id, { phone: sitePhone ?? found.phone, workPolicy: found.workPolicy });
     const knownOffices = await this.prisma.office.count({ where: { companyId: company.id, locationConfidence: { in: ['medium', 'high'] } } });
     if (!knownOffices) await this.applyOffices(company.id, found.offices);
+    const siteLanguage = [...sitePages, ...adoptedPages].find((p) => p.lang)?.lang ?? null;
     await this.prisma.company.update({ where: { id: company.id }, data: { lastResearchedAt: new Date() } });
     const reached: SearchDepth = deep && (reviews || !toReview.length) ? 'max' : 'base';
     const at = new Date().toISOString();
-    await this.recordSearch(company.id, { contactsSearchedAt: at, officesSearchedAt: at, contactsDepth: reached, ...(reached === 'max' ? { contactsVersion: SEARCH_VERSION } : {}) });
+    await this.recordSearch(company.id, { contactsSearchedAt: at, officesSearchedAt: at, contactsDepth: reached, ...(reached === 'max' ? { contactsVersion: SEARCH_VERSION } : {}), ...(siteLanguage ? { siteLanguage } : {}) });
     await this.catalog.publish(company.id);
     await this.learning.record({
       workspaceId: company.workspaceId,
@@ -551,6 +618,8 @@ export class ResearchService {
   private async checkSources(candidates: ResearchCandidate[]) {
     const pages = new Map<string, string | null>();
     const checks = new Map<string, SourceCheck>();
+    const toFetch = [...new Set(candidates.filter((c) => c.origin !== 'site' && sourceIsReadable(c.sourceUrl)).map((c) => c.sourceUrl!))].slice(0, MAX_SOURCE_PAGES);
+    for (let i = 0; i < toFetch.length; i += SOURCE_CHECK_CONCURRENCY) await Promise.all(toFetch.slice(i, i + SOURCE_CHECK_CONCURRENCY).map((url) => this.sourcePage(url, pages)));
     for (const c of candidates) {
       if (c.origin === 'site') {
         checks.set(c.email, 'found');
@@ -572,6 +641,7 @@ export class ResearchService {
     const r = await this.ai.run({
       workspaceId: company.workspaceId,
       kind: 'contact_review',
+      onlyProviders: WEB_CAPABLE_PROVIDERS,
       input: {
         company: { name: company.name, domain: company.canonicalDomain, groupName: company.groupName ?? groupName },
         candidates: refs.map(({ ref, c }) => ({
@@ -995,7 +1065,7 @@ export class ResearchService {
     const domain = normalizeDomain(best.domain ?? null);
     const before = await this.prisma.company.findFirst({ where: { workspaceId, OR: [...(domain ? [{ canonicalDomain: domain }] : []), { normalizedName: normalizeCompanyName(best.name) }] }, select: { id: true } });
     await this.applyDiscovery(workspaceId, { companies: [{ ...best, signal: best.signal ?? 'sector_fit' }] }, r.taskId, { userTriggered: true, titles: [...(profile?.exactTitles ?? []), ...(profile?.adjacentTitles ?? [])] });
-    const company = await this.prisma.company.findFirst({ where: { workspaceId, OR: [...(domain ? [{ canonicalDomain: domain }] : []), { normalizedName: normalizeCompanyName(best.name) }] }, select: { id: true, name: true, excluded: true } });
+    const company = await followMerged(this.prisma, await this.prisma.company.findFirst({ where: { workspaceId, OR: [...(domain ? [{ canonicalDomain: domain }] : []), { normalizedName: normalizeCompanyName(best.name) }] } }));
     if (!company) return save({ status: 'not_found', query });
     if (company.excluded) await this.prisma.company.update({ where: { id: company.id }, data: { excluded: false } });
     if (before) await this.outbox.emit({ workspaceId, eventType: 'research.company', aggregateId: company.id, dedupKey: `research:${company.id}:lookup:${lookupId}`, payload: { companyId: company.id, actorId, userTriggered: true } });
@@ -1017,7 +1087,10 @@ export class ResearchService {
    */
   async applyDiscovery(workspaceId: string, output: { companies?: any[] }, taskId: string, opts: { userTriggered?: boolean; titles?: string[]; roleLinksAreListings?: boolean } = {}) {
     let created = 0;
-    for (const c of output.companies ?? []) {
+    for (const found of output.companies ?? []) {
+      const visibleName = visibleCompanyName(found.name);
+      if (!visibleName) continue;
+      const c = { ...found, name: visibleName };
       const domain = normalizeDomain(c.domain ?? null);
       const normalizedName = normalizeCompanyName(c.name);
       const roles = ((c.openRoles ?? []) as { title: string; url?: string | null }[]).slice(0, 10);
@@ -1025,7 +1098,7 @@ export class ResearchService {
         `Keşif (${c.signal === 'open_role' ? 'açık rol sinyali' : 'sektör uyumu'}): ${c.reason} (kaynak: ${c.sourceUrl})`,
         ...roles.map((r) => `• Görülen rol: ${r.title}${r.url ? ` — ${r.url}` : ''}`),
       ].join('\n');
-      let company = await this.prisma.company.findFirst({ where: { workspaceId, OR: [...(domain ? [{ canonicalDomain: domain }] : []), { normalizedName }] } });
+      let company = await followMerged(this.prisma, await this.prisma.company.findFirst({ where: { workspaceId, OR: [...(domain ? [{ canonicalDomain: domain }] : []), { normalizedName }] } }));
       const isNew = !company;
       if (!company) {
         company = await this.prisma.company.create({

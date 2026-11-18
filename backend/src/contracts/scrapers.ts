@@ -88,7 +88,13 @@ export interface ScrapedJobView {
   company_url: string | null;
   description: string | null;
   employment_type: string | null;
+  /** İlanda yazan çalışma şekli: onsite | hybrid | remote; yazmıyorsa null. */
   work_mode: string | null;
+  /** work_mode null ise unvan, açıklama ve adresten tahmin; work_mode doluysa null. */
+  work_mode_estimate: 'onsite' | 'hybrid' | 'remote' | null;
+  company_sector: string | null;
+  /** İl ve ilçeden ayrıntılı adres (mahalle, cadde); sitede yoksa null. */
+  address: string | null;
   published_at: IsoDate | null;
   published_text: string | null;
   status: 'active' | 'missing' | 'expired';

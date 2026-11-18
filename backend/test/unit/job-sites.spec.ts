@@ -2,13 +2,14 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { openFromUrl, sealForUrl } from '../../src/common/crypto';
 import { citySlug, plateOf, provinceOfSlug } from '../../src/domain/provinces';
-import { isConfidentialCompany, isRejection, normalizeCard, relativeDate, ScrapedListing, splitLocation } from '../../src/domain/scraped-jobs';
+import { contentHashOf, isConfidentialCompany, isRejection, normalizeCard, relativeDate, ScrapedListing, splitLocation, toPublicJob, workModeEstimateOf } from '../../src/domain/scraped-jobs';
+import { estimateWorkMode, workModeInText, workModeOf } from '../../src/domain/work-mode';
 import { DEFAULT_SCRAPER_CONFIG, resolveScraperConfig, SCRAPER_SOURCES } from '../../src/domain/scraper-config';
 import { ElemanNetScraper } from '../../src/engine/scrapers/eleman-net.scraper';
 import { IndeedScraper } from '../../src/engine/scrapers/indeed.scraper';
 import { IsinolsunScraper } from '../../src/engine/scrapers/isinolsun.scraper';
 import { kariyerCityCodes, KariyerNetScraper } from '../../src/engine/scrapers/kariyer-net.scraper';
-import { isinolsunAge, isinolsunLocation } from '../../src/engine/scrapers/parsers/isinolsun.parser';
+import { isinolsunAge, isinolsunLocation, isinolsunNeighbourhood } from '../../src/engine/scrapers/parsers/isinolsun.parser';
 import { yenibirisTags } from '../../src/engine/scrapers/parsers/yenibiris.parser';
 import { SCRAPERS } from '../../src/engine/scrapers/registry';
 import { SecretcvScraper } from '../../src/engine/scrapers/secretcv.scraper';
@@ -83,7 +84,7 @@ describe('İşin Olsun', () => {
 
   it('sunucuda gömülü veri okunur; sonraki sayfa pageNumber < pageCount', () => {
     expect(parsed.hasNextPage).toBe(true);
-    expect(parsed.cards[0]).toMatchObject({ platformId: 'AAAABBBBCCCCDDDDEEEEFFFF00001111', title: 'Barista', company: 'Kabuk Kahve', location: 'İstanbul - Şişli', employmentType: 'Tam zamanlı', publishedText: '2 saat' });
+    expect(parsed.cards[0]).toMatchObject({ platformId: 'AAAABBBBCCCCDDDDEEEEFFFF00001111', title: 'Barista', company: 'Kabuk Kahve', location: 'İstanbul - Şişli', address: 'Cumhuriyet Mah.', employmentType: 'Tam zamanlı', publishedText: '2 saat' });
     expect(parsed.cards[1]).toMatchObject({ location: 'İstanbul', employmentType: null, publishedText: '15+ gün' });
     const [barista, mobile] = listings(isinolsun, parsed);
     expect(barista).toMatchObject({ externalId: 'AAAABBBBCCCCDDDDEEEEFFFF00001111', city: 'İstanbul', district: 'Şişli', publishedAt: new Date('2026-10-23T00:00:00Z') });
@@ -100,7 +101,8 @@ describe('İşin Olsun', () => {
       browserPayload('isinolsun', [['https://isinolsun.com/is-ilani/barista-kabuk-kahve-0iojAAAABBBBCCCCDDDDEEEEFFFF00001111', 'Barista', 'Kabuk Kahve', 'Cumhuriyet Mah., Şişli, İstanbul', 'Part Time']]),
       'https://isinolsun.com/is-ilanlari/istanbul?pn=2',
     );
-    expect(fromBrowser.cards[0]).toMatchObject({ platformId: 'AAAABBBBCCCCDDDDEEEEFFFF00001111', location: 'İstanbul - Şişli', employmentType: 'Part Time' });
+    expect(fromBrowser.cards[0]).toMatchObject({ platformId: 'AAAABBBBCCCCDDDDEEEEFFFF00001111', location: 'İstanbul - Şişli', address: 'Cumhuriyet Mah.', employmentType: 'Part Time' });
+    expect(isinolsunNeighbourhood('Kadıköy, İstanbul')).toBeNull();
     expect(isinolsunLocation('Kadıköy, İstanbul')).toBe('İstanbul - Kadıköy');
     expect(isinolsunLocation('İstanbul')).toBe('İstanbul');
     expect(isinolsunAge('3g')).toBe('3 gün');
@@ -120,9 +122,9 @@ describe('Secretcv', () => {
 
   it('kartlar okunur; robots.txt sayfalamayı yasakladığı için sunucuda sonraki sayfa yok', () => {
     expect(parsed.hasNextPage).toBe(false);
-    expect(parsed.cards[0]).toMatchObject({ platformId: '1890001', title: 'Finans Uzmanı', company: 'Kabuk Lojistik A.Ş.', location: 'İstanbul Avrupa', publishedText: 'Bugün' });
+    expect(parsed.cards[0]).toMatchObject({ platformId: '1890001', title: 'Finans Uzmanı', company: 'Kabuk Lojistik A.Ş.', location: 'İstanbul Avrupa - Beyoğlu', publishedText: 'Bugün' });
     expect(listings(secretcv, parsed).map((l) => [l.city, l.district])).toEqual([
-      ['İstanbul', null],
+      ['İstanbul', 'Beyoğlu'],
       ['İstanbul', null],
     ]);
   });
@@ -138,7 +140,9 @@ describe('Secretcv', () => {
 
   it('tarayıcıda sonraki sayfa bilinir; "İlan Tarihi:" öneki atılır', () => {
     const fromBrowser = secretcv.fromBrowser(browserPayload('secretcv', [['https://www.secretcv.com/kabuk-lojistik/finans-uzmani-is-ilanlari-1890001', 'Finans Uzmanı', 'Kabuk Lojistik', 'İnegöl', 'İlan Tarihi: Dün']], { next: true }), 'https://www.secretcv.com/is-ilanlari/ara-is-ilanlari?k=x');
-    expect(fromBrowser).toEqual({ hasNextPage: true, cards: [expect.objectContaining({ platformId: '1890001', publishedText: 'Dün' })] });
+    expect(fromBrowser).toEqual({ hasNextPage: true, cards: [expect.objectContaining({ platformId: '1890001', location: 'İnegöl', publishedText: 'Dün' })] });
+    const withDistrict = secretcv.fromBrowser(browserPayload('secretcv', [['https://www.secretcv.com/kabuk-lojistik/finans-uzmani-is-ilanlari-1890001', 'Finans Uzmanı', 'Kabuk Lojistik', 'İstanbul Avrupa', 'İlan Tarihi: Dün', 'Beşiktaş']]), 'https://www.secretcv.com/is-ilanlari/istanbul-is-ilanlari');
+    expect(withDistrict.cards[0].location).toBe('İstanbul Avrupa - Beşiktaş');
   });
 });
 
@@ -167,6 +171,64 @@ describe('Yenibiriş (yalnızca eklenti)', () => {
     expect(yenibiris.searchOfPage(new URL('https://www.yenibiris.com/is-ilanlari/istanbul?q=yaz%C4%B1l%C4%B1m&sayfa=2'))).toEqual({ cities: ['İstanbul'], keyword: 'yazılım' });
     expect(yenibiris.searchOfPage(new URL('https://www.yenibiris.com/is-ilani/mobil-gelistirici/1300001'))).toBeNull();
     expect(yenibirisTags(['Yarı Zamanlı / Part-Time', 'İş Yerinde'])).toEqual({ employmentType: 'Yarı Zamanlı / Part-Time', workModeText: 'İş Yerinde' });
+  });
+});
+
+describe('çalışma şekli, sektör ve adres', () => {
+  const origin = 'https://www.kariyer.net';
+  const card = { platformId: '1', title: 'Flutter Developer', company: 'Kabuk', location: 'İstanbul', url: '/is-ilani/x-1' };
+  const listing = (patch: Partial<Parameters<typeof normalizeCard>[1]> = {}) => normalizeCard('kariyer_net', { ...card, ...patch }, { origin, searchedCity: 'İstanbul', now: NOW }) as ScrapedListing;
+
+  it('ilanda yazan çalışma şekli: site alanı, konum ya da unvan; "kısmen uzaktan" hibrittir', () => {
+    expect(listing({ workModeText: 'İş Yerinde' }).workMode).toBe('onsite');
+    expect(listing({ title: 'Remote Flutter Developer' }).workMode).toBe('remote');
+    expect(listing({ title: 'Flutter Developer (Hibrit)' }).workMode).toBe('hybrid');
+    expect(listing().workMode).toBeNull();
+    expect(workModeOf('Kısmen uzaktan')).toBe('hybrid');
+    expect(workModeInText('Uzaktan Eğitim Koordinatörü')).toBeNull();
+  });
+
+  it('yazmıyorsa tahmin: açıklamadaki ifade, sokak adresi, unvanın iş türü, yoksa iş yerinde', () => {
+    expect(estimateWorkMode({ title: 'Muhasebe Uzmanı', description: 'Haftada 2 gün ofis, hibrit çalışma modeli' })).toBe('hybrid');
+    expect(estimateWorkMode({ title: 'Müşteri Temsilcisi', description: 'Tamamen uzaktan çalışma imkânı' })).toBe('remote');
+    expect(estimateWorkMode({ title: 'Flutter Developer', location: 'Çınar Mah., Deneme Cad. No:23' })).toBe('onsite');
+    expect(estimateWorkMode({ title: 'Mağaza Satış Danışmanı' })).toBe('onsite');
+    expect(estimateWorkMode({ title: 'Kıdemli Yazılım Geliştirici' })).toBe('hybrid');
+    expect(estimateWorkMode({ title: 'Satın Alma Sorumlusu' })).toBe('onsite');
+  });
+
+  it('tahmin yalnızca gösterimdedir: ilan modeli ve şehir süzgeci ilanda yazanı kullanır', () => {
+    const l = listing({ description: 'Tamamen uzaktan çalışma' });
+    expect(l.workMode).toBeNull();
+    expect(workModeEstimateOf(l)).toBe('remote');
+    expect(workModeEstimateOf(listing({ workModeText: 'Hibrit' }))).toBeNull();
+  });
+
+  it('sektör ve adres modele geçer; boşken içerik özeti eskisiyle aynı kalır', () => {
+    const l = listing({ sector: ' Bilişim ', address: 'Cumhuriyet Mah.' });
+    expect(l).toMatchObject({ companySector: 'Bilişim', address: 'Cumhuriyet Mah.' });
+    const plain = listing();
+    expect(plain).toMatchObject({ companySector: null, address: null });
+    const { companySector: _s, address: _a, ...withoutNewFields } = plain;
+    expect(contentHashOf(plain)).toBe(contentHashOf(withoutNewFields));
+    expect(contentHashOf(l)).not.toBe(contentHashOf(plain));
+  });
+
+  it('tarayıcı verisi: Kariyer.net sektörü, Indeed çalışma şekli etiketi; eski sürüm eklentinin kısa dizileri de okunur', () => {
+    const kariyer = new KariyerNetScraper().fromBrowser(browserPayload('kariyer_net', [['/is-ilani/kabuk-flutter-developer-4500102', 'Flutter Developer', 'Kabuk', 'İstanbul(Asya)', 'Tam zamanlı', 'Hibrit', 'Bugün', 'Default', 'Bilişim']]), 'https://www.kariyer.net/is-ilanlari/istanbul');
+    expect(kariyer.cards[0]).toMatchObject({ sector: 'Bilişim', workModeText: 'Hibrit' });
+    const oldKariyer = new KariyerNetScraper().fromBrowser(browserPayload('kariyer_net', [['/is-ilani/kabuk-flutter-developer-4500102', 'Flutter Developer', 'Kabuk', 'İstanbul(Asya)', 'Tam zamanlı', 'Hibrit', 'Bugün', 'Default']]), 'https://www.kariyer.net/is-ilanlari/istanbul');
+    expect(oldKariyer.cards[0].sector).toBeNull();
+    const indeed = new IndeedScraper();
+    const row = ['a1b2c3d4e5f60001', 'Mobile Developer', 'Kabuk', 'Kağıthane', 'T34', 0, null, null, null, null];
+    expect(indeed.fromBrowser(browserPayload('indeed', [[...row, 'Hibrit çalışma']]), 'https://tr.indeed.com/jobs?q=x&l=İstanbul').cards[0].workModeText).toBe('Hibrit çalışma');
+    expect(indeed.fromBrowser(browserPayload('indeed', [row]), 'https://tr.indeed.com/jobs?q=x&l=İstanbul').cards[0].workModeText).toBeNull();
+  });
+
+  it('API görünümü: ilanda yazmıyorsa tahmini, sektör ve adres', () => {
+    const row = { id: 'j1', source: 'isinolsun', externalId: 'x', companyName: 'Kabuk Kahve', jobTitle: 'Barista', city: 'İstanbul', district: 'Şişli', jobUrl: 'https://isinolsun.com/is-ilani/x', companyUrl: null, description: null, employmentType: null, workMode: null, companySector: null, address: 'Cumhuriyet Mah.', publishedAt: null, publishedText: null, status: 'active', duplicateOfId: null, firstSeenAt: NOW, lastSeenAt: NOW, contentChangedAt: null };
+    expect(toPublicJob(row)).toMatchObject({ work_mode: null, work_mode_estimate: 'onsite', company_sector: null, address: 'Cumhuriyet Mah.' });
+    expect(toPublicJob({ ...row, workMode: 'hybrid' })).toMatchObject({ work_mode: 'hybrid', work_mode_estimate: null });
   });
 });
 

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { AuditService } from '../common/audit.service';
 import { randomToken } from '../common/crypto';
@@ -15,6 +15,8 @@ export type Classification = 'human_reply' | 'autoresponder' | 'bounce' | 'rejec
 
 @Injectable()
 export class RepliesService {
+  private readonly logger = new Logger('Replies');
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly ai: AiService,
@@ -109,7 +111,13 @@ export class RepliesService {
     if (classification === 'bounce' && attempt.toEmail) {
       await this.prisma.contactPoint.updateMany({ where: { companyId: attempt.companyId, email: attempt.toEmail }, data: { suppressed: true } });
     }
-    await this.addressBook.noteOutcome(attempt.id, LEGACY_CLASSIFICATION_CATEGORY[classification!]).catch(() => undefined);
+    if (classification === 'interview' || classification === 'human_reply' || classification === 'rejection') {
+      await this.prisma.applicationStage.create({ data: { workspaceId: input.workspaceId, attemptId: attempt.id, stage: STAGE_OF_REPLY[classification], at: new Date(), source: 'inbox', note: input.subject?.slice(0, 200) ?? null } });
+    }
+    if (classification === 'interview') {
+      await this.outbox.emit({ workspaceId: input.workspaceId, eventType: 'interview.extract', aggregateId: msg.id, dedupKey: `interview-extract:${msg.id}` });
+    }
+    await this.addressBook.noteOutcome(attempt.id, LEGACY_CLASSIFICATION_CATEGORY[classification!]).catch((e) => this.logger.warn(`Adres sonucu kaydedilemedi (${attempt.id}): ${(e as Error).message}`));
     const company = await this.prisma.company.findUniqueOrThrow({ where: { id: attempt.companyId } });
     const type = classification === 'interview' ? 'interview' : classification === 'bounce' ? 'bounce' : classification === 'human_reply' ? 'human_reply' : 'reply_other';
     await this.outbox.emit({
@@ -134,6 +142,8 @@ export class RepliesService {
     return updated;
   }
 }
+
+const STAGE_OF_REPLY: Record<'interview' | 'human_reply' | 'rejection', string> = { interview: 'interview', human_reply: 'replied', rejection: 'rejected' };
 
 function labelFor(c: string) {
   return (

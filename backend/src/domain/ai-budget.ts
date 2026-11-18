@@ -3,11 +3,12 @@
  * düşük öncelikli sınıflar durur; kalan pay kullanıcının beklediği işlere ve mail dönüşü düzeltmelerine kalır.
  * Öncelik sırası: etkileşimli > düzeltme > yazı > araştırma > keşif.
  */
-export const AI_CLASSES = ['interactive', 'fix', 'letters', 'research', 'discovery'] as const;
+export const AI_CLASSES = ['interactive', 'enrich', 'fix', 'letters', 'research', 'discovery'] as const;
 export type AiClass = (typeof AI_CLASSES)[number];
 
 export const AI_CLASS_LABELS: Record<AiClass, string> = {
   interactive: 'Senin başlattığın işlemler',
+  enrich: 'Senin başlattığın toplu firma araştırması',
   fix: 'Gelen kutusu: mail dönüşleri ve iş alarmları',
   letters: 'Yazı hazırlama',
   research: 'Firma ve adres araştırması',
@@ -19,6 +20,7 @@ const KIND_CLASS: Record<string, AiClass> = {
   inbound_review: 'fix',
   inbound_fix: 'fix',
   reply_classification: 'fix',
+  interview_extract: 'fix',
   job_alert: 'fix',
   letter_template: 'letters',
   letter_company_line: 'letters',
@@ -41,13 +43,20 @@ export function aiClassOf(kind: string): AiClass {
 }
 
 /** Günün toplam görev sayısı günlük hakkın bu oranına ulaşınca sınıf durur. */
-export const DAILY_CEILING: Record<AiClass, number> = { interactive: 1, fix: 0.95, letters: 0.75, research: 0.65, discovery: 0.5 };
+export const DAILY_CEILING: Record<AiClass, number> = { interactive: 1, enrich: 1, fix: 0.95, letters: 0.75, research: 0.65, discovery: 0.5 };
 
 /** Sınıfın tek başına kullanabileceği en büyük günlük pay. */
-export const DAILY_SHARE: Record<AiClass, number> = { interactive: 1, fix: 0.3, letters: 0.5, research: 0.4, discovery: 0.2 };
+export const DAILY_SHARE: Record<AiClass, number> = { interactive: 1, enrich: 1, fix: 0.3, letters: 0.5, research: 0.4, discovery: 0.2 };
 
 /** Aboneliğin kullanım penceresi (5 saatlik, haftalık) bu orana ulaşınca sınıf o sağlayıcıyı kullanmaz. */
-export const UTILIZATION_CEILING: Record<AiClass, number> = { interactive: 0.9, fix: 0.88, letters: 0.8, research: 0.7, discovery: 0.6 };
+export const UTILIZATION_CEILING: Record<AiClass, number> = { interactive: 0.9, enrich: 0.85, fix: 0.88, letters: 0.8, research: 0.7, discovery: 0.6 };
+
+/**
+ * Kullanıcının başlattığı toplu firma araştırması günlük haktan ayrı, kendi kotasıyla çalışır: arka plan işlerinin
+ * payını tüketmez, onlar da bu kotayı tüketmez. Kota dolunca kalan firmalar ertesi güne ertelenir.
+ */
+export const SEPARATE_BUDGET_CLASSES: readonly AiClass[] = ['enrich'];
+export const DEFAULT_ENRICH_DAILY_LIMIT = 120;
 
 export const classUsageKey = (cls: AiClass) => `ai:class:${cls}`;
 

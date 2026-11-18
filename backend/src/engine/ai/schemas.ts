@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const AI_KINDS = ['title_analysis', 'title_expansion', 'cv_facts', 'letter_template', 'letter_company_line', 'company_contacts', 'contact_review', 'company_report', 'company_discovery', 'company_lookup', 'company_sizes', 'job_search', 'job_alert', 'mail_draft', 'mail_translate', 'reply_classification', 'inbound_review', 'inbound_fix', 'follow_up'] as const;
+export const AI_KINDS = ['title_analysis', 'title_expansion', 'cv_facts', 'letter_template', 'letter_company_line', 'company_contacts', 'contact_review', 'company_report', 'company_discovery', 'company_lookup', 'company_sizes', 'job_search', 'job_alert', 'mail_draft', 'mail_translate', 'reply_classification', 'inbound_review', 'inbound_fix', 'follow_up', 'interview_extract'] as const;
 export type AiKind = (typeof AI_KINDS)[number];
 
 export const AI_KIND_LABELS: Record<AiKind, string> = {
@@ -23,6 +23,7 @@ export const AI_KIND_LABELS: Record<AiKind, string> = {
   inbound_review: 'Mail dönüşü inceleme',
   inbound_fix: 'Hatalı başvuruyu düzeltme',
   follow_up: 'Takip önerisi',
+  interview_extract: 'Mülâkat davetinden tarih çıkarma',
 };
 
 export const titleExpansionOutput = z.object({
@@ -125,6 +126,9 @@ export const companyContactsOutput = z.object({
   searches: z.array(z.string().max(300)).max(40).optional(),
   website: z.string().max(300).nullable().optional(),
   employees: employeesField,
+  phone: z.string().max(40).nullable().optional(),
+  workPolicy: z.enum(['remote', 'hybrid', 'onsite']).nullable().optional().catch(null),
+  linkedinUrl: z.string().max(300).nullable().optional(),
   group: z
     .object({
       name: z.string().max(200),
@@ -147,7 +151,7 @@ export const companyContactsOutput = z.object({
         evidence: z.string().max(400).nullable().optional(),
       }),
     )
-    .max(25)
+    .max(30)
     .default([]),
   offices: z
     .array(
@@ -295,6 +299,16 @@ export const followUpOutput = z.object({
   body: z.string().min(20).max(3000),
 });
 
+export const interviewExtractOutput = z.object({
+  startsAt: z.string().max(40).nullable().optional(),
+  durationMin: z.number().int().min(5).max(480).nullable().optional().catch(null),
+  kind: z.enum(['phone', 'video', 'onsite']).nullable().optional().catch(null),
+  link: z.string().max(500).nullable().optional(),
+  location: z.string().max(300).nullable().optional(),
+  confidence: z.number().min(0).max(1).default(0),
+  note: z.string().max(300).nullable().optional(),
+});
+
 export const OUTPUT_SCHEMAS: Record<AiKind, z.ZodTypeAny> = {
   title_analysis: titleAnalysisOutput,
   title_expansion: titleExpansionOutput,
@@ -315,6 +329,7 @@ export const OUTPUT_SCHEMAS: Record<AiKind, z.ZodTypeAny> = {
   inbound_review: inboundReviewOutput,
   inbound_fix: inboundFixOutput,
   follow_up: followUpOutput,
+  interview_extract: interviewExtractOutput,
 };
 
 /** Model çıktısından JSON nesnesini çıkarır (kod bloğu içinde veya düz metin). */

@@ -6,6 +6,8 @@ import { fmtCount, fmtDateTime } from '@/lib/format';
 import { IconButton } from '@/ui/Button';
 import { useAiStatus, useAiUsage } from './admin-queries';
 import { AiModelsEditor } from './AiModelsEditor';
+import { AiConnectPanel } from '@/features/setup/AiConnectPanel';
+import { useAiSetup } from '@/features/setup/setup-queries';
 import { MODEL_PROVIDERS } from './constants';
 import { Divider, ListRow, Loaded, Section, SubSection } from './parts';
 
@@ -82,6 +84,16 @@ function UsageTable({ rows }: { rows: AiUsage['rows'] }) {
   );
 }
 
+/** Claude ve ChatGPT hesaplarının bağlantısı: durum, bitiş tarihi, kalıcı bağlama ve bağlantıyı kesme. */
+function AiSessions() {
+  const setup = useAiSetup();
+  return (
+    <SubSection title="Oturumlar">
+      <Loaded query={setup}>{(status) => <AiConnectPanel status={status} />}</Loaded>
+    </SubSection>
+  );
+}
+
 export function AiAdminSection() {
   const status = useAiStatus();
   const usage = useAiUsage();
@@ -92,7 +104,9 @@ export function AiAdminSection() {
   };
 
   return (
-    <Section title="AI kullanımı ve modeller">
+    <Section title="Yapay zekâ: oturumlar, modeller ve kullanım">
+      <AiSessions />
+      <Divider />
       <Loaded query={status}>
         {(aiStatus) => (
           <Loaded query={usage}>

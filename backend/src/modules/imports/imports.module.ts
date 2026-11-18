@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto';
 import ExcelJS from 'exceljs';
 import type { Response } from 'express';
 import { z } from 'zod';
+import { followMerged } from '../../engine/company-merge.service';
 import { AuditService } from '../../common/audit.service';
 import { Ctx, RequestContext } from '../../common/auth';
 import { hashObject } from '../../common/crypto';
@@ -213,7 +214,7 @@ export class ImportsService {
               stats.duplicatesInFile++;
               continue;
             }
-            let company = await tx.company.findFirst({ where: { workspaceId: ctx.workspaceId, OR: [...(domain ? [{ canonicalDomain: domain }] : []), { normalizedName }] } });
+            let company = await followMerged(tx, await tx.company.findFirst({ where: { workspaceId: ctx.workspaceId, OR: [...(domain ? [{ canonicalDomain: domain }] : []), { normalizedName }] } }));
             const notes = [get(row, 'notes'), get(row, 'status') ? `Durum: ${get(row, 'status')}` : '', get(row, 'priority') ? `Öncelik: ${get(row, 'priority')}` : '', get(row, 'source') ? `Kaynak: ${get(row, 'source')}` : '']
               .filter(Boolean)
               .join('\n');
@@ -332,7 +333,7 @@ export class ImportsService {
               continue;
             }
             const n = normalizeCompanyName(ref);
-            let company = await tx.company.findFirst({ where: { workspaceId: ctx.workspaceId, normalizedName: n } });
+            let company = await followMerged(tx, await tx.company.findFirst({ where: { workspaceId: ctx.workspaceId, normalizedName: n } }));
             if (!company) {
               const candidates = await tx.company.findMany({ where: { workspaceId: ctx.workspaceId }, select: { id: true, normalizedName: true, name: true } });
               const hit = candidates.find((c) => c.normalizedName && (c.normalizedName.includes(n) || n.includes(c.normalizedName)));

@@ -11,13 +11,28 @@ import type {
   HomeStateWithPolicy,
   InboxDetail,
   LookupResult,
-  MissingEmailsResult,
+  CompanyTwin,
+  FollowUpList,
+  InterviewItem,
+  StatsOverview,
+  StatsRange,
+  ResearchBatchStart,
+  ResearchBatchStatus,
   ProfileInput,
   ResendManyResult,
   SizeSearchResult,
   SmtpAccountInput,
 } from './types';
 
+export type PipelineStageName = 'replied' | 'interview' | 'offer' | 'rejected' | 'ghosted' | 'withdrawn';
+export interface InterviewInput {
+  startsAt: string;
+  durationMin?: number;
+  kind?: InterviewItem['kind'];
+  link?: string | null;
+  location?: string | null;
+  notes?: string | null;
+}
 export type Outcome = 'interview' | 'offer' | 'rejection' | 'no_response';
 export type InboxStatus = 'open' | 'resolved' | 'ignored';
 export type DocumentType = 'cv' | 'portfolio';
@@ -65,7 +80,24 @@ export const homeApi = {
     api.patch(`/v1/drafts/${draft.id}`, { revision: draft.revision, toEmail: edit.toEmail || null, subject: edit.subject, body: edit.body, ...(edit.documentIds ? { documentIds: edit.documentIds } : {}) }),
 
   researchCompany: (companyId: string) => api.post(`/v1/home/companies/${companyId}/details`),
-  researchMissingEmails: (force: boolean) => api.post<MissingEmailsResult>('/v1/home/companies/missing-emails', { force }),
+  companyTwins: () => api.get<CompanyTwin[]>('/v1/home/companies/twins'),
+  mergeCompanies: (keepId: string, dropId: string) => api.post('/v1/home/companies/merge', { keepId, dropId }),
+  dismissTwin: (aId: string, bId: string) => api.post('/v1/home/companies/twins/dismiss', { aId, bId }),
+  setCompanyLanguage: (companyId: string, language: 'tr' | 'en' | null) => api.put(`/v1/home/companies/${companyId}/language`, { language }),
+  researchMissing: (companyIds: string[]) => api.post<ResearchBatchStart>('/v1/home/companies/missing-emails', { force: true, companyIds }),
+  stats: (range: StatsRange) => api.get<StatsOverview>('/v1/home/stats', { range }),
+  interviews: () => api.get<InterviewItem[]>('/v1/home/interviews'),
+  addStage: (applicationId: string, input: { stage: PipelineStageName; at?: string; note?: string | null }) => api.post(`/v1/home/applications/${applicationId}/stages`, input),
+  addInterview: (applicationId: string, input: InterviewInput) => api.post<{ id: string }>(`/v1/home/applications/${applicationId}/interviews`, input),
+  updateInterview: (id: string, patch: Partial<InterviewInput> & { status?: InterviewItem['status'] }) => api.patch(`/v1/home/interviews/${id}`, patch),
+  interviewIcs: (id: string) => api.blob(`/v1/home/interviews/${id}/ics`),
+  followUps: () => api.get<FollowUpList>('/v1/home/follow-ups'),
+  prepareFollowUp: (id: string) => api.post(`/v1/home/follow-ups/${id}/prepare`),
+  sendFollowUp: (id: string) => api.post<{ attemptId: string }>(`/v1/home/follow-ups/${id}/send`),
+  skipFollowUp: (id: string) => api.post(`/v1/home/follow-ups/${id}/skip`),
+  saveFollowUpSettings: (settings: { delayDays: number; auto: boolean }) => api.put('/v1/home/follow-ups/settings', settings),
+  researchBatch: () => api.get<ResearchBatchStatus | null>('/v1/home/research-batches/current'),
+  cancelResearchBatch: () => api.post<{ cancelled: number }>('/v1/home/research-batches/cancel'),
   researchSizes: () => api.post<SizeSearchResult>('/v1/home/companies/sizes'),
   lookupCompany: (name: string) => api.post<LookupResult>('/v1/home/companies/lookup', { name }),
   lookupStatus: (lookupId: string) => api.get<LookupResult>(`/v1/home/companies/lookup/${lookupId}`),

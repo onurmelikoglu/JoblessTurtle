@@ -2,9 +2,14 @@ import { createHash } from 'crypto';
 import type { ScrapedJobView } from '../contracts/scrapers';
 import type { ServerShape } from '../contracts/wire';
 import { detectLocation } from './geo';
+import { isHiddenCompany } from './hidden-company';
 import { companyNameKey } from './job-search';
 import { ScraperSource } from './scraper-config';
 import { fold, truncate } from './text';
+import { estimateWorkMode, WorkMode, workModeInText, workModeOf } from './work-mode';
+
+export type { WorkMode };
+export { workModeOf };
 
 /**
  * Tarayıcıların ilan kartından okuduğu ham alanlar. Sayfada olmayan bilgi boş bırakılır; tahmin edilmez.
@@ -20,12 +25,14 @@ export interface RawCard {
   description?: string | null;
   employmentType?: string | null;
   workModeText?: string | null;
+  /** Firmanın sektörü (Kariyer.net kartı). */
+  sector?: string | null;
+  /** İl ve ilçeden ayrıntılı adres: mahalle, cadde (İşin Olsun). */
+  address?: string | null;
   publishedAt?: Date | null;
   publishedText?: string | null;
   dateIsUpdate?: boolean;
 }
-
-export type WorkMode = 'onsite' | 'hybrid' | 'remote';
 
 /** Standart ilan modeli; her site bu biçime dönüştürülür. */
 export interface ScrapedListing {
@@ -39,7 +46,10 @@ export interface ScrapedListing {
   companyUrl: string | null;
   description: string | null;
   employmentType: string | null;
+  /** İlanda yazan çalışma şekli (site alanı, konum ya da unvan); yazmıyorsa null. Tahmin için workModeEstimateOf. */
   workMode: WorkMode | null;
+  companySector: string | null;
+  address: string | null;
   publishedAt: Date | null;
   publishedText: string | null;
 }
@@ -82,15 +92,6 @@ export function externalIdOf(platformId: string | null | undefined, canonicalUrl
   const id = platformId?.trim();
   if (id) return id;
   return `u-${createHash('sha256').update(canonicalUrl.replace(/^https?:\/\/(www\.)?/, '').toLowerCase()).digest('hex').slice(0, 24)}`;
-}
-
-export function workModeOf(text: string | null | undefined): WorkMode | null {
-  const f = fold(text);
-  if (!f) return null;
-  if (/\b(hibrit|hybrid)\b/.test(f)) return 'hybrid';
-  if (/\b(uzaktan|remote|evden)\b/.test(f)) return 'remote';
-  if (/\b(is yerinde|ofiste|on site|onsite|yerinde)\b/.test(f)) return 'onsite';
-  return null;
 }
 
 /**
@@ -153,7 +154,9 @@ export function normalizeCard(source: ScraperSource, card: RawCard, ctx: { origi
     companyUrl: canonicalJobUrl(card.companyUrl, ctx.origin),
     description: clean(card.description, DESCRIPTION_LIMIT),
     employmentType: clean(card.employmentType, 80),
-    workMode: workModeOf(card.workModeText) ?? workModeOf(card.location),
+    workMode: workModeOf(card.workModeText) ?? workModeOf(card.location) ?? workModeInText(title),
+    companySector: clean(card.sector, 120),
+    address: clean(card.address),
     publishedAt: card.dateIsUpdate ? null : (card.publishedAt ?? relativeDate(publishedText, ctx.now)),
     publishedText: publishedText && card.dateIsUpdate ? `güncellendi: ${publishedText}` : publishedText,
   };
@@ -161,21 +164,23 @@ export function normalizeCard(source: ScraperSource, card: RawCard, ctx: { origi
 
 export const isRejection = (value: ScrapedListing | CardRejection): value is CardRejection => typeof value === 'string';
 
-const CONFIDENTIAL_COMPANY = /^(gizli|confidential|isim gizli|firma adi gizli|gizli firma|gizli sirket)( firma| sirket| company)?$/;
-
 /** Sitede adı gizlenmiş firma ("Gizli Firma"): ilan kaydedilir ama çalışma alanına firma olarak aktarılmaz. */
-export function isConfidentialCompany(name: string): boolean {
-  return CONFIDENTIAL_COMPANY.test(fold(name));
-}
+export const isConfidentialCompany = (name: string): boolean => isHiddenCompany(name);
 
 /** Yardımcı benzerlik anahtarı: firma adının çekirdeği + sadeleştirilmiş unvan. Farklı numarayla yeniden yayımlanan ilanı yakalar. */
 export function similarityKeyOf(companyName: string, jobTitle: string): string {
   return `${companyNameKey(companyName)}|${fold(jobTitle)}`;
 }
 
-/** İçerik özeti: değişirse kayıt güncellenir. Göreli tarih metni ("2 gün") her gün değiştiği için dahil edilmez. */
-export function contentHashOf(l: Pick<ScrapedListing, 'companyName' | 'jobTitle' | 'city' | 'district' | 'employmentType' | 'workMode' | 'description' | 'companyUrl' | 'jobUrl'>): string {
+/**
+ * İçerik özeti: değişirse kayıt güncellenir. Göreli tarih metni ("2 gün") her gün değiştiği için dahil edilmez. Sektör
+ * ve adres yalnızca doluysa eklenir: bu alanlar sonradan geldi, boş kayıtların özeti (ve "güncellendi" sayımı) değişmesin.
+ */
+export function contentHashOf(
+  l: Pick<ScrapedListing, 'companyName' | 'jobTitle' | 'city' | 'district' | 'employmentType' | 'workMode' | 'description' | 'companyUrl' | 'jobUrl'> & Partial<Pick<ScrapedListing, 'companySector' | 'address'>>,
+): string {
   const parts = [l.companyName, l.jobTitle, l.city, l.district, l.employmentType, l.workMode, l.description, l.companyUrl, l.jobUrl];
+  if (l.companySector || l.address) parts.push(l.companySector ?? null, l.address ?? null);
   return createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 32);
 }
 
@@ -195,6 +200,11 @@ export function cityKeysOf(selection: string | null | undefined): Set<string> {
       .map((part) => fold(part.replace(/\(.*\)/, '')))
       .filter(Boolean),
   );
+}
+
+/** İlanda çalışma şekli yazmıyorsa tahmini; yazıyorsa null (tahmine gerek yok). */
+export function workModeEstimateOf(l: { workMode: string | null; jobTitle: string; description: string | null; address: string | null }): WorkMode | null {
+  return l.workMode ? null : estimateWorkMode({ title: l.jobTitle, description: l.description, location: l.address });
 }
 
 /** Şehir seçimi yoksa her ilan uyar; uzaktan ilanlar şehirden bağımsızdır (uygunluğu profil süzgeci belirler). */
@@ -225,6 +235,8 @@ export interface ScrapedJobRow {
   description: string | null;
   employmentType: string | null;
   workMode: string | null;
+  companySector: string | null;
+  address: string | null;
   publishedAt: Date | null;
   publishedText: string | null;
   status: string;
@@ -249,6 +261,9 @@ export function toPublicJob(row: ScrapedJobRow): ServerShape<ScrapedJobView> {
     description: row.description,
     employment_type: row.employmentType,
     work_mode: row.workMode,
+    work_mode_estimate: workModeEstimateOf(row),
+    company_sector: row.companySector,
+    address: row.address,
     published_at: row.publishedAt,
     published_text: row.publishedText,
     status: row.status as ScrapedJobView['status'],

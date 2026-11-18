@@ -9,10 +9,13 @@ Yavaş ama kararlı: iş aramanı senin yerine sürdüren, kendi sunucunda çal�
 - **Başvuru yazısını hazırlar.** CV'ndeki doğrulanmış bilgilerden ve firmaya özel bir iki cümleden kişisel bir yazı oluşturur. Göndermeden önce düzenleyebilirsin.
 - **Senin mailinden gönderir.** Tek tek, toplu ya da "Otomatik başvur" açıksa kendiliğinden. Gönderim varsayılan olarak hafta içi 09.00–18.00 arasında ve günlük sınırla yapılır.
 - **Dönüşleri takip eder.** Gelen kutundaki geri dönen mailleri, otomatik yanıtları ve firma yanıtlarını okur, başvurunun durumunu günceller.
+- **Başvuru sürecini izler.** Her başvurunun aşamasını (yanıt geldi, mülâkat, teklif, olumsuz, yanıt yok, vazgeçtim) tutar; firmanın mailindeki mülâkat tarihini öneri olarak çıkarır, hatırlatır ve takvime eklenecek dosyayı verir. Yanıt gelmeyen başvurular için seçtiğin süre sonunda takip yazısı hazırlar; onayınla ya da kendiliğinden gönderir.
+- **Doğru dilde başvurur.** İlan İngilizceyse ya da firma yabancıysa yazı İngilizce hazırlanır ve CV'nin İngilizce sürümü eklenir.
+- **Listeyi temiz tutar.** Aynı firmanın farklı adlarla gelen kayıtlarını birleştirir (kesin olanları kendiliğinden, diğerlerini onayınla); adı gizlenmiş ilanları ("Gizli Firma" gibi) almaz.
 - **Otopilot ile düzeltir.** Adres geçersizse firmanın sıradaki doğrulanmış adresine gönderir, ek sığmadıysa yalnızca CV ile dener, emin olamadığını onayına bırakır.
 - **İş alarmlarını okur.** Kariyer.net, LinkedIn, Indeed gibi sitelerin otomatik taramaya kapalı ilanlarını, bu sitelerde kurduğun iş alarmlarının maillerinden alıp listeye ekler.
 - **İlan sitelerini tarar.** Kariyer.net, Indeed, Eleman.net, İşin Olsun ve Secretcv'nin oturumsuz görülebilen arama sayfalarını 4 saatte bir (ya da elle) tarar; site erişimi engellerse durur ve bildirir. Ayrıntılar ve sitelerin güncel erişim durumu: [docs/SCRAPERS.md](docs/SCRAPERS.md).
-- **Açtığın ilan sayfasını aktarır.** Chrome eklentisi (`browser-extension/`) Kariyer.net, Indeed, Eleman.net, İşin Olsun, Secretcv ve Yenibiriş'te kendi tarayıcında açtığın arama sonuç sayfasındaki ilanları okuyup aktarır; siteye kendi başına istek atmaz, doğrulama sayfasında durur. Kurulum: [browser-extension/README.md](browser-extension/README.md).
+- **Açtığın ilan sayfasını aktarır.** Chrome eklentisi (`browser-extension/`) Kariyer.net, Indeed, Eleman.net, İşin Olsun, Secretcv ve Yenibiriş'te kendi tarayıcında açtığın arama sonuç sayfasındaki ilanları okuyup aktarır; siteye kendi başına istek atmaz, doğrulama sayfasında durur. Firmalar sekmesindeki **İlan sitelerinde ara** satırı profilindeki unvan ve şehirlerle bu sitelerde arama açar; **Hepsini aç** bütün aramaları ayrı sekmelerde açar. Kurulum: [browser-extension/README.md](browser-extension/README.md).
 - **Deneyimden öğrenir.** Hangi adreslerin ulaştığını ve hangi başvurulara yanıt geldiğini kaydeder; yeterli veri birikince sıralamaları buna göre iyileştirir.
 - **Birden çok kullanıcı.** Davet koduyla arkadaşlarını ekleyebilirsin; herkesin ayrı çalışma alanı, CV'si, mail hesabı ve geçmişi olur.
 
@@ -60,13 +63,14 @@ Kurulum biter bitmez ilk arama başlar; ilk firmalar birkaç dakika içinde geli
 - **Otomatik başvur** açıkken, yazısı hazır ve adresi doğrulanmış firmalara başvuru gönderim saatlerinde kendiliğinden gider. Kapalıyken yazılar hazırlanır ve senin onayını bekler.
 - **Yeniden ara** aramayı hemen başlatır; **Durdur** sıradaki arama işlerini iptal eder (gönderim ve mail takibi sürer).
 
-Altında üç sekme vardır:
+Altında dört sekme vardır:
 
 | Sekme | Ne işe yarar |
 |---|---|
-| **Firmalar** | Başvurmadığın firmalar; önce açık ilanı olanlar. Arama kutusu ve filtreler (açık ilan, bölgede ofisi var, mail adresi var/yok, yazısı hazır, kapsam, çalışan sayısı). Her firmada ilan, bulunan adres, firma analizi ve **Başvur** butonu bulunur. Önizlemede yazıyı ve alıcıyı düzenleyip gönderebilir, birden çok firmayı seçip toplu başvurabilirsin. Listede olmayan bir firmayı adını yazıp ekletebilir ya da yazdığın metinle ilan taratabilirsin. |
-| **Başvurularım** | Gönderilen, sırada bekleyen ve geri dönen başvurular; her birinin ayrıntısı, gönderilen yazı ve ekler. Sıradaki başvuruyu iptal edebilir, geri döneni düzeltip yeniden gönderebilirsin. |
+| **Firmalar** | Başvurmadığın firmalar; önce açık ilanı olanlar. Arama kutusu ve filtreler (açık ilan, seçtiğin her şehir ya da yaka için bölge, çalışma şekli, mail adresi var/yok, yazısı hazır, kapsam, çalışan sayısı). Aynı firmanın olası kayıtları burada birleştirilmeyi bekler; **İlan sitelerinde ara** satırı ilan sitelerindeki aramaları açar. Her firmada ilan, bulunan adres, firma analizi ve **Başvur** butonu bulunur. Önizlemede yazıyı ve alıcıyı düzenleyip gönderebilir, birden çok firmayı seçip toplu başvurabilirsin. Listede olmayan bir firmayı adını yazıp ekletebilir ya da yazdığın metinle ilan taratabilirsin. |
+| **Başvurularım** | Gönderilen, sırada bekleyen ve geri dönen başvurular; her birinin ayrıntısı, gönderilen yazı ve ekler. Sıradaki başvuruyu iptal edebilir, geri döneni düzeltip yeniden gönderebilirsin. Başvurunun aşamasını işaretler, mülâkatları onaylayıp takvime eklersin; **Takipler** panelinde takip süresini seçer, hazır takip yazılarını gönderirsin. |
 | **Mail dönüşleri** | Gelen kutundan okunan dönüşler: iletilemedi, adres değişti, "kariyer sitemizden başvurun", otomatik yanıt, firma yanıtı. **Otopilot** paneli bu dönüşler için ne yaptığını ve onayını bekleyen önerileri gösterir. **İş alarmları** paneli alarm kurulumunu ve alarm maillerinden eklenen ilanları gösterir. |
+| **İstatistik** | Başvuru hunisi (gönderilen, ulaşan, yanıt alan, mülâkat, teklif), gruplara göre yanıt oranları, haftalık gönderim ve yanıtlar, gün ve saate göre gönderim; yeterli yanıt birikince en iyi gönderim saati önerisi. |
 
 ### 3. İş alarmları (Kariyer.net, LinkedIn, Indeed)
 
@@ -83,7 +87,7 @@ Yeni ilanlar, gönderim sonuçları, firma yanıtları ve otopilot kararları **
 
 ### 5. Profilim
 
-Bilgilerin, CV ve portföy sürümlerin, aradığın pozisyonlar, gönderim maili ve günlük gönderim sınırı, başvuru yazısı kalıpları (istersen kendi örnek yazın), yapay zekâ kullanımı ve hesap ayarları buradadır. Yönetici ayrıca davet kodlarını, kullanıcıları ve öğrenme ekranını görür.
+Bilgilerin, CV ve portföy sürümlerin (İngilizce sürümleri dahil), aradığın pozisyonlar, gönderim maili ve günlük gönderim sınırı, başvuru yazısı kalıpları (istersen kendi örnek yazın), tarayıcı eklentisi eşleştirmesi, yapay zekâ kullanımı ve hesap ayarları buradadır. Yönetici ayrıca davet kodlarını, kullanıcıları, yapay zekâ oturumlarını ve modellerini, ilan siteleri taramasını ve öğrenme ekranını görür.
 
 ## Yapay zekâ
 
@@ -91,13 +95,13 @@ Firma bulma, araştırma, yazı hazırlama ve mail dönüşlerini okuma işleri 
 
 | Seçenek | Not |
 |---|---|
-| **Claude Code CLI** | Kendi Claude aboneliğinle arka planda çalışır. Docker'da: `.env` içinde `INSTALL_AI_CLI=true`, ardından `docker compose up -d --build worker` ve bir kez `docker compose exec -it worker claude` ile giriş. |
-| **Codex CLI** | ChatGPT hesabınla; kurulumu benzer (`codex login`). |
+| **Claude aboneliği** | Kendi Claude aboneliğinle arka planda çalışır. Hazır imajlarda Claude Code CLI kuruludur; **Profilim › Kurulum › Claude'u bağla** ile giriş yaparsın. Tarayıcı girişi birkaç haftada bir düşebildiği için **Kalıcı bağla (1 yıl)** önerilir; bitişine üç gün kala uyarı gelir. |
+| **ChatGPT aboneliği** | Codex CLI ile, ChatGPT hesabınla; **Profilim › Kurulum › ChatGPT'yi bağla**. |
 | **Manuel köprü** | Uygulama istemi hazırlar, sen Claude ya da ChatGPT sohbetine yapıştırıp cevabı geri yapıştırırsın. Herkes kendi hesabıyla kullanabilir. |
 | **Ollama / API anahtarı** | İsteğe bağlı yerel model ya da Anthropic / OpenAI API anahtarı. |
 | **Hiçbiri** | Şablon modu: yazılar hazır kalıplardan oluşur, araştırma yapılmaz. |
 
-CLI sağlayıcıları kişisel abonelik kullandığı için varsayılan olarak yalnızca sunucu sahibinin çalışma alanında açılır; yönetici isterse davetlilere de günlük limitle açabilir. Günlük görev hakkı ve abonelik kullanım oranı daraldıkça önce düşük öncelikli işler (keşif, araştırma) durur; senin başlattığın işler ve mail dönüşleri en son durur. Ayrıntılar: [docs/SETUP.md › Yapay zekâ](docs/SETUP.md#4-yapay-zekâ).
+Yönetici her görev türü (firma araştırması, adres araması, yazı, mail dönüşü…) için hangi sağlayıcı ve modelin kullanılacağını **Profilim › Yönetici › Yapay zekâ** bölümünden seçebilir. CLI sağlayıcıları kişisel abonelik kullandığı için varsayılan olarak yalnızca sunucu sahibinin çalışma alanında açılır; yönetici isterse davetlilere de günlük limitle açabilir. Günlük görev hakkı ve abonelik kullanım oranı daraldıkça önce düşük öncelikli işler (keşif, araştırma) durur; senin başlattığın işler ve mail dönüşleri en son durur. Ayrıntılar: [docs/SETUP.md › Yapay zekâ](docs/SETUP.md#4-yapay-zekâ).
 
 ## İlkeler
 
@@ -135,7 +139,7 @@ backend/   API ve worker (aynı imaj)
   src/contracts/  arayüzle paylaşılan yanıt tipleri
   prisma/         veri modeli ve geçişler
 web/       React arayüzü
-browser-extension/  Kariyer.net / Indeed sayfalarını aktaran Chrome eklentisi (MV3, derlemesiz)
+browser-extension/  İlan sitelerinde açtığın sayfaları aktaran Chrome eklentisi (MV3, derlemesiz)
 docs/      mimari, kurulum, yol haritası
 scripts/   yerel çalıştırma, yedekleme, geri yükleme
 ```

@@ -44,6 +44,7 @@ export function parseKariyerNetPage(html: string, ctx: { citySlug: string; page:
       url: href,
       employmentType: card.attr(a.workType) ?? null,
       workModeText: card.attr(a.workModel) ?? (card.find(s.workModel).first().text().trim() || null),
+      sector: card.attr(a.sector) ?? null,
       publishedText: date.text().trim() || null,
       dateIsUpdate: card.attr(a.dateStatus) === KARIYER_NET.updatedDateStatus,
     };

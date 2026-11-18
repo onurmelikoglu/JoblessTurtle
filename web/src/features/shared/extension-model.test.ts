@@ -28,6 +28,15 @@ describe('eklenti aramaları', () => {
     expect(openAllUrls(undefined)).toEqual([]);
   });
 
+  it('site menüsündeki "Tümünü aç" yalnızca o sitenin aramalarını tekrarsız ve sınırla açar', () => {
+    const many = (source: ExtensionSearch['source'], n: number) => Array.from({ length: n }, (_, i) => search({ source, url: `${source}-${i}#jt-import` }));
+    const all = [...many('kariyer_net', 25), ...many('indeed', 3), search({ source: 'kariyer_net', url: 'kariyer_net-0#jt-import' })];
+    const site = openAllUrls(searchesOf(all, 'kariyer_net'));
+    expect(site).toHaveLength(MAX_OPEN_TABS);
+    expect(site.every((u) => u.startsWith('kariyer_net-'))).toBe(true);
+    expect(openAllUrls(searchesOf(all, 'indeed'))).toEqual(['indeed-0#jt-import', 'indeed-1#jt-import', 'indeed-2#jt-import']);
+  });
+
   it('"Hepsini aç" siteleri sırayla döner; sınır aşılınca da her siteden arama açılır', () => {
     const many = (source: ExtensionSearch['source'], n: number) => Array.from({ length: n }, (_, i) => search({ source, url: `${source}-${i}#jt-import` }));
     const urls = openAllUrls([...many('kariyer_net', 10), ...many('indeed', 10), ...many('yenibiris', 1)]);

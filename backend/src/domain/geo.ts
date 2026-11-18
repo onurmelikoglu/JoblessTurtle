@@ -147,6 +147,43 @@ function isAbroad(text: string | null | undefined): boolean {
  * İlanın kapsamı: uzaktan mı, Türkiye'de bir yerde mi, yurt dışında mı. Tanınmayan ya da yazılmamış konum
  * "unknown" kalır; yurt dışı ancak bilinen bir ülke ya da şehir adı geçiyorsa söylenir.
  */
+/** İstanbul'da olduğu bilinen ama ilçesi (yakası) yazmayan konumların filtre etiketi; yalnızca bir yaka seçiliyken kullanılır. */
+export const ISTANBUL_UNSPECIFIED_SIDE = 'İstanbul (yaka belirsiz)';
+
+const isIstanbulSide = (selection: string) => (Object.values(ISTANBUL_SIDE_LABELS) as string[]).includes(selection);
+
+function selectionRules(selection: string): RegionRules | null {
+  const region = regionForSelection(selection);
+  if (!region.city) return null;
+  const wholeIstanbul = fold(selection) === 'istanbul';
+  const districtsPrimary = wholeIstanbul ? [...region.districtsPrimary, ...ISTANBUL_DISTRICTS.map((d) => d.name)] : region.districtsPrimary;
+  return { city: region.city, districtsPrimary, districtsConditional: [], allowRemote: false, allowHybrid: true };
+}
+
+/**
+ * Konum metninin düştüğü arama seçimleri (ör. "İstanbul (Avrupa Yakası)", "Kocaeli"). Her seçim ayrı değerlendirilir,
+ * böylece yakalar birbirinden ayrı filtrelenebilir. Yaka seçiliyken ilçesiz bir İstanbul konumu ISTANBUL_UNSPECIFIED_SIDE döner.
+ */
+export function selectionsMatching(selections: string[], text: string | null | undefined): string[] {
+  const value = text?.trim();
+  if (!value) return [];
+  const matched = selections.filter((selection) => {
+    const rules = selectionRules(selection);
+    return !!rules && evaluateLocation(rules, value) === 'primary';
+  });
+  if (matched.length) return matched;
+  if (!selections.some(isIstanbulSide) || selections.some((s) => fold(s) === 'istanbul')) return [];
+  const location = detectLocation(value);
+  return location.city === 'İstanbul' && !location.district ? [ISTANBUL_UNSPECIFIED_SIDE] : [];
+}
+
+/** Profildeki şehir seçimleri, filtre çiplerinin sırasıyla; yaka seçiliyse "yaka belirsiz" de eklenir. */
+export function regionFilterLabels(selections: string[]): string[] {
+  const labels = [...selections];
+  if (selections.some(isIstanbulSide) && !selections.some((s) => fold(s) === 'istanbul')) labels.push(ISTANBUL_UNSPECIFIED_SIDE);
+  return labels;
+}
+
 export function workScopeOf(locationText: string | null | undefined, workMode?: string | null): WorkScope {
   if (workMode === 'remote' || detectLocation(locationText).remote) return 'remote';
   if (isInTurkey(locationText)) return 'local';

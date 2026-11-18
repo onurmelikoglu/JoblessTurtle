@@ -22,6 +22,7 @@ import { SENDABLE_CONTACT_KINDS, SUGGESTED_ONLY_KINDS } from '../domain/contacts
 import { detectLocation } from '../domain/geo';
 import { listingExternalId, normalizeListingUrl, WEB_SEARCH_SOURCE } from '../domain/job-search';
 import { normalizeTitle } from '../domain/titles';
+import { isHiddenCompany } from '../domain/hidden-company';
 import { AddressBookService } from './address-book.service';
 import { careersLinkOfSource, DISCOVERED_SOURCE_KINDS, discoveredSourceData, isDiscoveredSourceKind } from './connectors/defaults';
 import { IngestService } from './ingest.service';
@@ -315,6 +316,7 @@ export class CatalogService {
   }
 
   private async adopt(profile: SearchProfile, catalogId: string, facts: CatalogFacts): Promise<Company | null> {
+    if (isHiddenCompany(facts.name)) return null;
     const now = new Date();
     const searched: ResearchDates = {
       ...(facts.contactsSearchedAt ? { contactsSearchedAt: facts.contactsSearchedAt.toISOString() } : {}),

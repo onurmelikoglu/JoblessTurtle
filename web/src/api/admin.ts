@@ -6,7 +6,7 @@ export interface PasswordReset {
   temporaryPassword: string;
 }
 
-export type AiSettingsPatch = { dailyTaskLimit: number } | { models: ModelSettings };
+export type AiSettingsPatch = { dailyTaskLimit: number } | { enrichDailyLimit: number } | { models: ModelSettings };
 
 /** Ayar güncellemesi durumun yalnızca bu iki alanını döndürür; etiketler ve varsayılan modeller için durum yeniden okunur. */
 export type AiSettingsResult = Pick<AiStatus, 'settings' | 'providers'>;

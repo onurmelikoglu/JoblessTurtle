@@ -7,6 +7,7 @@ import { AutomationService } from './automation.service';
 import { AutopilotService } from './autopilot.service';
 import { CandidateFactsService } from './candidate-facts.service';
 import { CatalogService } from './catalog.service';
+import { CompanyMergeService } from './company-merge.service';
 import { CompanyScoringService } from './company-scoring.service';
 import { DraftingService } from './drafting.service';
 import { EvaluationService } from './evaluation.service';
@@ -18,7 +19,9 @@ import { LearnedModelsService } from './learned-models.service';
 import { LearningService } from './learning.service';
 import { LetterService } from './letter.service';
 import { NotifyService } from './notify.service';
+import { PipelineService } from './pipeline.service';
 import { RepliesService } from './replies.service';
+import { ResearchBatchService } from './research-batch.service';
 import { ResearchService } from './research.service';
 import { ScraperService } from './scraper.service';
 import { ScrapedJobRepository } from './scrapers/scraped-job.repository';
@@ -34,6 +37,7 @@ const SERVICES = [
   AutopilotService,
   CandidateFactsService,
   CatalogService,
+  CompanyMergeService,
   CompanyScoringService,
   DraftingService,
   EvaluationService,
@@ -45,7 +49,9 @@ const SERVICES = [
   LearningService,
   LetterService,
   NotifyService,
+  PipelineService,
   RepliesService,
+  ResearchBatchService,
   ResearchService,
   ScrapedJobRepository,
   ScraperService,

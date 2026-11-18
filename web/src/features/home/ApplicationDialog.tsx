@@ -10,6 +10,7 @@ import { Button, IconButton } from '@/ui/Button';
 import { Dialog } from '@/ui/Dialog';
 import { KeyValue, LoadingBlock } from '@/ui/feedback';
 import { toast } from '@/ui/toast';
+import { ApplicationPipeline } from './ApplicationPipeline';
 
 const REPLY_LABELS: Record<string, string> = {
   human_reply: 'Yanıt',
@@ -42,6 +43,8 @@ function Details({ d }: { d: HomeApplicationDetail }) {
         {!d.viaForm && <KeyValue label="Alıcı">{d.toEmail ?? '-'}</KeyValue>}
         <KeyValue label="Konu">{d.subject ?? '-'}</KeyValue>
       </dl>
+      <ApplicationPipeline d={d} />
+      <h3 className="text-sm font-semibold">Gönderilen yazı</h3>
       <p className="rounded-lg border border-line bg-sunken p-3 text-sm leading-relaxed break-words whitespace-pre-wrap">{d.body ?? ''}</p>
       <section>
         <h3 className="text-sm font-semibold">{d.viaForm ? 'Hazırlanan ekler' : 'Ekler'}</h3>

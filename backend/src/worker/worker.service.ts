@@ -9,7 +9,7 @@ import { env } from '../common/env';
 import { OutboxService } from '../common/outbox.service';
 import { PrismaService } from '../common/prisma.service';
 import { StorageService } from '../common/storage.service';
-import { istanbulDay, istanbulNow } from '../common/time';
+import { fmtIstanbul, istanbulDay, istanbulNow } from '../common/time';
 import { ActivityBucket, ActivityCounts, activityOfQueueJob } from '../domain/activity';
 import { AiClass } from '../domain/ai-budget';
 import { applyStaleness } from '../domain/listing-status';
@@ -26,6 +26,9 @@ import { AutopilotService } from '../engine/autopilot.service';
 import { CatalogService } from '../engine/catalog.service';
 import { connectorFor } from '../engine/connectors/registry';
 import { DraftingService } from '../engine/drafting.service';
+import { PipelineService } from '../engine/pipeline.service';
+import { CompanyMergeService } from '../engine/company-merge.service';
+import { ResearchBatchService } from '../engine/research-batch.service';
 import { EvaluationService } from '../engine/evaluation.service';
 import { InboxService } from '../engine/inbox.service';
 import { IngestService } from '../engine/ingest.service';
@@ -42,6 +45,16 @@ import { TelegramService } from '../engine/telegram.service';
 const DAILY_DISCOVERY_SEGMENTS = 2;
 
 const BACKGROUND_PRIORITY = 10;
+const DRAFT_LANGUAGE_EVERY_MS = 30 * 60_000;
+const RESEARCH_BATCH_RESUME_EVERY_MS = 10 * 60_000;
+const INTERVIEW_REMINDER_EVERY_MS = 5 * 60_000;
+const COMPANY_TWINS_EVERY_MS = 15 * 60_000;
+const AI_CONNECTION_CHECK_EVERY_MS = 6 * 3600_000;
+const AI_CONNECTION_WARN_MS = 3 * 86_400_000;
+const SCHEDULER_LOCK_KEY = 'jt:scheduler:lock';
+const SCHEDULER_LOCK_TTL_MS = 10 * 60_000;
+const SCHEDULE_RETRY_MS = 5 * 60_000;
+const DRAFT_LANGUAGE_BATCH = 10;
 const BULK_USER_PRIORITY = 5;
 const PAUSABLE_EVENTS = ['discovery.ai', 'research.company', 'research.details.bg', 'research.sizes', 'catalog.seed', 'jobs.plan', 'jobs.search', 'profile.expand_titles'];
 const STOPPABLE_QUEUES: QueueName[] = ['research', 'collect'];
@@ -73,10 +86,10 @@ const OPEN_OPPORTUNITY = { status: { notIn: ['dismissed', 'applied'] }, category
  * Arka planda yapay zekâ kullanan işlerin öncelik sınıfı. Sınıf kapalıyken (günlük hak ya da abonelik limiti) iş
  * başlatılmaz; aksi halde şablon çıktısı ya da kullanıcıyı bekleyen görev üretirdi. Bu işler sonraki turda yeniden planlanır.
  */
-const BACKGROUND_AI_CLASS: Record<string, AiClass> = { company: 'research', company_details: 'research', company_sizes: 'research', discovery: 'discovery', job_search: 'discovery', expand_titles: 'discovery', predraft: 'letters', letter_template: 'letters' };
+const BACKGROUND_AI_CLASS: Record<string, AiClass> = { company: 'research', company_details: 'research', company_sizes: 'research', discovery: 'discovery', job_search: 'discovery', expand_titles: 'discovery', predraft: 'letters', letter_template: 'letters', draft_language: 'letters' };
 const DRAIN_CLOCK_WAIT_MS = 200;
 
-export const QUEUES = ['collect', 'research', 'interactive', 'evaluate', 'automation', 'send', 'reconcile', 'notify', 'inbox', 'scrape'] as const;
+export const QUEUES = ['collect', 'research', 'enrich', 'interactive', 'evaluate', 'automation', 'send', 'reconcile', 'notify', 'inbox', 'scrape'] as const;
 type QueueName = (typeof QUEUES)[number];
 
 /**
@@ -110,6 +123,9 @@ export class WorkerService implements OnApplicationShutdown {
     private readonly candidateFacts: CandidateFactsService,
     private readonly letters: LetterService,
     private readonly drafting: DraftingService,
+    private readonly researchBatches: ResearchBatchService,
+    private readonly pipeline: PipelineService,
+    private readonly companyMerge: CompanyMergeService,
     private readonly notify: NotifyService,
     private readonly telegram: TelegramService,
     private readonly ai: AiService,
@@ -131,7 +147,7 @@ export class WorkerService implements OnApplicationShutdown {
     this.publisher = new Redis(env().REDIS_URL, { maxRetriesPerRequest: null });
     const prefix = 'jt';
     for (const name of QUEUES) this.queues.set(name, new Queue(name, { connection: this.connection, prefix }));
-    const concurrency: Record<QueueName, number> = { collect: 4, research: 2, interactive: 2, evaluate: 2, automation: 1, send: 2, reconcile: 1, notify: 4, inbox: 1, scrape: 2 };
+    const concurrency: Record<QueueName, number> = { collect: 4, research: 2, enrich: env().ENRICH_CONCURRENCY, interactive: 2, evaluate: 2, automation: 1, send: 2, reconcile: 1, notify: 4, inbox: 1, scrape: 2 };
     for (const name of QUEUES) {
       const w = new Worker(name, (job) => this.handle(name, job), { connection: this.connection, prefix, concurrency: concurrency[name] });
       w.on('failed', (job, err) => this.logger.warn(`${name} işi başarısız (${job?.id}): ${err.message}`));
@@ -207,11 +223,12 @@ export class WorkerService implements OnApplicationShutdown {
       this.inline.push({ queue, name, data, delay: delayMs });
       return;
     }
+    const effectivePriority = priority ?? (queue === 'research' ? BACKGROUND_PRIORITY : undefined);
     await this.queues.get(queue)!.add(name, data, {
       jobId: sha256(key).slice(0, 40),
       delay: Math.max(0, delayMs),
       attempts,
-      ...(priority ? { priority } : {}),
+      ...(effectivePriority ? { priority: effectivePriority } : {}),
       backoff: { type: 'exponential', delay: 5000 },
       removeOnComplete: { age: 3600, count: 1000 },
       removeOnFail: { age: 7 * 86400 },
@@ -273,6 +290,11 @@ export class WorkerService implements OnApplicationShutdown {
         return this.enqueue('interactive', 'letter_template', { candidateId: e.aggregateId, intent: p.intent, userId: p.userId ?? null }, e.dedupKey, 0, 1);
       case 'company.lookup':
         return this.enqueue('interactive', 'company_lookup', { workspaceId: e.workspaceId, lookupId: e.aggregateId, query: p.query, actorId: p.actorId ?? null }, e.dedupKey, 0, 1);
+      case 'research.batch':
+        for (const item of await this.researchBatches.queuedItems(e.aggregateId)) await this.enqueueBatchItem(item);
+        return;
+      case 'drafts.align_language':
+        return this.scheduleDraftLanguages({ workspaceId: e.workspaceId ?? undefined, companyId: e.aggregateId }, true);
       case 'draft.translate':
         return this.enqueue('interactive', 'draft_translate', { draftId: e.aggregateId, lang: p.lang, userId: p.userId ?? null }, e.dedupKey, 0, 1);
       case 'research.details':
@@ -287,6 +309,10 @@ export class WorkerService implements OnApplicationShutdown {
         return this.enqueue('inbox', 'sync', { accountId: e.aggregateId }, e.dedupKey, 0, 1);
       case 'autopilot.inbound':
         return this.enqueue('inbox', 'autopilot', { messageId: e.aggregateId, workspaceId: e.workspaceId }, e.dedupKey, 0, 1);
+      case 'interview.extract':
+        return this.enqueue('inbox', 'interview_extract', { messageId: e.aggregateId }, e.dedupKey, 0, 2);
+      case 'autopilot.research_done':
+        return this.enqueue('inbox', 'autopilot_resume', { messageId: e.aggregateId }, e.dedupKey, 0, 1);
       case 'autopilot.run':
         return this.enqueue('inbox', 'autopilot_run', { actionId: e.aggregateId, workspaceId: e.workspaceId, userId: p.userId }, e.dedupKey, 0, 1);
       case 'send.attempt':
@@ -317,7 +343,7 @@ export class WorkerService implements OnApplicationShutdown {
       case 'discovery.ai':
         return this.enqueue('research', 'discovery', { workspaceId: e.workspaceId, searchProfileId: p.searchProfileId, limit: p.limit, actorId: p.actorId, allowManual: p.allowManual, focus: p.focus }, e.dedupKey, 0, 1);
       case 'ai.task.completed':
-        return this.enqueue('research', 'ai_completed', { taskId: e.aggregateId }, e.dedupKey);
+        return this.enqueue('research', 'ai_completed', { taskId: e.aggregateId }, e.dedupKey, 0, 3, BULK_USER_PRIORITY);
       case 'notify':
         return this.enqueue('notify', 'notify', { workspaceId: e.workspaceId, eventId: e.dedupKey, ...p }, e.dedupKey);
       case 'job.closed':
@@ -354,6 +380,8 @@ export class WorkerService implements OnApplicationShutdown {
     switch (queue) {
       case 'collect':
         return this.ingest.runSource(d.sourceId, d.trigger ?? 'schedule');
+      case 'enrich':
+        return this.researchBatches.runItem(d.itemId);
       case 'evaluate':
         return job.name === 'profile' ? this.evaluation.evaluateProfile(d.searchProfileId) : this.evaluation.evaluateCompany(d.companyId);
       case 'research':
@@ -383,6 +411,7 @@ export class WorkerService implements OnApplicationShutdown {
         if (job.name === 'job_search') return d.focus ? this.jobSearch.runFocus(d.workspaceId, d.focus, d.actorId) : this.jobSearch.runQuery(d.searchProfileId, d.queryKey, d.actorId);
         if (job.name === 'catalog_refresh') return this.refreshFromCatalog(d.workspaceId, d.seed === true);
         if (job.name === 'catalog_backfill') return this.catalog.backfill();
+        if (job.name === 'draft_language') return this.drafting.translateDraft(d.draftId, d.lang === 'tr' ? 'tr' : 'en', null);
         if (job.name === 'discovery') return this.research.discover(d.workspaceId, { searchProfileId: d.searchProfileId, limit: d.limit, actorId: d.actorId, allowManual: d.allowManual, focus: d.focus });
         if (job.name === 'ai_completed') {
           await this.drafting.applyAiDraft(d.taskId);
@@ -407,6 +436,8 @@ export class WorkerService implements OnApplicationShutdown {
       case 'inbox':
         if (job.name === 'autopilot') return this.autopilot.onInbound(d.messageId);
         if (job.name === 'autopilot_run') return this.autopilot.runApproved(d.actionId, d.userId);
+        if (job.name === 'autopilot_resume') return this.autopilot.resumeAfterResearch(d.messageId);
+        if (job.name === 'interview_extract') return withAiClass('fix', () => this.pipeline.extractFromMessage(d.messageId)).then((r) => r.value);
         return this.inbox.syncAccount(d.accountId);
       case 'notify': {
         await this.notify.notify(d.workspaceId, d.eventId, { type: d.type, title: d.title, body: d.body, link: d.link, score: d.score });
@@ -516,14 +547,33 @@ export class WorkerService implements OnApplicationShutdown {
 
   /** Tek lider: birden fazla worker varsa Redis kilidiyle yalnızca biri planlama yapar. */
   async schedulerTick(now = new Date()) {
-    const lock = await this.connection.set('jt:scheduler:lock', String(process.pid), 'PX', 25_000, 'NX');
+    const token = `${process.pid}:${now.getTime()}`;
+    const lock = await this.connection.set(SCHEDULER_LOCK_KEY, token, 'PX', SCHEDULER_LOCK_TTL_MS, 'NX');
     if (!lock) return;
-    await this.scheduleSources(now);
+    try {
+      await this.scheduleAll(now);
+    } finally {
+      if ((await this.connection.get(SCHEDULER_LOCK_KEY)) === token) await this.connection.del(SCHEDULER_LOCK_KEY);
+    }
+  }
+
+  private async scheduleAll(now: Date) {
+    await this.guarded('sources', () => this.scheduleSources(now));
     await this.periodic('reconcile', 5 * 60_000, now, () => this.enqueue('reconcile', 'reconcile', {}, `reconcile:${Math.floor(now.getTime() / 300_000)}`, 0, 1));
     await this.periodic('followups', 10 * 60_000, now, () => this.automation.processFollowUps(now));
     await this.periodic('staleness', 30 * 60_000, now, () => this.markStale(now));
     await this.periodic('stuck-crawls', 10 * 60_000, now, () => this.ingest.closeStuckRuns(now));
     await this.periodic('predraft', PREDRAFT_EVERY_MS, now, () => this.schedulePredrafts(now));
+    await this.periodic('draft-language', DRAFT_LANGUAGE_EVERY_MS, now, () => this.scheduleDraftLanguages());
+    await this.periodic('ai-connection', AI_CONNECTION_CHECK_EVERY_MS, now, () => this.checkAiConnection(now));
+    await this.periodic('hidden-companies', COMPANY_TWINS_EVERY_MS, now, () => this.companyMerge.removeHiddenCompanies());
+    await this.periodic('company-twins', COMPANY_TWINS_EVERY_MS, now, async () => {
+      for (const w of await this.prisma.workspace.findMany({ select: { id: true } })) await this.guarded(`company-twins:${w.id}`, () => this.companyMerge.autoMerge(w.id));
+    });
+    await this.periodic('interview-reminders', INTERVIEW_REMINDER_EVERY_MS, now, () => this.pipeline.sendReminders(now));
+    await this.periodic('research-batches', RESEARCH_BATCH_RESUME_EVERY_MS, now, async () => {
+      for (const item of await this.researchBatches.resumable(now)) await this.enqueueBatchItem(item);
+    });
     await this.periodic('ai-reaper', AI_REAPER_EVERY_MS, now, () => this.activity.reapStuckAiTasks(now));
     await this.periodic('inbox', INBOX_SYNC_EVERY_MS, now, () => this.scheduleInboxSync(now));
     await this.periodic('retention', 6 * 3600_000, now, () => this.retention(now));
@@ -538,11 +588,42 @@ export class WorkerService implements OnApplicationShutdown {
       if (!(await this.catalog.backfilled())) await this.enqueue('research', 'catalog_backfill', {}, `catalog-backfill:${Math.floor(now.getTime() / BACKFILL_CHECK_EVERY_MS)}`, 0, 1);
     });
     const t = istanbulNow(now);
-    if (t.hour === env().DIGEST_HOUR) await this.daily('digest', now, async () => {
+    if (t.hour >= env().DIGEST_HOUR) await this.daily('digest', now, async () => {
       const workspaces = await this.prisma.workspace.findMany({ select: { id: true } });
       for (const w of workspaces) await this.notify.dailyDigest(w.id, now);
     });
-    if (t.hour === DAILY_DISCOVERY_HOUR) await this.daily('discovery', now, () => this.dailyDiscovery(now));
+    if (t.hour >= DAILY_DISCOVERY_HOUR) await this.daily('discovery', now, () => this.dailyDiscovery(now));
+  }
+
+  /**
+   * Claude bağlantısı koptuysa ya da bitişine üç günden az kaldıysa yöneticilere günde bir kez bildirilir; işler o
+   * sırada ChatGPT'ye ya da beklemeye düşer.
+   */
+  private async checkAiConnection(now: Date) {
+    const health = await this.ai.claudeConnectionHealth();
+    if (!health) return;
+    const expiringSoon = !!health.expiresAt && health.expiresAt.getTime() - now.getTime() < AI_CONNECTION_WARN_MS;
+    if (health.connected && !expiringSoon) return;
+    const state = health.connected ? 'expiring' : 'disconnected';
+    const title = health.connected ? `Claude bağlantısı ${fmtIstanbul(health.expiresAt!)} tarihinde sona eriyor` : 'Claude bağlantısı koptu';
+    const body = health.longLived
+      ? 'Profilim › Yapay zekâ oturumları bölümünden yeni bir kalıcı belirteç oluştur.'
+      : 'Profilim › Yapay zekâ oturumları bölümünden "Kalıcı bağla (1 yıl)" ile yeniden bağla; tarayıcı girişi birkaç haftada bir düşer. O zamana kadar işler ChatGPT ile ya da beklemede sürer.';
+    const admins = await this.prisma.user.findMany({ where: { isAdmin: true }, select: { memberships: { select: { workspaceId: true } } } });
+    for (const workspaceId of new Set(admins.flatMap((a) => a.memberships.map((m) => m.workspaceId)))) {
+      await this.outbox.emit({ workspaceId, eventType: 'notify', aggregateId: workspaceId, dedupKey: `ai-connection:${workspaceId}:${state}:${istanbulDay(now)}`, payload: { type: 'ai_connection', title, body, link: '/profile' } });
+    }
+  }
+
+  private async enqueueBatchItem(item: { id: string; attempts: number }) {
+    await this.enqueue('enrich', 'batch_item', { itemId: item.id }, `batch-item:${item.id}:${item.attempts}`, 0, 1);
+  }
+
+  private async scheduleDraftLanguages(where: { workspaceId?: string; companyId?: string } = {}, interactive = false) {
+    for (const d of await this.drafting.misalignedDrafts(where, DRAFT_LANGUAGE_BATCH)) {
+      if (interactive) await this.enqueue('interactive', 'draft_translate', { draftId: d.draftId, lang: d.language, userId: null }, `draft-language:${d.draftId}:${d.language}`, 0, 1);
+      else await this.enqueue('research', 'draft_language', { draftId: d.draftId, lang: d.language }, `draft-language:${d.draftId}:${d.language}`, 0, 1, BACKGROUND_PRIORITY);
+    }
   }
 
   private async scheduleInboxSync(now: Date) {
@@ -550,22 +631,45 @@ export class WorkerService implements OnApplicationShutdown {
     for (const a of await this.inbox.syncableAccounts()) await this.enqueue('inbox', 'sync', { accountId: a.id }, `inbox:${a.id}:${slot}`, 0, 1);
   }
 
+  /** Bir zamanlayıcı görevinin hatası diğerlerini durdurmaz; hata günlüğe yazılır. */
+  private async guarded(key: string, fn: () => Promise<unknown>): Promise<boolean> {
+    try {
+      await fn();
+      return true;
+    } catch (e) {
+      this.logger.error(`Zamanlanmış görev başarısız (${key}): ${(e as Error).message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Görev aralığı dolunca çalışır. Başarısız görev bir sonraki aralığı beklemez: SCHEDULE_RETRY_MS sonra yeniden
+   * denenir (aralık bundan kısaysa normal aralıkta).
+   */
   private async periodic(key: string, everyMs: number, now: Date, fn: () => Promise<unknown>) {
     const kv = await this.prisma.keyValue.findUnique({ where: { key: `sched:${key}` } });
     const last = (kv?.value as any)?.at ? new Date((kv!.value as any).at).getTime() : 0;
     if (now.getTime() - last < everyMs) return;
-    await this.prisma.keyValue.upsert({ where: { key: `sched:${key}` }, create: { key: `sched:${key}`, value: { at: now.toISOString() } }, update: { value: { at: now.toISOString() } } });
-    await fn();
+    const mark = (at: number) => this.prisma.keyValue.upsert({ where: { key: `sched:${key}` }, create: { key: `sched:${key}`, value: { at: new Date(at).toISOString() } }, update: { value: { at: new Date(at).toISOString() } } });
+    await mark(now.getTime());
+    if (!(await this.guarded(key, fn))) await mark(now.getTime() - everyMs + Math.min(everyMs, SCHEDULE_RETRY_MS));
   }
 
+  /**
+   * Günde bir kez; saatinde worker kapalıysa gün içinde ilk fırsatta çalışır. Başarısız olursa SCHEDULE_RETRY_MS sonra
+   * aynı gün içinde yeniden denenir.
+   */
   private async daily(key: string, now: Date, fn: () => Promise<unknown>) {
     const k = `sched:${key}:${istanbulDay(now)}`;
+    const value = { at: now.toISOString(), ok: true };
     try {
-      await this.prisma.keyValue.create({ data: { key: k, value: { at: now.toISOString() } } });
+      await this.prisma.keyValue.create({ data: { key: k, value } });
     } catch {
-      return; // bugün zaten çalıştı
+      const retryBefore = new Date(now.getTime() - SCHEDULE_RETRY_MS).toISOString();
+      const claimed = await this.prisma.keyValue.updateMany({ where: { key: k, value: { path: ['ok'], equals: false }, AND: { value: { path: ['at'], lt: retryBefore } } }, data: { value } });
+      if (!claimed.count) return;
     }
-    await fn();
+    if (!(await this.guarded(key, fn))) await this.prisma.keyValue.update({ where: { key: k }, data: { value: { at: now.toISOString(), ok: false } } });
   }
 
   /**
@@ -726,8 +830,11 @@ export class WorkerService implements OnApplicationShutdown {
     await this.prisma.outboxEvent.deleteMany({ where: { processingState: 'processed', processedAt: { lt: d(7) } } });
     await this.prisma.aiTask.updateMany({ where: { createdAt: { lt: d(30) } }, data: { rawOutput: null } });
     await this.prisma.webhookEvent.deleteMany({ where: { receivedAt: { lt: d(30) } } });
-    const imports = await this.prisma.importJob.findMany({ where: { createdAt: { lt: d(1) } } });
-    for (const i of imports) await this.storage.delete(i.objectKey).catch(() => undefined);
+    const imports = await this.prisma.importJob.findMany({ where: { createdAt: { lt: d(1) }, objectKey: { not: '' } } });
+    for (const i of imports) {
+      await this.storage.delete(i.objectKey).catch((e) => this.logger.warn(`İçe aktarma dosyası silinemedi (${i.id}): ${(e as Error).message}`));
+      await this.prisma.importJob.update({ where: { id: i.id }, data: { objectKey: '' } });
+    }
     await this.prisma.telegramLinkCode.deleteMany({ where: { expiresAt: { lt: d(1) } } });
   }
 

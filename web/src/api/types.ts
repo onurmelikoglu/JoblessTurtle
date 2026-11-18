@@ -43,7 +43,7 @@ export interface AiRouting {
 }
 
 export interface AiStatus {
-  settings: { dailyTaskLimit: number; models?: ModelSettings };
+  settings: { dailyTaskLimit: number; enrichDailyLimit?: number; models?: ModelSettings };
   providers: { name: string; label: string; available: boolean; detail: string }[];
   kindLabels: Record<string, string>;
   defaultModels: ModelSettings;
@@ -93,12 +93,6 @@ export interface LookupResult {
   reason?: string;
 }
 
-export interface MissingEmailsResult {
-  queued: number;
-  companyIds: string[];
-  skippedRecent: number;
-  deferred: number;
-}
 
 export interface ResendManyResult {
   queued: number;

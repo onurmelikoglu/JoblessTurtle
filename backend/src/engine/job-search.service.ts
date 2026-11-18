@@ -3,6 +3,7 @@ import { Prisma, SearchProfile } from '@prisma/client';
 import { errorMessage } from '../common/errors';
 import { OutboxService } from '../common/outbox.service';
 import { PrismaService } from '../common/prisma.service';
+import { visibleCompanyName } from '../domain/hidden-company';
 import { isValidEmail } from '../domain/contacts';
 import {
   buildJobQueries,
@@ -63,7 +64,12 @@ export interface FoundListing {
   companyDomain?: string | null;
   careersUrl?: string | null;
   location?: string | null;
+  /** İl ve ilçeden ayrıntılı adres (mahalle, cadde). */
+  address?: string | null;
   workMode?: 'onsite' | 'hybrid' | 'remote' | 'unknown';
+  description?: string | null;
+  /** Firmanın ilan sitesinde yazan sektörü; yeni firma keşfedilirken firmaya yazılır. */
+  sector?: string | null;
   url: string;
   platform?: string | null;
   postedAt?: string | null;
@@ -238,7 +244,13 @@ export class JobSearchService {
     const rejected: Record<string, number> = {};
     const reject = (reason: string) => (rejected[reason] = (rejected[reason] ?? 0) + 1);
     const candidates = new Map<string, Candidate>();
-    for (const listing of listings) {
+    for (const found of listings) {
+      const company = visibleCompanyName(found.company);
+      if (!company) {
+        reject('hidden_company');
+        continue;
+      }
+      const listing = { ...found, company };
       const url = normalizeListingUrl(listing.url);
       if (!url) {
         reject('url');
@@ -269,7 +281,7 @@ export class JobSearchService {
           companies: [...strangers.values()].map((group) => ({
             name: group[0].company,
             domain: group.map(companyDomainOf).find(Boolean) ?? null,
-            sectors: [],
+            sectors: [...new Set(group.map((c) => c.sector?.trim()).filter((s): s is string => !!s))],
             reason: `İlan aramasında bulundu: ${group.map((c) => c.title).join(', ')}`,
             sourceUrl: group[0].url,
             signal: 'open_role',
@@ -295,8 +307,9 @@ export class JobSearchService {
         url: c.url,
         applyUrl: c.url,
         locationText: c.location ?? posting?.locationText ?? null,
+        address: c.address ?? null,
         workMode: c.workMode && c.workMode !== 'unknown' ? c.workMode : posting?.workMode,
-        description: posting?.description ?? null,
+        description: posting?.description ?? c.description ?? null,
         postedAt: dateOf(c.postedAt) ?? posting?.postedAt ?? null,
         validThrough: posting?.validThrough ?? null,
         applyEmail: email && isValidEmail(email) ? email : (posting?.applyEmail ?? null),

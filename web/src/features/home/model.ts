@@ -1,9 +1,9 @@
-import type { CompanyClass, EmployeeRange, EmployeeSize, HomeAi, HomeApplication, HomeOpportunity, InboxItem } from '@/api/types';
+import type { CompanyClass, EmployeeRange, EmployeeSize, HomeAi, HomeApplication, HomeOpportunity, InboxItem, ResearchBatchStatus } from '@/api/types';
 import { fmtTime } from '@/lib/format';
 import { aiThrottleNotice } from './autopilot-model';
 import type { Tone } from '@/ui/tones';
 
-export const HOME_TABS = ['firmalar', 'basvurular', 'donusler'] as const;
+export const HOME_TABS = ['firmalar', 'basvurular', 'donusler', 'istatistik'] as const;
 export type HomeTab = (typeof HOME_TABS)[number];
 
 export const COMPANY_CLASS_ORDER: CompanyClass[] = ['open', 'past', 'potential'];
@@ -36,6 +36,16 @@ const EMPLOYEE_RANGE_TEXT: Record<EmployeeRange, string> = {
 
 export const employeesLabel = (employees: EmployeeSize) => `${EMPLOYEE_RANGE_TEXT[employees.range]} çalışan`;
 export const employeesHint = (employees: EmployeeSize) => (employees.count ? `Yaklaşık ${employees.count.toLocaleString('tr-TR')} çalışan` : 'Yaklaşık çalışan sayısı aralığı');
+
+const WORK_MODE_TEXT: Record<NonNullable<HomeOpportunity['workMode']>, string> = { onsite: 'İş yerinde', hybrid: 'Hibrit', remote: 'Uzaktan' };
+
+/** İlanın çalışma şekli rozeti; ilanda yazmıyorsa "(tahmini)" eklenir. Firmaya genel başvuruda rozet yok. */
+export function workModeBadge(opportunity: Pick<HomeOpportunity, 'workMode' | 'workModeEstimated'>): { text: string; hint: string; tone: Tone } | null {
+  if (!opportunity.workMode) return null;
+  const text = WORK_MODE_TEXT[opportunity.workMode];
+  if (opportunity.workModeEstimated) return { text: `${text} (tahmini)`, hint: 'İlanda çalışma şekli belirtilmemiş; unvan, ilan metni ve adrese göre tahmin edildi.', tone: 'neutral' };
+  return { text, hint: 'İlanda belirtilen çalışma şekli', tone: opportunity.workMode === 'remote' ? 'info' : 'neutral' };
+}
 
 export const hasEmail = (opportunity: Pick<HomeOpportunity, 'canEmail'>) => opportunity.canEmail;
 export const draftReady = (opportunity: Pick<HomeOpportunity, 'draft'>) => opportunity.draft !== null && opportunity.draft.problems.length === 0;
@@ -104,4 +114,19 @@ export function aiNotice(ai: HomeAi): string | null {
   if (ai.limitReached) return `Bugünkü AI işlem hakkın doldu (${usage}). Hazırlık yarın kendiliğinden sürecek.`;
   if (ai.nearLimit) return `Günlük AI işlem hakkının çoğu kullanıldı (${usage}).`;
   return aiThrottleNotice(ai.classes);
+}
+
+const FOUND_LABELS: [keyof ResearchBatchStatus['found'], string][] = [
+  ['email', 'mail'],
+  ['person', 'kişi adresi'],
+  ['office', 'ofis adresi'],
+  ['employees', 'çalışan sayısı'],
+  ['phone', 'telefon'],
+  ['workPolicy', 'çalışma düzeni'],
+];
+
+/** Toplu araştırmada bulunanların kısa özeti (ör. "5 mail, 3 ofis adresi bulundu"). */
+export function foundSummary(batch: ResearchBatchStatus): string {
+  const parts = FOUND_LABELS.filter(([key]) => batch.found[key] > 0).map(([key, label]) => `${batch.found[key]} ${label}`);
+  return parts.length ? `${parts.join(', ')} bulundu` : 'henüz yeni bilgi yok';
 }

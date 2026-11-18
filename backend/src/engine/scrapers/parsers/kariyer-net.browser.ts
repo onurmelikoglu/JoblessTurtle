@@ -7,7 +7,7 @@ import { stripCompanyPrefix } from './kariyer-net.parser';
 /**
  * Kariyer.net sonuç sayfasını kullanıcının tarayıcısında okuyan betik. Sunucudaki ayrıştırıcıyla aynı selector'ları
  * kullanır; kartları kısa diziler olarak döndürür: [bağlantı, başlık, firma, konum, çalışma türü, çalışma modeli,
- * tarih metni, tarih durumu]. Sonraki sayfa: şehir sayfalarında yol eki ("/is-ilanlari/istanbul-2" → "-3"), anahtar
+ * tarih metni, tarih durumu, sektör]. İlçe kartta yok (yalnızca sayfanın kendi betik durumunda), okunmaz. Sonraki sayfa: şehir sayfalarında yol eki ("/is-ilanlari/istanbul-2" → "-3"), anahtar
  * kelimeli aramada "cp" parametresi ("/is-ilanlari/istanbul-2?ct=34,82&kw=yazılım&cp=2", çok şehirli aramada
  * "/is-ilanlari?ct=34,82,41&kw=…&cp=2"; 23 Ekim 2026'da gerçek sayfadan).
  */
@@ -27,7 +27,7 @@ export const KARIYER_NET_BROWSER_SCRIPT = `(() => {
       copy.querySelectorAll('i').forEach((i) => i.remove());
       dateText = text(copy);
     }
-    return [link ? link.getAttribute('href') : null, text(el.querySelector(S.title)), text(el.querySelector(S.company)), text(el.querySelector(S.location)) || el.getAttribute(A.city), el.getAttribute(A.workType), el.getAttribute(A.workModel) || text(el.querySelector(S.workModel)), dateText, el.getAttribute(A.dateStatus)];
+    return [link ? link.getAttribute('href') : null, text(el.querySelector(S.title)), text(el.querySelector(S.company)), text(el.querySelector(S.location)) || el.getAttribute(A.city), el.getAttribute(A.workType), el.getAttribute(A.workModel) || text(el.querySelector(S.workModel)), dateText, el.getAttribute(A.dateStatus), el.getAttribute(A.sector)];
   });
   const m = location.pathname.match(/^\\/is-ilanlari\\/(.+?)(?:-(\\d+))?\\/?$/);
   const nextPath = m ? '/is-ilanlari/' + m[1] + '-' + ((Number(m[2]) || 1) + 1) : null;
@@ -52,7 +52,7 @@ export function kariyerNetFromBrowser(payload: unknown, url: string): ParsedPage
   const data = readBrowserPayload(payload, 'kariyer_net', url);
   assertReadable(data, url, `İlan listesi bulunamadı (${KARIYER_NET.selectors.listRoot} / ${KARIYER_NET.selectors.card}); sayfa düzeni değişmiş olabilir`);
   const cards: RawCard[] = data.cards.map((row) => {
-    const [href, title, company, location, workType, workModel, dateText, dateStatus] = row.map(str);
+    const [href, title, company, location, workType, workModel, dateText, dateStatus, sector] = row.map(str);
     const path = href ? href.split(/[?#]/)[0] : '';
     return {
       platformId: path.match(KARIYER_NET.listingPath)?.[1] ?? null,
@@ -62,6 +62,7 @@ export function kariyerNetFromBrowser(payload: unknown, url: string): ParsedPage
       url: href,
       employmentType: workType,
       workModeText: workModel,
+      sector: sector ?? null,
       publishedText: dateText,
       dateIsUpdate: dateStatus === KARIYER_NET.updatedDateStatus,
     };

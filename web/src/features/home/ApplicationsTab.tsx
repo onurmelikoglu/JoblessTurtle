@@ -17,6 +17,8 @@ import { APPLICATION_SORT_LABELS, DEFAULT_APPLICATION_FILTERS, filterApplication
 import { ApplicationDialog } from './ApplicationDialog';
 import { ApplicationSummary, SendQueuePanel } from './ApplicationPanels';
 import { ApplicationRow, type ApplicationRowActions } from './ApplicationRow';
+import { FollowUpsPanel } from './FollowUpsPanel';
+import { InterviewsPanel } from './InterviewsPanel';
 import { bucketOf } from './model';
 import { ResendDialog } from './ResendDialog';
 import { RetryQueueDialog } from './RetryQueueDialog';
@@ -124,6 +126,8 @@ export function ApplicationsTab({ data, inboxItems, inboxTodo, onOpenInbox }: Ap
         </Notice>
       )}
       {data.queue && <SendQueuePanel queue={data.queue} busy={busy} onRetry={() => setRetryOpen(true)} />}
+      <InterviewsPanel />
+      <FollowUpsPanel />
       <ApplicationSummary applications={applications} active={filters.bucket} onSelect={(bucket) => patch({ bucket })} />
       <div className="flex flex-wrap gap-2">
         <SearchInput className="min-w-56 flex-1" value={filters.query} onChange={(query) => patch({ query })} label="Başvurularda ara" placeholder="Firma, pozisyon veya alıcı adresi ara" />
